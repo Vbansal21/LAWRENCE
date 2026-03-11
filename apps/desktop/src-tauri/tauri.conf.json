@@ -1,0 +1,21 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "LAWRENCE",
+  "version": "0.1.0",
+  "identifier": "dev.lawrence.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev --prefix ..",
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "LAWRENCE",
+        "width": 1280,
+        "height": 860,
+        "resizable": true
+      }
+    ]
+  }
+}

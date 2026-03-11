@@ -2,6 +2,45 @@
 
 All notable changes to LAWRENCE are documented in this file.
 
+## [0.1.0-alpha.4] - 2026-03-11
+
+### Added
+- Added the first end-to-end implementation path for the LAWRENCE kernel in `services/kernel/lawrence_kernel/`:
+  - typed turn/context/facet/merge models
+  - parallel facet orchestration
+  - policy evaluation
+  - merge arbitration
+  - Markdown distillation writes
+- Added FastAPI entrypoints and tests for:
+  - turn handling
+  - memory note creation/search/graph retrieval
+  - tool execution routing
+- Added desktop shell scaffolding in `apps/desktop/` for a Tauri + React host surface.
+- Added Rust crate scaffolding in `crates/system-hooks/` for future OS-level capture and hotkey integration.
+- Added implementation-path runtime/build metadata:
+  - `pyproject.toml`
+  - `Cargo.toml`
+  - `Makefile`
+  - `config/default.yaml`
+  - `workflows/default_turn.yaml`
+
+### Changed
+- Wired local-first provider routing so `llama.cpp` is the default local backend before LM Studio fallback.
+- Added n8n CE workflow pack under `modules/connectors/n8n/workflows/` and aligned kernel webhook routing to n8n CE v2 production paths.
+- Hardened n8n local/Docker startup scripts and status/stop scripts for WSL development.
+- Replaced the docker-compose fallback n8n basic-auth password with `change-me-local-only`.
+- Added a fast-facet fallback path when CPU-bound local generation misses a short response budget.
+
+### Verified
+- Kernel tests pass (`4 passed`).
+- Kernel health endpoint responds locally.
+- n8n web-search and zettel-ingest workflows execute successfully against the current implementation path.
+- Local `llama.cpp` runtime loads Qwen 3.5 4B `Q4_0` and serves HTTP health/completion endpoints.
+
+### Scope Note
+- This commit represents one practical implementation path for LAWRENCE v0.1 in the current repository.
+- It should be treated as a replaceable modular baseline, not as the only acceptable long-term architecture.
+
 ## [0.1.0-alpha.3] - 2026-03-11
 
 ### Added

@@ -1,0 +1,35 @@
+workflow: parallel_turn_v1
+description: Petri-net-like guarded parallel facet dispatch for each turn
+places:
+  - input_received
+  - snapshot_created
+  - facets_running
+  - immediate_emitted
+  - deferred_pending
+  - distilled_written
+  - completed
+transitions:
+  - from: input_received
+    to: snapshot_created
+    guard: context_snapshot_valid
+  - from: snapshot_created
+    to: facets_running
+    guard: policy_precheck_passed
+  - from: facets_running
+    to: immediate_emitted
+    guard: fast_threshold_met
+  - from: facets_running
+    to: deferred_pending
+    guard: slow_result_pending
+  - from: facets_running
+    to: distilled_written
+    guard: journaling_complete
+  - from: immediate_emitted
+    to: completed
+    guard: no_deferred
+  - from: deferred_pending
+    to: completed
+    guard: deferred_published
+budgets:
+  fast_ms: 1500
+  slow_ms: 15000

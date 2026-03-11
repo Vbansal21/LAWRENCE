@@ -1,0 +1,80 @@
+{
+  "name": "LAWRENCE - LM Studio Fallback",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lawrence/lmstudio-fallback",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "Webhook_1",
+      "name": "Webhook LM Fallback",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.LMSTUDIO_BASE + '/v1/chat/completions'}}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { model: 'local-model', messages: [{ role: 'user', content: $json.body.prompt || '' }], temperature: 0.3 } }}",
+        "options": {},
+        "method": "POST"
+      },
+      "id": "HTTP_1",
+      "name": "LM Studio Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        500,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}"
+      },
+      "id": "Respond_1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        760,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook LM Fallback": {
+      "main": [
+        [
+          {
+            "node": "LM Studio Generate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "LM Studio Generate": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "wf-06-lmstudio-fallback",
+  "active": false,
+  "settings": {},
+  "tags": []
+}

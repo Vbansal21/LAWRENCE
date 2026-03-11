@@ -1,0 +1,55 @@
+app:
+  name: LAWRENCE
+  environment: development
+
+policy:
+  telemetry_enabled: false
+  require_confirmation_for_actions: true
+  allow_cloud_default: false
+
+retention:
+  raw_ttl_minutes: 30
+  distillation_write_interval_seconds: 10
+
+routing:
+  web_parallel_default: true
+  fast_latency_budget_ms: 1500
+  slow_latency_budget_ms: 15000
+  facet_timeouts_ms:
+    context: 300
+    memory: 600
+    journaling: 900
+    web: 2000
+    tools: 1500
+    fast_reasoning: 8000
+    slow_reasoning: 12000
+
+providers:
+  order:
+    - llamacpp
+    - lmstudio
+    - gemini
+    - openai_compatible
+  local_first: true
+  timeout_seconds: 8.0
+  endpoints:
+    lmstudio: http://127.0.0.1:1234
+    llamacpp: http://127.0.0.1:8080
+    gemini: https://generativelanguage.googleapis.com
+    openai_compatible: https://api.openai.com
+  models:
+    lmstudio: local-model
+    llamacpp: local-model
+    gemini: gemini-1.5-flash
+    openai_compatible: gpt-4o-mini
+
+integrations:
+  n8n_base_url: http://127.0.0.1:5678
+  n8n_webhook_path: /webhook/lawrence
+  workflow_paths:
+    web-search: /webhook/wf-02-web-search/webhook%2520web%2520search/lawrence/web-search
+    zettel-ingest: /webhook/wf-03-zettel-ingest-link/webhook%2520zettel%2520ingest/lawrence/zettel-ingest
+
+web:
+  provider: n8n
+  max_results: 5

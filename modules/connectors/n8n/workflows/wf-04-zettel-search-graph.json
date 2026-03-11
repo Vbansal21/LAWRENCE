@@ -1,0 +1,128 @@
+{
+  "name": "LAWRENCE - Zettel Search Graph",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lawrence/zettel-search",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "Webhook_1",
+      "name": "Webhook Zettel Search",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$env.LAWRENCE_KERNEL_BASE + '/v1/memory/search?query=' + encodeURIComponent($json.body.query || '')}}",
+        "options": {},
+        "method": "GET"
+      },
+      "id": "HTTP_1",
+      "name": "Search Notes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        470,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const r = $json.results || []; const first = r[0]; if (!first) return [{json:{results:r, graph:[]}}]; return [{json:{results:r, note_id:first.note_id}}];"
+      },
+      "id": "Code_1",
+      "name": "Pick Top Note",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        700,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "url": "={{$json.note_id ? $env.LAWRENCE_KERNEL_BASE + '/v1/memory/graph/' + $json.note_id + '?max_hops=3' : ''}}",
+        "options": {},
+        "method": "GET"
+      },
+      "id": "HTTP_2",
+      "name": "Graph Expansion",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        930,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}"
+      },
+      "id": "Respond_1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Zettel Search": {
+      "main": [
+        [
+          {
+            "node": "Search Notes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Search Notes": {
+      "main": [
+        [
+          {
+            "node": "Pick Top Note",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Top Note": {
+      "main": [
+        [
+          {
+            "node": "Graph Expansion",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Graph Expansion": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "wf-04-zettel-search-graph",
+  "active": false,
+  "settings": {},
+  "tags": []
+}

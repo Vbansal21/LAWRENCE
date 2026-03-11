@@ -1,0 +1,51 @@
+{
+  "name": "LAWRENCE - Web Search",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lawrence/web-search",
+        "httpMethod": "POST",
+        "responseMode": "lastNode"
+      },
+      "id": "Webhook_1",
+      "name": "Webhook Web Search",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const q = $json.body.query || ''; return { hits: [{ title: `Result for ${q}`, url: `https://example.com/search?q=${encodeURIComponent(q)}`, snippet: `Stub result for ${q}` }] };"
+      },
+      "id": "Code_1",
+      "name": "Assemble Hits",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        500,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Web Search": {
+      "main": [
+        [
+          {
+            "node": "Assemble Hits",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "wf-02-web-search",
+  "active": false,
+  "settings": {},
+  "tags": []
+}

@@ -1,0 +1,163 @@
+{
+  "name": "LAWRENCE - Tool Approval Gate",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "lawrence/tool-approval",
+        "httpMethod": "POST",
+        "responseMode": "responseNode"
+      },
+      "id": "Webhook_1",
+      "name": "Webhook Tool Proposal",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{$json.body.requires_confirmation}}",
+              "operation": "isTrue"
+            }
+          ]
+        }
+      },
+      "id": "If_1",
+      "name": "Needs Confirmation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        470,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return [{json:{approved:false, reason:'Requires explicit user confirmation', proposal:$json.body}}];"
+      },
+      "id": "Code_1",
+      "name": "Block and Explain",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        730,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "return [{json:{approved:true, proposal:$json.body}}];"
+      },
+      "id": "Code_2",
+      "name": "Auto Approve",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        730,
+        340
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "combineByPosition"
+      },
+      "id": "Merge_1",
+      "name": "Merge Result",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        960,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{$json}}"
+      },
+      "id": "Respond_1",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1160,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Tool Proposal": {
+      "main": [
+        [
+          {
+            "node": "Needs Confirmation?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Confirmation?": {
+      "main": [
+        [
+          {
+            "node": "Block and Explain",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Auto Approve",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Block and Explain": {
+      "main": [
+        [
+          {
+            "node": "Merge Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Auto Approve": {
+      "main": [
+        [
+          {
+            "node": "Merge Result",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Result": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "id": "wf-07-tool-approval-gate",
+  "active": false,
+  "settings": {},
+  "tags": []
+}
