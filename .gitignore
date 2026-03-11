@@ -20,7 +20,14 @@ Cargo.lock
 .DS_Store
 
 # Runtime
+.runtime/
 logs/
 *.log
+.pid
 .env
 infra/n8n/.env
+
+# Local data / large artifacts
+memory/vault/
+models/
+third_party/
