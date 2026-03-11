@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.mypy_cache/
+.venv/
+
+# Node/Tauri
+node_modules/
+dist/
+apps/desktop/src-tauri/target/
+
+# Rust
+**/target/
+Cargo.lock
+
+# IDE/OS
+.vscode/
+.idea/
+.DS_Store
+
+# Runtime
+logs/
+*.log
+.env
+infra/n8n/.env

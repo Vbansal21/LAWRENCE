@@ -1,0 +1,51 @@
+model: user_interaction_hmm_v0
+created_at: 2026-03-10T21:50:00Z
+states:
+  - focused_execution
+  - exploratory_research
+  - context_switching
+  - blocked_or_uncertain
+  - reflective_planning
+observations:
+  - query_length
+  - inter_turn_latency_sec
+  - tool_request_frequency
+  - web_branch_usage
+  - note_write_rate
+initial_state_prior:
+  focused_execution: 0.30
+  exploratory_research: 0.25
+  context_switching: 0.15
+  blocked_or_uncertain: 0.10
+  reflective_planning: 0.20
+transition_prior:
+  focused_execution:
+    focused_execution: 0.58
+    exploratory_research: 0.14
+    context_switching: 0.12
+    blocked_or_uncertain: 0.06
+    reflective_planning: 0.10
+  exploratory_research:
+    focused_execution: 0.22
+    exploratory_research: 0.50
+    context_switching: 0.12
+    blocked_or_uncertain: 0.06
+    reflective_planning: 0.10
+  context_switching:
+    focused_execution: 0.20
+    exploratory_research: 0.18
+    context_switching: 0.34
+    blocked_or_uncertain: 0.10
+    reflective_planning: 0.18
+  blocked_or_uncertain:
+    focused_execution: 0.15
+    exploratory_research: 0.25
+    context_switching: 0.15
+    blocked_or_uncertain: 0.30
+    reflective_planning: 0.15
+  reflective_planning:
+    focused_execution: 0.24
+    exploratory_research: 0.16
+    context_switching: 0.14
+    blocked_or_uncertain: 0.06
+    reflective_planning: 0.40

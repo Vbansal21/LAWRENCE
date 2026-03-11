@@ -1,0 +1,30 @@
+workflow: parallel_turn_v1
+created_at: 2026-03-10T22:12:00Z
+states:
+  - snapshot_created
+  - facets_dispatched
+  - immediate_response_emitted
+  - deferred_response_pending
+  - distillation_written
+  - completed
+transitions:
+  - from: snapshot_created
+    to: facets_dispatched
+    condition: policy_precheck_passed
+  - from: facets_dispatched
+    to: immediate_response_emitted
+    condition: fast_evidence_threshold_met
+  - from: facets_dispatched
+    to: deferred_response_pending
+    condition: slow_facet_in_progress
+  - from: facets_dispatched
+    to: distillation_written
+    condition: journaling_facet_done
+  - from: deferred_response_pending
+    to: completed
+    condition: slow_facet_published_or_timed_out
+budgets:
+  fast_ms: 1500
+  slow_ms: 15000
+  web_ms: 2000
+  tools_ms: 1000
