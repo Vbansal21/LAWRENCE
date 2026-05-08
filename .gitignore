@@ -31,3 +31,6 @@ infra/n8n/.env
 memory/vault/
 models/
 third_party/
+.local/
+.history/
+.sixth/

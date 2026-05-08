@@ -16,6 +16,10 @@
 - policy_state
 - context_version
 
+Current implementation note:
+- snapshot fields already preserve the richer current-context shape from the planning spec
+- not all providers are live yet (`reminder_ref`, `latest_chat_refs`, richer thread/calendar sources)
+
 ## FacetResult
 
 - turn_id
@@ -26,6 +30,10 @@
 - citations
 - actions
 - context_version
+
+Evidence model intent:
+- each facet contributes its own evidence stream
+- merge consumes facet outputs without forcing a sequential stage order
 
 ## MergeDecision
 
@@ -38,9 +46,47 @@
 
 ## LLMProviderAdapter
 
-- health()
-- capabilities()
-- generate(prompt, mode)
+Current baseline:
+- `health()`
+- `capabilities()`
+- `generate(prompt, mode)`
+
+Target extension from planning scope:
+- `stream(...)`
+- `embed(...)`
+- `list_models()`
+- `normalize_error(...)`
+
+The repo currently implements the minimum subset needed for the chosen v0.1 path and leaves the rest as planned adapter-surface growth.
+
+## ToolActionProposal
+
+- `tool`
+- `args`
+- `risk_level`
+- `requires_confirmation`
+- `policy_basis`
+
+## DistillationRecord
+
+- `source_ref`
+- `distilled_into`
+- `retention_policy`
+- `expires_at`
+
+## Zettel Frontmatter Contract
+
+Required durable metadata:
+- `id`
+- `type`
+- `created_at`
+- `updated_at`
+- `entities`
+- `tags`
+- `links`
+- `source_refs`
+- `confidence`
+- `privacy_level`
 
 ## Zettel/Memory API
 

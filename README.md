@@ -98,6 +98,8 @@ Contract reference: [docs/interfaces.md](/home/user/LAWRENCE/docs/interfaces.md)
 
 ## Documentation Index
 
+- Start here for future contributors/agents: [docs/AGENT_HANDOFF.md](/home/user/LAWRENCE/docs/AGENT_HANDOFF.md)
+- IEEE-style technical paper source: [docs/papers/LAWRENCE_v0_1_ieee.tex](/home/user/LAWRENCE/docs/papers/LAWRENCE_v0_1_ieee.tex)
 - Changelog: [CHANGELOG.md](/home/user/LAWRENCE/CHANGELOG.md)
 - Plan coverage and blindspots: [docs/PLAN_COVERAGE.md](/home/user/LAWRENCE/docs/PLAN_COVERAGE.md)
 - Architecture: [docs/ARCHITECTURE.md](/home/user/LAWRENCE/docs/ARCHITECTURE.md)
