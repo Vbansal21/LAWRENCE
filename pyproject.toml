@@ -2,28 +2,44 @@
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
+# ── LAWRENCE CLI kernel (services/lk/) ────────────────────────────────────────
 [project]
-name = "lawrence-kernel"
+name = "lawrence-lk"
 version = "0.1.0"
-description = "LAWRENCE assistant kernel with parallel facets"
+description = "LAWRENCE local assistant kernel — CLI + sensor observers + retrieval"
 requires-python = ">=3.11"
-dependencies = [
-  "fastapi>=0.111.0",
-  "uvicorn[standard]>=0.30.0",
-  "pydantic>=2.7.0",
-  "pyyaml>=6.0.1",
-  "httpx>=0.27.0"
-]
+dependencies = []   # stdlib only for the core path; extras below
+
+[project.scripts]
+lk = "lk.cli:main"
 
 [project.optional-dependencies]
+# install all optional runtime deps:  pip install -e ".[full]"
+vision = [
+  "Pillow>=10.0.0",          # PIL for pixel-change scoring
+]
+audio = [
+  "faster-whisper>=1.0.0",   # on-device transcription (CPU-only int8)
+]
+web = [
+  "trafilatura>=1.8.0",      # article extraction (fallback to stdlib html parser)
+]
+full = [
+  "Pillow>=10.0.0",
+  "faster-whisper>=1.0.0",
+  "trafilatura>=1.8.0",
+]
 dev = [
   "pytest>=8.2.0",
-  "pytest-asyncio>=0.23.7"
 ]
 
-[tool.setuptools]
-packages = ["lawrence_kernel"]
-package-dir = {"" = "services/kernel"}
+[tool.setuptools.packages.find]
+where = ["services"]
+include = ["lk*"]
 
 [tool.pytest.ini_options]
-testpaths = ["services/kernel/tests"]
+testpaths = ["services/lk/tests"]
+
+# ── legacy FastAPI kernel (services/kernel/) ───────────────────────────────────
+# Run separately:  uvicorn lawrence_kernel.main:app --app-dir services/kernel
+# Install:         pip install -e ".[kernel-dev]" --config-settings editable_mode=compat

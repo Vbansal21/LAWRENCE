@@ -1,6 +1,0 @@
-name: tool-template
-risk_level: low
-requires_confirmation: true
-input_schema: {}
-output_schema: {}
-failure_modes: []

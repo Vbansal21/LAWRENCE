@@ -1,0 +1,133 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "ts",
+    "turn_id",
+    "trigger",
+    "modalities",
+    "user_text",
+    "vision_state",
+    "audio_state",
+    "memory_refs",
+    "web_results",
+    "answer_text",
+    "memory_note",
+    "context_tags",
+    "confidence",
+    "latency_ms"
+  ],
+  "properties": {
+    "ts": {
+      "type": "string",
+      "description": "ISO-8601 UTC timestamp of turn start."
+    },
+    "turn_id": {
+      "type": "string",
+      "description": "Short unique ID for this turn (e.g. t-<hex8>)."
+    },
+    "trigger": {
+      "type": "string",
+      "enum": ["user_text", "user_image", "user_audio", "user_screenshot", "user_mixed"],
+      "description": "What triggered this turn."
+    },
+    "modalities": {
+      "type": "array",
+      "description": "All modalities present at turn time.",
+      "items": {
+        "type": "string",
+        "enum": ["text", "image", "screenshot", "audio", "memory", "web"]
+      }
+    },
+    "user_text": {
+      "type": "string",
+      "description": "Verbatim user text input."
+    },
+    "vision_state": {
+      "type": "object",
+      "description": "Snapshot of the rolling vision preprocessor at turn time.",
+      "additionalProperties": false,
+      "required": ["active", "last_capture_ts", "ocr_text", "heuristic_diff", "change_score"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "last_capture_ts": { "type": ["string", "null"] },
+        "ocr_text": {
+          "type": "string",
+          "description": "OCR text from most recent low-res frame.",
+          "maxLength": 800
+        },
+        "heuristic_diff": {
+          "type": "string",
+          "description": "Human-readable description of what changed since the last significant frame.",
+          "maxLength": 400
+        },
+        "change_score": {
+          "type": "number",
+          "description": "0.0-1.0 normalised pixel-change magnitude since last captured frame.",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "audio_state": {
+      "type": "object",
+      "description": "Snapshot of the rolling audio preprocessor at turn time.",
+      "additionalProperties": false,
+      "required": ["active", "last_segment_ts", "transcript", "rms_db", "speech_detected"],
+      "properties": {
+        "active": { "type": "boolean" },
+        "last_segment_ts": { "type": ["string", "null"] },
+        "transcript": {
+          "type": "string",
+          "description": "Latest transcribed speech segment.",
+          "maxLength": 600
+        },
+        "rms_db": {
+          "type": ["number", "null"],
+          "description": "RMS level in dBFS of most recent audio window."
+        },
+        "speech_detected": { "type": "boolean" }
+      }
+    },
+    "memory_refs": {
+      "type": "array",
+      "description": "IDs of memory notes injected into this turn context.",
+      "items": { "type": "string" }
+    },
+    "web_results": {
+      "type": "array",
+      "description": "Web search snippets injected, if any.",
+      "maxItems": 5,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["url", "snippet"],
+        "properties": {
+          "url": { "type": "string" },
+          "snippet": { "type": "string", "maxLength": 300 }
+        }
+      }
+    },
+    "answer_text": {
+      "type": "string",
+      "description": "Model answer delivered to the user."
+    },
+    "memory_note": {
+      "type": "string",
+      "description": "Compacted note written to memory buffer this turn."
+    },
+    "context_tags": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "latency_ms": {
+      "type": "integer",
+      "description": "Wall-clock ms from turn start to model response delivered."
+    }
+  }
+}

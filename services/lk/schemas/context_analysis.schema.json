@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "situation_summary",
+    "user_intent",
+    "web_queries",
+    "needs_web",
+    "context_gaps",
+    "adjacent_topics"
+  ],
+  "properties": {
+    "situation_summary": {
+      "type": "string",
+      "description": "2-3 sentence summary of what is happening in the current rolling context (screen, audio, text, memory). What is the user doing? What changed recently?",
+      "maxLength": 400
+    },
+    "user_intent": {
+      "type": "string",
+      "description": "One sentence on what the user is trying to accomplish or asking right now.",
+      "maxLength": 200
+    },
+    "web_queries": {
+      "type": "array",
+      "description": "1-3 specific web search queries that would fill gaps or enrich the answer. Not just repeating user words — find adjacent relevant info, current state, or missing context. Empty if needs_web is false.",
+      "maxItems": 3,
+      "items": {
+        "type": "string",
+        "maxLength": 100
+      }
+    },
+    "needs_web": {
+      "type": "boolean",
+      "description": "True if web search would materially improve the response (current events, specific docs, factual verification)."
+    },
+    "context_gaps": {
+      "type": "array",
+      "description": "What is unknown or ambiguous from the current context that would help give a better answer.",
+      "maxItems": 4,
+      "items": {
+        "type": "string",
+        "maxLength": 120
+      }
+    },
+    "adjacent_topics": {
+      "type": "array",
+      "description": "Related topics or resources the user might benefit from knowing about, beyond what they directly asked.",
+      "maxItems": 4,
+      "items": {
+        "type": "string",
+        "maxLength": 80
+      }
+    }
+  }
+}

@@ -1,4 +1,0 @@
-name: api-template
-base_url: http://127.0.0.1:8000
-endpoints: []
-auth: none

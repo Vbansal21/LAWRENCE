@@ -1,0 +1,53 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "answer_text",
+    "modalities_used",
+    "note_compact",
+    "note_full",
+    "context_tags",
+    "confidence"
+  ],
+  "properties": {
+    "answer_text": {
+      "type": "string",
+      "description": "The direct response to the user. Clear and complete. May reference screen content, audio, or web results if they were provided.",
+      "maxLength": 1800
+    },
+    "modalities_used": {
+      "type": "array",
+      "description": "Which input modalities substantively informed this answer.",
+      "items": {
+        "type": "string",
+        "enum": ["text", "image", "screenshot", "audio", "memory", "web"]
+      }
+    },
+    "note_compact": {
+      "type": "string",
+      "description": "One compact sentence (max 120 chars) for the rolling memory buffer. Must be self-contained and meaningful out of context. Empty string if nothing worth retaining.",
+      "maxLength": 120
+    },
+    "note_full": {
+      "type": "string",
+      "description": "Full detail paragraph for the daily journal. Include what the user asked, what context was present (screen/audio/web), what was discussed, and what was decided or found. 2-5 sentences.",
+      "maxLength": 600
+    },
+    "context_tags": {
+      "type": "array",
+      "description": "3-6 topic keywords describing this turn for future retrieval.",
+      "minItems": 1,
+      "maxItems": 6,
+      "items": {
+        "type": "string",
+        "maxLength": 30
+      }
+    },
+    "confidence": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1,
+      "description": "Self-assessed confidence in the answer (0=guessing, 1=certain)."
+    }
+  }
+}
