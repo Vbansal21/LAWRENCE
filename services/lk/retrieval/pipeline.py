@@ -40,14 +40,21 @@ def _db_to_chunk(sc: StoredChunk, query: str) -> WebChunk:
 class RetrievalPipeline:
     def __init__(self, db: SemanticDB | None = None) -> None:
         self._db = db or SemanticDB()
+        # live-patchable via /set retrieval-top-k / retrieval-fresh / retrieval-db-min
+        self.top_k       = TOP_K
+        self.fresh_per_q = FRESH_PER_Q
+        self.db_min_hits = DB_MIN_HITS
 
-    def retrieve(self, queries: list[str], top_k: int = TOP_K) -> list[CitedResult]:
+    def retrieve(self, queries: list[str], top_k: int | None = None) -> list[CitedResult]:
         """
         Run the full pipeline for a list of query variants.
         Returns top_k CitedResult objects, ranked by relevance.
+        top_k defaults to self.top_k (live-patchable via /set retrieval-top-k).
         """
         if not queries:
             return []
+        if top_k is None:
+            top_k = self.top_k
 
         all_chunks: list[WebChunk] = []
         seen_texts: set[str] = set()
@@ -55,7 +62,7 @@ class RetrievalPipeline:
 
         # 1. Check DB — collect hits and track per-query count in one pass
         for q in queries:
-            db_hits = self._db.search(q, top_k=DB_MIN_HITS * 2)
+            db_hits = self._db.search(q, top_k=self.db_min_hits * 2)
             hits_by_query[q] = len(db_hits)
             for sc in db_hits:
                 if sc.text not in seen_texts:
@@ -64,11 +71,11 @@ class RetrievalPipeline:
 
         # 2. Decide what needs a web fetch
         needs_web = [q for q, n in hits_by_query.items() if n == 0]
-        if not needs_web and len(all_chunks) < DB_MIN_HITS:
+        if not needs_web and len(all_chunks) < self.db_min_hits:
             needs_web = queries
 
         if needs_web:
-            fresh = search_and_fetch(needs_web, max_per_query=FRESH_PER_Q)
+            fresh = search_and_fetch(needs_web, max_per_query=self.fresh_per_q)
             # 3. Store new chunks
             by_url: dict[str, list[WebChunk]] = {}
             for c in fresh:

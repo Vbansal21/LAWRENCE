@@ -9,7 +9,7 @@ transcript; the compact form is a keyword-tagged one-liner. No model involved.
 """
 from __future__ import annotations
 
-from .gate import STOPWORDS as _STOP, VISION_HIGH
+from .gate import STOPWORDS as _STOP, gate_config as _gate_cfg
 
 
 def _kw(text: str, n: int = 8) -> list[str]:
@@ -30,7 +30,7 @@ def vision(
     heuristic_diff: str,
 ) -> tuple[str, str]:
     t = ts[11:19]
-    level = "sig" if change_score >= VISION_HIGH else "minor"
+    level = "sig" if change_score >= _gate_cfg.vision_high else "minor"
     kw = ", ".join(_kw(ocr_text)) if ocr_text else "—"
     compact = f"[VISION {t}] {level} Δ={change_score:.2f} | {kw}"
 

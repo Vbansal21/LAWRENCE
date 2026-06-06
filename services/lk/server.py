@@ -14,6 +14,9 @@ flag, so swapping models needs no edits here. Fixed, model-independent flags:
 Profile-driven flags: --mmproj (only if present), --flash-attn, --cache-type-k/v,
 --jinja, --ctx-size.
 
+restart() stops the running instance (if any) and starts a new one — lets the CLI
+swap models or change server flags without restarting the whole process.
+
 The server exposes OpenAI-compatible endpoints:
   POST /v1/chat/completions  (vision/audio via base64 image_url/audio_url blocks)
   GET  /health
@@ -44,6 +47,7 @@ HOST = "127.0.0.1"
 PORT = 8190          # avoid clash with existing llama-server on 8080
 
 _proc: subprocess.Popen[bytes] | None = None
+_current_profile: ModelProfile | None = None   # profile the running server was started with
 
 
 def server_url() -> str:
@@ -59,6 +63,11 @@ def health_check(timeout: float = 2.0) -> bool:
         return False
 
 
+def current_profile() -> ModelProfile | None:
+    """Return the profile the currently running server was started with, or None."""
+    return _current_profile
+
+
 def start(
     profile: ModelProfile,
     *,
@@ -71,7 +80,7 @@ def start(
     All model-dependent flags (mmproj, flash-attn, KV type, jinja, ctx) come from
     the profile, so swapping models needs no edits here — see profile.py.
     """
-    global _proc
+    global _proc, _current_profile
 
     if health_check():
         print(f"  [server] already running at {server_url()}")
@@ -126,6 +135,7 @@ def start(
             print(f"  [server] process exited early — check {log_path}", file=sys.stderr)
             raise RuntimeError("llama-server exited during startup")
         if health_check(timeout=3.0):
+            _current_profile = profile
             print(f"  [server] ready at {server_url()}")
             return
         time.sleep(2)
@@ -135,8 +145,24 @@ def start(
     raise RuntimeError(f"llama-server did not become healthy within {wait_secs}s — check {log_path}")
 
 
+def restart(
+    profile: ModelProfile,
+    *,
+    gpu_layers: int | None = None,
+    threads: int | None = 9,
+    wait_secs: int = 120,
+) -> None:
+    """Stop the running server (if any) then start with the new profile.
+
+    Lets the CLI swap models or change flags without restarting the whole process.
+    Raises RuntimeError if the new server fails to start.
+    """
+    stop()
+    start(profile, gpu_layers=gpu_layers, threads=threads, wait_secs=wait_secs)
+
+
 def stop() -> None:
-    global _proc
+    global _proc, _current_profile
     if _proc is None:
         return
     if _proc.poll() is None:
@@ -153,4 +179,5 @@ def stop() -> None:
                 _proc.kill()
             _proc.wait(timeout=5)
     _proc = None
+    _current_profile = None
     print("  [server] stopped")

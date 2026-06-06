@@ -85,6 +85,11 @@ class ContextStore:
         self._last_compact: float = 0.0      # monotonic time of last compaction finish
         self._budget: float = _BUDGET_BASE   # dynamic working-context budget (chars)
 
+        # live-patchable via /set compact-min / /set l2-budget / /set l3-budget
+        self._min_compact_secs: int = _MIN_COMPACT_SECS
+        self.l2_budget: int = L2_BUDGET
+        self.l3_budget: int = L3_BUDGET
+
         self._mem_dir.mkdir(parents=True, exist_ok=True)
         self._migrate_legacy()
 
@@ -189,7 +194,7 @@ class ContextStore:
         if self._compact is None:
             self._trim_l1_naive()
             return
-        if time.monotonic() - self._last_compact < _MIN_COMPACT_SECS:
+        if time.monotonic() - self._last_compact < self._min_compact_secs:
             return  # cooldown active — L1 grows until next window (capped by the budget)
         if not self._cmplock.acquire(blocking=False):
             return  # already running
@@ -201,7 +206,7 @@ class ContextStore:
                 ok1 = self._compact_l1()
                 if self._live_fn:
                     self._live_fn("[memory] L1→L2 done" if ok1 else "[memory] L1 trimmed (no summary)")
-                if self._l2_size > L2_BUDGET:
+                if self._l2_size > self.l2_budget:
                     ok2 = self._compact_l2()
                     if self._live_fn:
                         self._live_fn("[memory] L2→L3 done" if ok2 else "[memory] L2 trimmed (no summary)")
@@ -326,7 +331,7 @@ class ContextStore:
             if l3_entry:
                 l3_lines = self._read_lines(self._l3)
                 total = sum(len(l) for l in l3_lines) + len(l3_entry)
-                while total > L3_BUDGET and l3_lines:
+                while total > self.l3_budget and l3_lines:
                     total -= len(l3_lines.pop(0))
                 l3_lines.append(l3_entry.rstrip())
                 self._l3_size = self._write_lines(self._l3, l3_lines)

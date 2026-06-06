@@ -1,11 +1,16 @@
 """Screen observer — capture → heuristic gate → distill → context store.
 
-Runs as a daemon thread. Captures screen at LOW_RES every POLL_INTERVAL seconds.
+Runs as a daemon thread. Captures screen at LOW_RES every poll_interval seconds.
 When pixel change exceeds threshold AND text is sufficiently novel, the frame is
 distilled (two forms: compact line + detailed block) and written to ContextStore.
 
 High-res capture triggers on significant change for image attachment to model turns.
 The pending_hi path is consumed by the kernel at turn time.
+
+Tunables poll_interval and min_write_secs are instance attributes so the CLI's
+/set command can change them live without restarting the observer.  Gate thresholds
+(vision_high, vision_pixel_min, vision_novelty_min) are on gate.gate_config — also
+live-patchable.
 """
 from __future__ import annotations
 
@@ -22,17 +27,17 @@ from pathlib import Path
 
 from ..ctx import ContextStore, vision_gate
 from ..ctx import distill as D
-from ..ctx.gate import VISION_PIXEL_MIN, VISION_HIGH
+from ..ctx import gate as _gate
 
-# ── tunables ──────────────────────────────────────────────────────────────────
+# ── default tunables (instance attrs on VisionObserver, overridable live) ────
 
-LOW_RES           = (640, 360)   # larger → tesseract can read text at Windows DPI scales
-HIGH_RES          = (1280, 720)
-POLL_INTERVAL     = 10.0   # seconds between capture attempts
-MIN_WRITE_SECS    = 60     # minimum gap between context writes (prevents scroll spam)
+LOW_RES        = (640, 360)    # larger → tesseract reads text at Windows DPI scales
+HIGH_RES       = (1280, 720)
+POLL_INTERVAL  = 10.0          # seconds between capture attempts
+MIN_WRITE_SECS = 60            # minimum gap between context writes
 
 
-# ── frame snapshot (in-memory, for /status display) ───────────────────────────
+# ── frame snapshot (in-memory, for /obs display) ─────────────────────────────
 
 @dataclass
 class LatestFrame:
@@ -130,8 +135,6 @@ def run_ocr(path: Path, max_chars: int = 600) -> str:
     if shutil.which("tesseract"):
         try:
             r = subprocess.run(
-                # PSM 11 = sparse text: best for UI screenshots with scattered labels
-                # --dpi 150 helps tesseract scale expectations for screen captures
                 ["tesseract", str(path), "stdout", "--psm", "11", "--dpi", "150", "-l", "eng"],
                 capture_output=True, text=True, timeout=15,
             )
@@ -153,13 +156,14 @@ _NOISE = {"the", "a", "an", "is", "to", "of", "in", "and", "or", "for", "with", 
 
 
 def heuristic_diff(prev_ocr: str, curr_ocr: str, score: float) -> str:
-    if score < VISION_PIXEL_MIN:
+    """Human-readable summary of what changed between two frames."""
+    if score < _gate.gate_config.vision_pixel_min:
         return ""
     prev_w = set(prev_ocr.lower().split()) - _NOISE if prev_ocr else set()
     curr_w = set(curr_ocr.lower().split()) - _NOISE if curr_ocr else set()
     appeared = sorted([w for w in (curr_w - prev_w) if len(w) > 2])[:5]
     vanished = sorted([w for w in (prev_w - curr_w) if len(w) > 2])[:5]
-    level = "Significant layout change" if score >= VISION_HIGH else "Minor change"
+    level = "Significant layout change" if score >= _gate.gate_config.vision_high else "Minor change"
     parts = [f"{level} (Δ={score:.2f})"]
     if appeared:
         parts.append(f"appeared: {', '.join(appeared)}")
@@ -173,7 +177,13 @@ def heuristic_diff(prev_ocr: str, curr_ocr: str, score: float) -> str:
 # ── observer daemon ───────────────────────────────────────────────────────────
 
 class VisionObserver(threading.Thread):
-    """Daemon thread: polls screen, gates on significance, writes to ContextStore."""
+    """Daemon thread: polls screen, gates on significance, writes to ContextStore.
+
+    poll_interval and min_write_secs are instance attributes — patch them live:
+        observer.poll_interval  = 5.0   # check every 5s instead of 10s
+        observer.min_write_secs = 30    # allow writes every 30s
+    Gate thresholds (vision_high, etc.) live on gate.gate_config — also live.
+    """
     daemon = True
 
     def __init__(
@@ -181,20 +191,26 @@ class VisionObserver(threading.Thread):
         tmp_dir: Path,
         ctx: ContextStore,
         on_event: Callable[[str, str], None] | None = None,
+        poll_interval:  float = POLL_INTERVAL,
+        min_write_secs: int   = MIN_WRITE_SECS,
     ) -> None:
         super().__init__(name="vision-obs")
-        self.tmp_dir   = tmp_dir
-        self._ctx      = ctx
-        self._on_event = on_event
-        self._stop     = threading.Event()
-        self._prev_bytes: bytes | None = None
-        self._prev_ocr: str = ""
-        self._prev_written_ocr: str = ""  # last OCR that passed the gate
+        self.tmp_dir        = tmp_dir
+        self._ctx           = ctx
+        self._on_event      = on_event
+        self._stop          = threading.Event()
+        self._prev_bytes:   bytes | None = None
+        self._prev_ocr:     str  = ""
+        self._prev_written_ocr: str = ""
         self._last_written_time: float = 0.0
-        self._idx      = 0
-        self.active    = False
-        self.latest: LatestFrame | None = None
-        self.pending_hi: Path | None = None  # consumed by kernel at turn time
+        self._idx           = 0
+        self.active         = False
+        self.latest:        LatestFrame | None = None
+        self.pending_hi:    Path | None = None
+
+        # live-patchable tunables
+        self.poll_interval  = poll_interval
+        self.min_write_secs = min_write_secs
 
     def stop(self) -> None:
         self._stop.set()
@@ -205,7 +221,7 @@ class VisionObserver(threading.Thread):
         return p
 
     def pull_hires(self, out: Path) -> Path | None:
-        """Capture a fresh hi-res frame right now on model request. Sets pending_hi."""
+        """Capture a fresh hi-res frame right now on model request."""
         out.parent.mkdir(parents=True, exist_ok=True)
         if capture_frame(out, *HIGH_RES):
             self.pending_hi = out
@@ -219,7 +235,7 @@ class VisionObserver(threading.Thread):
                 self._tick()
             except Exception:
                 pass
-            self._stop.wait(POLL_INTERVAL)
+            self._stop.wait(self.poll_interval)   # live-patchable interval
 
     def _tick(self) -> None:
         self._idx += 1
@@ -230,7 +246,7 @@ class VisionObserver(threading.Thread):
         curr_bytes = _load_grey(low)
         score = pixel_change_score(self._prev_bytes, curr_bytes)
 
-        if score < VISION_PIXEL_MIN and self._prev_bytes is not None:
+        if score < _gate.gate_config.vision_pixel_min and self._prev_bytes is not None:
             return
 
         ts = datetime.now(timezone.utc).isoformat()
@@ -238,7 +254,7 @@ class VisionObserver(threading.Thread):
         diff = heuristic_diff(self._prev_ocr, curr_ocr, score)
         hi_path: Path | None = None
 
-        if score >= VISION_HIGH:
+        if score >= _gate.gate_config.vision_high:
             hi = self.tmp_dir / f"vis-hi-{self._idx}.png"
             if capture_frame(hi, *HIGH_RES):
                 curr_ocr = run_ocr(hi, max_chars=800)
@@ -252,7 +268,7 @@ class VisionObserver(threading.Thread):
 
         now = time.monotonic()
         if vision_gate(score, self._prev_written_ocr, curr_ocr):
-            if now - self._last_written_time >= MIN_WRITE_SECS:
+            if now - self._last_written_time >= self.min_write_secs:
                 compact, detailed = D.vision(ts, score, curr_ocr, diff)
                 self._ctx.append(ts=ts, kind="vision", compact=compact, detailed=detailed)
                 self._prev_written_ocr = curr_ocr
