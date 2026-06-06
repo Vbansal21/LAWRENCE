@@ -101,6 +101,8 @@ class TurnConfig:
     timeout:       int   = 300
     skip_analysis: bool  = False
     no_retrieval:  bool  = False
+    allow_images:  bool  = True   # False for text-only / non-vision models
+    allow_audio:   bool  = True   # False for models without audio input
 
 
 # ── main turn ─────────────────────────────────────────────────────────────────
@@ -121,7 +123,13 @@ def run_turn(
     ts_start = time.monotonic()
     ts_now   = datetime.now(timezone.utc).isoformat()
     ctx_tail = ctx.tail_for_model()
-    images   = list(images)   # local copy — we may append capture_fn result
+
+    # Drop media the model can't accept (text-only / vision-only models). Sending
+    # an image_url/audio_url block to a model without that modality errors.
+    images = list(images) if cfg.allow_images else []
+    audios = list(audios) if cfg.allow_audio  else []
+    if not cfg.allow_images:
+        capture_fn = None   # don't bother capturing hi-res for a non-vision model
 
     # ── pass 1: analysis ──────────────────────────────────────────────────────
     analysis: dict[str, Any] | None = None

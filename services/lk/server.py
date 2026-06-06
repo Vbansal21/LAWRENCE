@@ -3,24 +3,20 @@
 Starts llama-server once and keeps it alive for the session.
 All turns use HTTP POST /v1/chat/completions — no model reloads.
 
-Configuration:
-  - ctx_size   : 32768  (32K KV-cache ceiling; the kernel's working context
-                         flexes dynamically below this — see ctx/store.py)
-  - flash_attn : on     (required for long contexts at reasonable memory)
-  - cache_type_k/v: q4_0 (KV quantization — reduces VRAM/RAM for long contexts)
+start() takes a ModelProfile (see profile.py) that carries every model-dependent
+flag, so swapping models needs no edits here. Fixed, model-independent flags:
   - defrag_thold: 0.1   (defragment KV cache across a long multi-turn session)
   - mlock      : on     (lock weights in RAM — no paging under memory pressure)
-  - mmproj     : loaded so native image/audio tokens work
+  - parallel   : 1      (single conversation slot)
   - n_gpu_layers: 0 by default (CPU), set via LLAMACPP_GPU_LAYERS env var
   - threads    : 9      (leaves headroom for system + editor during inference)
 
-The server exposes OpenAI-compatible endpoints:
-  POST /v1/chat/completions  (with vision via base64 image_url content blocks)
-  GET  /health
+Profile-driven flags: --mmproj (only if present), --flash-attn, --cache-type-k/v,
+--jinja, --ctx-size.
 
-Gemma 4 native audio: the llama-server build must include mtmd support.
-Audio files are passed as base64-encoded content in the chat message,
-using the same multimodal content block format as images.
+The server exposes OpenAI-compatible endpoints:
+  POST /v1/chat/completions  (vision/audio via base64 image_url/audio_url blocks)
+  GET  /health
 """
 
 from __future__ import annotations
@@ -35,12 +31,14 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
+from .profile import ModelProfile
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_BIN    = REPO_ROOT / "third_party/llama.cpp/build/bin/llama-server"
 DEFAULT_MODEL  = REPO_ROOT / "models/local/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4_K_M.gguf"
-DEFAULT_MMPROJ = REPO_ROOT / "models/local/gemma-4-E4B-it-GGUF/mmproj-gemma-4-E4B-it-BF16.gguf"
+# The matching mmproj is auto-discovered next to the model — see profile._find_mmproj
 
 HOST = "127.0.0.1"
 PORT = 8190          # avoid clash with existing llama-server on 8080
@@ -62,16 +60,17 @@ def health_check(timeout: float = 2.0) -> bool:
 
 
 def start(
+    profile: ModelProfile,
     *,
-    model: Path = DEFAULT_MODEL,
-    mmproj: Path = DEFAULT_MMPROJ,
-    bin_path: Path = DEFAULT_BIN,
-    ctx_size: int = 32_768,        # KV-cache ceiling; working context flexes below this
     gpu_layers: int | None = None,
     threads: int | None = 9,       # leaves headroom for system + VSCode during inference
     wait_secs: int = 120,
 ) -> None:
-    """Start llama-server in background. Blocks until /health responds."""
+    """Start llama-server in background from a ModelProfile. Blocks until healthy.
+
+    All model-dependent flags (mmproj, flash-attn, KV type, jinja, ctx) come from
+    the profile, so swapping models needs no edits here — see profile.py.
+    """
     global _proc
 
     if health_check():
@@ -87,24 +86,29 @@ def start(
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     cmd = [
-        str(bin_path),
-        "--model", str(model),
-        "--mmproj", str(mmproj),
+        str(profile.bin),
+        "--model", str(profile.model),
         "--host", HOST,
         "--port", str(PORT),
-        "--ctx-size", str(ctx_size),
+        "--ctx-size", str(profile.ctx_size),
         "--threads", str(threads),
         "--n-gpu-layers", str(gpu_layers),
-        "--flash-attn", "on",
-        "--cache-type-k", "q4_0",
-        "--cache-type-v", "q4_0",
         "--defrag-thold", "0.1",
-        "--mlock",                    # lock weights in RAM — prevent OS paging under memory pressure
+        "--mlock",                    # lock weights in RAM — no paging under memory pressure
         "--no-webui",
-        "--jinja",                    # enable Jinja chat template (Gemma 4 needs it)
         "--parallel", "1",            # single-slot: one conversation at a time
     ]
+    # ── model-dependent flags (only when the model/build supports them) ──────────
+    if profile.mmproj is not None:
+        cmd += ["--mmproj", str(profile.mmproj)]   # multimodal projector
+    if profile.flash_attn in ("on", "off", "auto"):
+        cmd += ["--flash-attn", profile.flash_attn]
+    if profile.kv_type:               # quantized KV cache (requires flash attn)
+        cmd += ["--cache-type-k", profile.kv_type, "--cache-type-v", profile.kv_type]
+    if profile.jinja:                 # embedded Jinja chat template
+        cmd += ["--jinja"]
 
+    print(f"  [server] {profile.summary()}")
     log_file = open(log_path, "wb")
     _proc = subprocess.Popen(
         cmd,
@@ -150,9 +154,3 @@ def stop() -> None:
             _proc.wait(timeout=5)
     _proc = None
     print("  [server] stopped")
-
-
-def ensure_running(**kwargs: object) -> None:
-    """Start the server if not already healthy."""
-    if not health_check():
-        start(**kwargs)  # type: ignore[arg-type]

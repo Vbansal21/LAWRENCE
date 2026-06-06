@@ -46,6 +46,7 @@ from . import server as _server
 from .ctx      import ContextStore
 from .kernel   import run_turn, run_proactive, run_compaction, write_journal_entry, TurnConfig
 from .obs      import VisionObserver, AudioObserver, capture_now, record_now
+from .profile  import ModelProfile
 from .retrieval import SemanticDB, RetrievalPipeline
 from .ui       import UIConnector
 
@@ -62,7 +63,8 @@ def _args() -> argparse.Namespace:
     p.add_argument("--audio-query",    action="store_true",
                    help="Treat all significant audio as a query (full turn, response printed)")
     p.add_argument("--model",   default=str(_server.DEFAULT_MODEL))
-    p.add_argument("--mmproj",  default=str(_server.DEFAULT_MMPROJ))
+    p.add_argument("--mmproj",  default=None,
+                   help="multimodal projector GGUF (auto-detected next to --model if omitted)")
     p.add_argument("--bin",     default=str(_server.DEFAULT_BIN))
     p.add_argument("--ctx-size",    type=int,   default=32_768)
     p.add_argument("--gpu-layers",  type=int,   default=None)
@@ -351,12 +353,15 @@ def main() -> int:
     args = _args()
     print("\nLAWRENCE v0.1")
 
+    # Build a capability profile for whatever model was selected. This decides
+    # modalities (vision/audio), mmproj usage, and server flags — see profile.py.
+    profile = ModelProfile.detect(
+        model=args.model, bin_path=args.bin,
+        mmproj=args.mmproj, ctx_size=args.ctx_size,
+    )
+
     try:
-        _server.start(
-            model=Path(args.model), mmproj=Path(args.mmproj),
-            bin_path=Path(args.bin), ctx_size=args.ctx_size,
-            gpu_layers=args.gpu_layers, threads=args.threads,
-        )
+        _server.start(profile, gpu_layers=args.gpu_layers, threads=args.threads)
     except RuntimeError as e:
         print(f"[error] {e}", file=sys.stderr)
         return 1
@@ -397,13 +402,18 @@ def main() -> int:
         timeout       = args.timeout,
         skip_analysis = args.skip_analysis,
         no_retrieval  = args.no_retrieval,
+        allow_images  = profile.vision,
+        allow_audio   = profile.audio,
     )
 
+    print(f"  model        : {profile.modalities}")
     print(f"  event log    : {ctx._log}")
     print(f"  memory       : L1/L2/L3 in {ctx._mem_dir}")
     print(f"  retrieval DB : {db._con.execute('PRAGMA database_list').fetchone()[2]}")
     print(f"  mode         : {'single-pass' if args.skip_analysis else 'analysis → retrieval → respond'}")
-    if args.audio_query:
+    if args.audio_query and not profile.audio:
+        print("  audio-query  : requested but model has no audio input — disabled")
+    elif args.audio_query:
         print("  audio-query  : ON — speech triggers full turns automatically")
     print("  Type /help for commands.\n")
 
@@ -428,9 +438,9 @@ def main() -> int:
 
         # ── observer lifecycle (single source of truth for start/stop) ────────────
         def _start_vision() -> bool:
-            """Start the vision observer. Returns False if already running."""
+            """Start the vision observer. False if unsupported or already running."""
             nonlocal vision
-            if vision is not None:
+            if not profile.vision or vision is not None:
                 return False
             vision = VisionObserver(tmp, ctx, on_event=on_proactive)
             vision_ref[0] = vision
@@ -446,9 +456,9 @@ def main() -> int:
             return True
 
         def _start_audio() -> bool:
-            """Start the audio observer. Returns False if already running."""
+            """Start the audio observer. False if unsupported or already running."""
             nonlocal audio
-            if audio is not None:
+            if not profile.audio or audio is not None:
                 return False
             on_query = (
                 _make_audio_query_handler(
@@ -557,11 +567,17 @@ def main() -> int:
                     else:
                         print("[journal] nothing to journal yet")
                 elif action == "vision_on":
-                    print("[vision on]" if _start_vision() else "[vision already on]")
+                    if not profile.vision:
+                        print("[vision] model has no vision input — unavailable")
+                    else:
+                        print("[vision on]" if _start_vision() else "[vision already on]")
                 elif action == "vision_off":
                     print("[vision off]" if _stop_vision() else "[vision already off]")
                 elif action == "audio_on":
-                    print("[audio on]" if _start_audio() else "[audio already on]")
+                    if not profile.audio:
+                        print("[audio] model has no audio input — unavailable")
+                    else:
+                        print("[audio on]" if _start_audio() else "[audio already on]")
                 elif action == "audio_off":
                     print("[audio off]" if _stop_audio() else "[audio already off]")
                 elif action == "toggle_retrieval":
@@ -572,6 +588,14 @@ def main() -> int:
                     sys.stdout.write("\nyou> ")
                     sys.stdout.flush()
                     continue
+
+                # drop manually-attached media the model can't consume
+                if images and not profile.vision:
+                    print("[note] model has no vision input — ignoring attached image(s)")
+                    images = []
+                if audios and not profile.audio:
+                    print("[note] model has no audio input — ignoring attached audio")
+                    audios = []
 
                 # claim pending high-res screenshot from vision observer
                 if vision and vision.pending_hi:
