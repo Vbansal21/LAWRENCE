@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -59,7 +60,6 @@ def _fallback_response(text: str) -> dict[str, Any]:
     # If the text looks like truncated JSON, salvage answer_text with a regex
     answer = text[:800]
     if text.lstrip().startswith("{"):
-        import re
         m = re.search(r'"answer_text"\s*:\s*"((?:[^"\\]|\\.)*)', text)
         if m:
             answer = m.group(1).replace('\\"', '"').replace("\\n", "\n")

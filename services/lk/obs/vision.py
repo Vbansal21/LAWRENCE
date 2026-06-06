@@ -26,10 +26,10 @@ from ..ctx.gate import VISION_PIXEL_MIN, VISION_HIGH
 
 # ── tunables ──────────────────────────────────────────────────────────────────
 
-LOW_RES           = (320, 180)
+LOW_RES           = (640, 360)   # larger → tesseract can read text at Windows DPI scales
 HIGH_RES          = (1280, 720)
-POLL_INTERVAL     = 8.0    # seconds between capture attempts
-MIN_WRITE_SECS    = 45     # minimum gap between context writes (prevents scroll spam)
+POLL_INTERVAL     = 10.0   # seconds between capture attempts
+MIN_WRITE_SECS    = 60     # minimum gap between context writes (prevents scroll spam)
 
 
 # ── frame snapshot (in-memory, for /status display) ───────────────────────────
@@ -130,7 +130,9 @@ def run_ocr(path: Path, max_chars: int = 600) -> str:
     if shutil.which("tesseract"):
         try:
             r = subprocess.run(
-                ["tesseract", str(path), "stdout", "--psm", "3", "-l", "eng"],
+                # PSM 11 = sparse text: best for UI screenshots with scattered labels
+                # --dpi 150 helps tesseract scale expectations for screen captures
+                ["tesseract", str(path), "stdout", "--psm", "11", "--dpi", "150", "-l", "eng"],
                 capture_output=True, text=True, timeout=15,
             )
             t = r.stdout.strip()

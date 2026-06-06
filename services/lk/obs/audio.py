@@ -2,8 +2,11 @@
 
 Runs as a daemon thread. Records WINDOW_SECONDS of audio every POLL_INTERVAL
 seconds. VAD via RMS energy. Transcription via faster-whisper or whisper-cli.
-Only segments that pass SignificanceGate (speech, non-duplicate) are written.
-WAV files for recent speech are retained for native Gemma audio attachment.
+Only segments that pass the significance gate (speech, non-duplicate) are
+written to the context store.
+
+In --audio-query mode the transcript is handed to on_query (a full turn);
+otherwise on_event fires passive proactive retrieval.
 """
 from __future__ import annotations
 
@@ -164,16 +167,12 @@ class AudioObserver(threading.Thread):
         self._stop     = threading.Event()
         self._idx      = 0
         self._recent_transcripts: list[str] = []   # for dedup gate
-        self._recent_wavs: list[Path] = []          # for native audio attachment
         self.active       = False
         self.recording_ok = True   # False when mic/recorder unavailable
 
     def stop(self) -> None:
         self._stop.set()
         self.active = False
-
-    def recent_speech_wavs(self) -> list[Path]:
-        return [p for p in self._recent_wavs if p.exists()]
 
     def run(self) -> None:
         self.active = True
@@ -217,7 +216,3 @@ class AudioObserver(threading.Thread):
         self._recent_transcripts.append(text)
         if len(self._recent_transcripts) > MAX_RECENT_KEEP:
             self._recent_transcripts.pop(0)
-
-        self._recent_wavs.append(wav)
-        if len(self._recent_wavs) > MAX_WAV_KEEP:
-            self._recent_wavs.pop(0)

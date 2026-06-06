@@ -4,12 +4,15 @@ Starts llama-server once and keeps it alive for the session.
 All turns use HTTP POST /v1/chat/completions — no model reloads.
 
 Configuration:
-  - ctx_size   : 32768  (32K context window; pass --ctx-size 131072 for full 128K)
+  - ctx_size   : 32768  (32K KV-cache ceiling; the kernel's working context
+                         flexes dynamically below this — see ctx/store.py)
   - flash_attn : on     (required for long contexts at reasonable memory)
   - cache_type_k/v: q4_0 (KV quantization — reduces VRAM/RAM for long contexts)
+  - defrag_thold: 0.1   (defragment KV cache across a long multi-turn session)
+  - mlock      : on     (lock weights in RAM — no paging under memory pressure)
   - mmproj     : loaded so native image/audio tokens work
   - n_gpu_layers: 0 by default (CPU), set via LLAMACPP_GPU_LAYERS env var
-  - threads    : auto (nproc)
+  - threads    : 9      (leaves headroom for system + editor during inference)
 
 The server exposes OpenAI-compatible endpoints:
   POST /v1/chat/completions  (with vision via base64 image_url content blocks)
@@ -63,9 +66,9 @@ def start(
     model: Path = DEFAULT_MODEL,
     mmproj: Path = DEFAULT_MMPROJ,
     bin_path: Path = DEFAULT_BIN,
-    ctx_size: int = 32_768,
+    ctx_size: int = 32_768,        # KV-cache ceiling; working context flexes below this
     gpu_layers: int | None = None,
-    threads: int | None = None,
+    threads: int | None = 9,       # leaves headroom for system + VSCode during inference
     wait_secs: int = 120,
 ) -> None:
     """Start llama-server in background. Blocks until /health responds."""
@@ -77,9 +80,8 @@ def start(
 
     if gpu_layers is None:
         gpu_layers = int(os.environ.get("LLAMACPP_GPU_LAYERS", "0"))
-    if threads is None:
-        import multiprocessing
-        threads = multiprocessing.cpu_count()
+    if threads is None:           # caller passed None explicitly → use our default
+        threads = 9
 
     log_path = REPO_ROOT / ".runtime" / "lk-server.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +98,8 @@ def start(
         "--flash-attn", "on",
         "--cache-type-k", "q4_0",
         "--cache-type-v", "q4_0",
-        "--defrag-thold", "0.1",      # defrag KV cache when 10% fragmented (long sessions)
+        "--defrag-thold", "0.1",
+        "--mlock",                    # lock weights in RAM — prevent OS paging under memory pressure
         "--no-webui",
         "--jinja",                    # enable Jinja chat template (Gemma 4 needs it)
         "--parallel", "1",            # single-slot: one conversation at a time

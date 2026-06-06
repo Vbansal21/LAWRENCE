@@ -79,7 +79,6 @@ def _parse(
     line: str,
     tmp: Path,
     idx: int,
-    vision: VisionObserver | None,
 ) -> tuple[str, list[Path], list[Path], str]:
     """Returns (user_text, images, audios, action). action='' means run a turn."""
     text = line.strip()
@@ -194,7 +193,7 @@ def _print_status(
         f"  memory : L1={ctx._l1_size//1024}K  "
         f"L2={ctx._l2_size//1024}K  "
         f"L3={ctx._l3_size//1024}K  "
-        f"(budgets 10K/10K/4K)"
+        f"| working budget {ctx.working_budget()//1024}K chars"
     )
     if vision:
         f = vision.latest
@@ -251,14 +250,20 @@ def _make_proactive_trigger(
     Returns an on_event callback passed to the sensor observers.
     Non-blocking lock: concurrent events are silently dropped.
     Only one proactive call runs at a time; it doesn't block the observer.
+    Minimum 10-minute gap between calls — avoids constant model hammering.
     """
     _lock = threading.Lock()
+    _last_run: list[float] = [0.0]
+    _MIN_INTERVAL = 600.0   # 10 minutes between proactive analysis calls
 
     def _on_event(kind: str, compact: str) -> None:
         if cfg.no_retrieval or cfg.skip_analysis:
             return
+        if time.monotonic() - _last_run[0] < _MIN_INTERVAL:
+            return
         if not _lock.acquire(blocking=False):
             return
+        _last_run[0] = time.monotonic()
         def _run() -> None:
             try:
                 run_proactive(ctx, retrieval, live_fn=live_fn)
@@ -421,52 +426,30 @@ def main() -> int:
             _hi_idx[0] += 1
             return vi.pull_hires(tmp / f"model-hi-{_hi_idx[0]}.png")
 
-        def _apply_controls(ctrl: dict) -> None:
-            """Apply sensor control signals emitted by the model in its response JSON."""
-            nonlocal vision, audio
-            v = ctrl.get("vision", "")
-            a = ctrl.get("audio", "")
-
-            if v == "hi":
-                hi = capture_fn()
-                if hi:
-                    live_q.put("[vision] model requested hi-res — captured")
-                else:
-                    live_q.put("[vision] hi-res requested but observer is off")
-            elif v == "on" and vision is None:
-                vision = VisionObserver(tmp, ctx, on_event=on_proactive)
-                vision_ref[0] = vision
-                vision.start()
-                live_q.put("[vision] observer started by model")
-            elif v == "off" and vision is not None:
-                vision.stop(); vision = None; vision_ref[0] = None
-                live_q.put("[vision] observer stopped by model")
-
-            if a == "on" and audio is None:
-                on_query = (
-                    _make_audio_query_handler(
-                        ctx, retrieval, cfg, ui, response_q, control_q,
-                        vision_ref, capture_fn=capture_fn, live_fn=live_q.put,
-                    ) if args.audio_query else None
-                )
-                audio = AudioObserver(
-                    tmp, ctx,
-                    on_event=on_proactive if not args.audio_query else None,
-                    on_query=on_query,
-                )
-                audio.start()
-                live_q.put("[audio] observer started by model")
-            elif a == "off" and audio is not None:
-                audio.stop(); audio = None
-                live_q.put("[audio] observer stopped by model")
-
-        if not args.no_vision:
+        # ── observer lifecycle (single source of truth for start/stop) ────────────
+        def _start_vision() -> bool:
+            """Start the vision observer. Returns False if already running."""
+            nonlocal vision
+            if vision is not None:
+                return False
             vision = VisionObserver(tmp, ctx, on_event=on_proactive)
             vision_ref[0] = vision
             vision.start()
-            print("  Vision observer started.")
+            return True
 
-        if not args.no_audio:
+        def _stop_vision() -> bool:
+            nonlocal vision
+            if vision is None:
+                return False
+            vision.stop()
+            vision = vision_ref[0] = None
+            return True
+
+        def _start_audio() -> bool:
+            """Start the audio observer. Returns False if already running."""
+            nonlocal audio
+            if audio is not None:
+                return False
             on_query = (
                 _make_audio_query_handler(
                     ctx, retrieval, cfg, ui, response_q, control_q,
@@ -479,6 +462,34 @@ def main() -> int:
                 on_query=on_query,
             )
             audio.start()
+            return True
+
+        def _stop_audio() -> bool:
+            nonlocal audio
+            if audio is None:
+                return False
+            audio.stop()
+            audio = None
+            return True
+
+        def _apply_controls(ctrl: dict) -> None:
+            """Apply sensor control signals emitted by the model in its response JSON."""
+            v, a = ctrl.get("vision", ""), ctrl.get("audio", "")
+            if v == "hi":
+                live_q.put("[vision] model requested hi-res — captured" if capture_fn()
+                           else "[vision] hi-res requested but observer is off")
+            elif v == "on" and _start_vision():
+                live_q.put("[vision] observer started by model")
+            elif v == "off" and _stop_vision():
+                live_q.put("[vision] observer stopped by model")
+            if a == "on" and _start_audio():
+                live_q.put("[audio] observer started by model")
+            elif a == "off" and _stop_audio():
+                live_q.put("[audio] observer stopped by model")
+
+        if not args.no_vision and _start_vision():
+            print("  Vision observer started.")
+        if not args.no_audio and _start_audio():
             print("  Audio observer started.")
 
         idx = 0
@@ -523,7 +534,7 @@ def main() -> int:
                     break
 
                 idx += 1
-                user_text, images, audios, action = _parse(raw, tmp, idx, vision)
+                user_text, images, audios, action = _parse(raw, tmp, idx)
 
                 if action == "exit":
                     break
@@ -546,36 +557,13 @@ def main() -> int:
                     else:
                         print("[journal] nothing to journal yet")
                 elif action == "vision_on":
-                    if vision is None:
-                        vision = VisionObserver(tmp, ctx, on_event=on_proactive)
-                        vision_ref[0] = vision
-                        vision.start()
-                        print("[vision on]")
+                    print("[vision on]" if _start_vision() else "[vision already on]")
                 elif action == "vision_off":
-                    if vision:
-                        vision.stop()
-                        vision = None
-                        vision_ref[0] = None
-                        print("[vision off]")
+                    print("[vision off]" if _stop_vision() else "[vision already off]")
                 elif action == "audio_on":
-                    if audio is None:
-                        on_query = (
-                            _make_audio_query_handler(
-                                ctx, retrieval, cfg, ui, response_q, control_q,
-                                vision_ref, capture_fn=capture_fn, live_fn=live_q.put,
-                            ) if args.audio_query else None
-                        )
-                        audio = AudioObserver(
-                            tmp, ctx,
-                            on_event=on_proactive if not args.audio_query else None,
-                            on_query=on_query,
-                        )
-                        audio.start()
-                        print("[audio on]")
+                    print("[audio on]" if _start_audio() else "[audio already on]")
                 elif action == "audio_off":
-                    if audio:
-                        audio.stop(); audio = None
-                        print("[audio off]")
+                    print("[audio off]" if _stop_audio() else "[audio already off]")
                 elif action == "toggle_retrieval":
                     cfg.no_retrieval = not cfg.no_retrieval
                     print(f"[retrieval {'OFF' if cfg.no_retrieval else 'ON'}]")
