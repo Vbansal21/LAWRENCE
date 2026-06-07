@@ -1,264 +1,261 @@
-# LAWRENCE CLI Reference
-
-The complete command + configuration reference for the `lk` REPL.
-
-Start it:
-
-```bash
-python3 lk.py            # or: make run
-```
-
-Inside the REPL the prompt is `you>`. Type a question to talk to the model, or a
-`/command` to control the system. Type `/help` for a short list, `/help set` for
-all tunables. `DATE` arguments accept `today` (default), `yesterday`, or
-`YYYY-MM-DD`.
+# LAWRENCE — Cheatsheet
 
 ---
 
-## 1. Ask & attach
+## Three things run. Know them.
 
-| Command | Description |
-|---|---|
-| `text` | Send a question/statement to the model (two-pass: analysis → retrieval → response). |
-| `/screenshot [q]` | Capture the screen now and attach it to this turn. |
-| `/image PATH [q]` | Attach an image file. |
-| `/audio PATH [q]` | Attach an audio file (passed to the model as native audio). |
-| `/record SECS [q]` | Record the microphone for `SECS` seconds and attach. |
-
-Media attached to a model that lacks that modality is dropped with a notice
-(capabilities come from the active [model profile](#7-server--model)).
-
-## 2. Sensors
-
-| Command | Description |
-|---|---|
-| `/vision on` / `/vision off` | Start/stop the rolling screen observer. |
-| `/audio-on` / `/audio-off` | Start/stop the rolling audio observer. |
-| `/obs` | Live preprocessor state: latest frame Δ-score, OCR snippet, heuristic diff, pending hi-res, poll/write rates, audio status. |
-
-## 3. Rolling memory (L1 / L2 / L3)
-
-The working memory the model reads every turn. L1 = raw recent events, L2 =
-model-compressed session summaries, L3 = long-range summaries.
-
-| Command | Description |
-|---|---|
-| `/context` | Print exactly what the model receives (L3 → L2 → L1, trimmed to the working budget). |
-| `/mem info` | Layer sizes, dynamic working budget, compaction cooldown, L2/L3 budgets. |
-| `/mem show [l1\|l2\|l3]` | Print one layer (no arg = all, same as `/context`). |
-| `/mem clear [l1\|l2\|l3\|all]` | Wipe one layer, or everything. |
-| `/mem archive` | Snapshot L1 to `rolling-YYYYMMDD-HHMM.jsonl` and truncate it — starts a fresh session. |
-| `/mem export PATH` | Copy non-empty layers to a folder. |
-| `/clear` | Shortcut for `/mem clear all`. |
-
-## 4. Event & turn logs
-
-Per-day append-only logs. The **event log** (`context-DATE.log`) is a compact
-one-liner per sensor/turn event; the **turn log** (`logs/DATE.jsonl`) is the
-structured record of each Q&A.
-
-| Command | Description |
-|---|---|
-| `/log [N]` | Tail the last `N` lines of today's event log (default 30). |
-| `/log list` | All available log dates with event-log + turn-log sizes. |
-| `/log show [DATE [N]]` | View a day's event log (optionally last `N` lines). |
-| `/log export PATH [DATE]` | Copy event + turn logs out (one date, or all). |
-| `/log trim DATE N` | Keep only the last `N` lines of a day's event log. |
-| `/log delete DATE` | Remove a day's event **and** turn logs. |
-
-## 5. Journal (daily MDX)
-
-The model's synthesized prose narrative of each day, written to
-`memory/journal/DATE.mdx` — frontmatter (title, date, tags, entry count) plus
-timestamped, titled sections. Designed to be browsed in any MDX/Markdown viewer
-(Obsidian, Docusaurus, VS Code preview).
-
-| Command | Description |
-|---|---|
-| `/journal` | Write a new entry for the current session and print it. |
-| `/journal list` | All journal dates with entry counts. |
-| `/journal show [DATE]` | View a journal (raw MDX). |
-| `/journal edit [DATE]` | Open it in `$EDITOR` (falls back to nano/vim). |
-| `/journal export PATH [DATE]` | Copy journal(s) out (one date, or all). |
-| `/journal delete DATE` | Remove a journal file. |
-
-A journal entry is also written automatically on clean exit (`/exit`).
-
-## 6. Retrieval cache
-
-| Command | Description |
-|---|---|
-| `/db info` | Semantic DB chunk count + on-disk size. |
-| `/db clear` | Drop all cached web-retrieval chunks. |
-| `/skip-retrieval` | Toggle web/DB retrieval for the session (same as `/set retrieval off`). |
-
-## 7. Server & model
-
-The CLI and the llama-server are decoupled — the server survives the CLI exiting,
-and the CLI runs in degraded mode (no model turns) if the server is down.
-
-| Command | Description |
-|---|---|
-| `/status` | Server health, memory sizes, observer state, proactive interval. |
-| `/server status` | Server health + whether staged settings need a restart. |
-| `/server start` | Start the server with the current (possibly staged) settings. |
-| `/server stop` | Stop the server (CLI keeps running). |
-| `/server restart` | Stop + start — applies staged settings and model swaps. |
-
-**Swap models without leaving the CLI:**
-
-```text
-/set model /path/to/other-model.gguf
-/set mmproj auto          # auto-detect a projector next to the model (or give a path)
-/server restart           # reload; modalities (text/vision/audio) auto-detected
+```
+llama-server    port 8190    the model — stays alive when CLI exits
+lk CLI          REPL         observers, memory, answers — attach via tmux
+ui-bridge       port 8765    optional desktop popup backend
 ```
 
-## 8. Configuration — `/config` and `/set`
+The server and CLI are decoupled on purpose. Restart the CLI; the model doesn't reload.
 
-`/config` prints every setting. `/set KEY VAL` changes one. Most apply
-immediately ("live"); a few that control how the server is launched are
-"staged" and take effect on the next `/server restart`.
+---
 
-### Live settings (apply immediately)
+## Start
 
-| Key | Default | Meaning |
-|---|---|---|
-| `max-tokens` | 2048 | Max tokens in the response pass. |
-| `temp` | 0.2 | Sampling temperature. |
-| `timeout` | 300 | Per-turn timeout (seconds). |
-| `retrieval` | on | Web/DB retrieval on/off. |
-| `analysis` | on | Analysis pre-pass on/off. |
-| `retrieval-top-k` | 6 | Final ranked sources sent to the model. |
-| `retrieval-fresh` | 3 | Web results fetched per query. |
-| `retrieval-db-min` | 3 | Min DB hits before hitting the web. |
-| `vision-high` | 0.50 | Pixel-Δ at/above which a frame is always written. |
-| `vision-pixel-min` | 0.10 | Pixel-Δ below which a frame is skipped. |
-| `vision-novelty-min` | 0.30 | OCR Jaccard-distance required between min and high. |
-| `vision-interval` | 10 | Screen poll interval (seconds); patches a running observer. |
-| `vision-write-min` | 60 | Min seconds between context writes; patches a running observer. |
-| `audio-min-words` | 3 | Minimum words for speech to pass the gate. |
-| `audio-dedup-max` | 0.60 | Jaccard-similarity ceiling before a segment is dropped as duplicate. |
-| `proactive-interval` | 600 | Minimum seconds between proactive retrieval calls. |
-| `proactive-present` | on | Surface findings unprompted (cards) vs. only warm the cache silently. |
-| `compact-min` | 300 | Minimum seconds between memory compaction runs. |
-| `l2-budget` | 10000 | L2 chars before L2→L3 compaction. |
-| `l3-budget` | 4000 | L3 chars before oldest entries drop. |
+```bash
+# Recommended — detached, survives terminal close
+tmux -S /tmp/lk-tmux new-session -d -s lawrence -x 220 -y 50
+tmux -S /tmp/lk-tmux send-keys -t lawrence "cd /home/user/LAWRENCE && python3 lk.py --no-audio" Enter
 
-### Staged settings (need `/server restart`)
+# Or just run it directly (exits when terminal closes, server lives on)
+python3 lk.py --no-audio
 
-| Key | Default | Meaning |
-|---|---|---|
-| `model` | (launch flag) | Path to the GGUF model file. |
-| `bin` | (launch flag) | Path to the `llama-server` binary. |
-| `mmproj` | auto | Multimodal projector path, or `auto` to detect next to the model. |
-| `ctx` | 65536 | Context window (tokens) — the KV-cache ceiling. |
-| `threads` | 9 | Inference threads. |
-| `gpu-layers` | 0 | Layers offloaded to GPU (0 = CPU only). |
-| `kv-type` | q4_0 | KV-cache type: `q4_0` / `q8_0` / `f16` / `none`. |
-| `flash-attn` | on | Flash attention: `on` / `off` / `auto`. |
-| `jinja` | on | Use the model's embedded chat template. |
+# Text only, no observers
+python3 lk.py --no-vision --no-audio
 
-> Quantized KV (`q4_0`/`q8_0`) requires flash attention. If you set
-> `flash-attn off` with a quantized KV type, the profile drops the KV
-> quantization rather than override your explicit choice.
+# Remote model (no local server)
+python3 lk.py --api-base https://api.openai.com/v1 --api-model gpt-4o-mini --api-key "$OPENAI_API_KEY"
+```
 
-## 9. Session
+---
 
-| Command | Description |
-|---|---|
-| `/help` | Short command list. |
-| `/help set` | All `/set` keys. |
-| `/exit`, `/quit` | Quit. Writes a journal entry automatically; the server stays alive. |
+## Attach / detach
+
+```bash
+tmux -S /tmp/lk-tmux attach -t lawrence    # attach
+Ctrl-b  d                                   # detach (stays running)
+tmux -S /tmp/lk-tmux ls                    # list sessions
+
+# From Windows PowerShell:
+wsl.exe -d Ubuntu -- bash -lic "tmux -S /tmp/lk-tmux attach -t lawrence"
+```
+
+---
+
+## Stop
+
+```bash
+# Inside the CLI:
+/exit                      # quit CLI, write journal, server stays running
+/server stop               # stop server only, CLI keeps running
+
+# From outside:
+tmux -S /tmp/lk-tmux kill-session -t lawrence        # kill CLI
+kill $(pgrep -f llama-server)                         # kill server
+kill $(pgrep -f ui_bridge)                            # kill bridge
+
+# Kill everything at once:
+tmux -S /tmp/lk-tmux kill-session -t lawrence 2>/dev/null; kill $(pgrep -f "llama-server|ui_bridge") 2>/dev/null
+```
+
+---
+
+## Check what's running
+
+```bash
+# From outside:
+ps aux | grep -E "(llama-server|lk\.py|ui_bridge)" | grep -v grep
+curl http://127.0.0.1:8190/health    # server alive?
+curl http://127.0.0.1:8765/health    # bridge alive?
+
+# From inside the CLI:
+/status    # server health, memory sizes, observer state
+/obs       # live sensor readings
+```
+
+---
+
+## Swap model (no restart of CLI)
+
+```
+/set model /path/to/model.gguf
+/set mmproj auto
+/server restart
+```
+
+---
+
+## Commands inside the REPL
+
+```
+any text           ask a question
+/screenshot [q]    grab screen now, attach to this turn
+/record SECS [q]   record mic for N seconds, attach
+
+/vision on|off     start/stop screen observer
+/audio-on|off      start/stop audio observer
+/obs               live sensor state
+
+/status            overall health
+/config            all settings
+/set KEY VAL       change a setting (see below)
+/server restart    apply staged model/ctx changes
+
+/context           what the model reads this turn (L3→L2→L1)
+/mem info          memory layer sizes
+/mem clear all     wipe rolling memory
+/mem archive       snapshot + start fresh
+
+/log               tail today's event log
+/journal           write + print today's journal
+
+/db clear          wipe retrieval cache
+/help set          list all /set keys
+/exit              quit
+```
+
+---
+
+## /set — everything you can change live
+
+**Inference**
+```
+max-tokens   2048      response length cap
+temp         0.2       randomness
+timeout      300       per-turn timeout (seconds)
+retrieval    on|off    web/DB retrieval
+analysis     on|off    analysis pre-pass
+```
+
+**Advanced sampling** (None = backend default)
+```
+top-p        0.95      nucleus sampling cutoff
+min-p        0.05      minimum probability floor
+top-k        40        top-K token cutoff
+repeat-penalty  1.1   penalty for repeated tokens
+presence-penalty  0   penalise tokens already present
+frequency-penalty 0   penalise frequent tokens
+seed         random    fixed seed for reproducibility (integer or 'off')
+stop         (none)    comma-separated stop sequences, or 'clear'
+```
+
+**Vision**
+```
+vision-regions      on     per-window OCR vs whole-screen
+vision-interval     10     poll every N seconds
+vision-write-min    60     min seconds between context writes
+vision-pixel-min    0.10   skip frame if pixel-Δ below this
+vision-high         0.50   always write frame if pixel-Δ above this
+vision-novelty-min  0.30   OCR novelty required in the middle range
+region-ema          0.4    box smoothing (higher = snappier)
+region-change-min   0.06   pixel change needed to re-OCR a window
+```
+
+**Audio**
+```
+audio-min-words    3       min words to pass speech gate
+audio-dedup-max    0.60    Jaccard ceiling to drop duplicate speech
+```
+
+**Proactive**
+```
+proactive-interval  600    seconds between background retrieval runs
+proactive-present   on     surface finding cards (off = silent)
+```
+
+**Memory**
+```
+compact-min   300    min seconds between compaction runs
+l2-budget     10000  L2 chars before L2→L3 compaction
+l3-budget     4000   L3 chars before oldest L3 entries drop
+```
+
+**Retrieval**
+```
+retrieval-top-k   6   sources sent to model
+retrieval-fresh   3   web results per query
+retrieval-db-min  3   min DB hits before going to web
+```
+
+**Staged** — need `/server restart`
+```
+model        path to GGUF
+mmproj       path to projector GGUF, or 'auto'
+ctx          65536    context window tokens
+threads      9        inference threads
+gpu-layers   0        GPU offload layers
+kv-type      q4_0     q4_0 | q8_0 | f16 | none
+flash-attn   on       on | off | auto
+jinja        on       embedded chat template
+```
+
+---
+
+## Memory — three kinds
+
+| Kind | Files | Inspect | Clear/trim | Export |
+|---|---|---|---|---|
+| Rolling (L1/L2/L3) | `memory/rolling-*.jsonl` | `/context`, `/mem show` | `/mem clear [l1\|l2\|l3\|all]` | `/mem export PATH` |
+| Event logs | `memory/context-DATE.log` | `/log show [DATE]` | `/log trim DATE N` | `/log export PATH` |
+| Journal (MDX) | `memory/journal/DATE.mdx` | `/journal show [DATE]` | `/journal delete DATE` | `/journal export PATH` |
+
+---
+
+## Desktop UI bridge
+
+```bash
+python3 apps/desktop/scripts/ui_bridge.py          # start on port 8765
+LK_UI_PORT=8765 python3 apps/desktop/scripts/ui_bridge.py
+curl http://127.0.0.1:8765/health                  # check it
+```
+
+The bridge handles: kernel capture requests (`/screenshot`, `/record`), observer toggles (vision/audio on/off), full document attachment conversion (PDF, DOCX, HTML, CSV, EPUB, video, …), and all advanced sampling parameters from the UI.
+
+---
+
+## Out-of-process sensors (Docker)
+
+```bash
+# host with screen + mic:
+python3 lk_sensor.py --spool memory/spool
+
+# headless kernel:
+python3 lk.py --no-vision --no-audio --ingest-spool memory/spool
+```
 
 ---
 
 ## Launch flags
 
-Settable at start (most map to a `/set` key you can also change live):
-
-```text
---no-vision        Don't start the screen observer
---no-audio         Don't start the audio observer
---no-retrieval     Disable retrieval for the session
---skip-analysis    Single-pass mode (no analysis, no retrieval)
---audio-query      Treat every gated speech segment as a query (autonomous)
---stop-server      Stop llama-server on exit (default: leave it running)
-
---model PATH       GGUF model file
---mmproj PATH      Projector GGUF (default: auto-detect next to --model)
---bin PATH         llama-server binary
---ctx-size N       Context window (default 65536)
---ingest-spool [DIR]  Ingest events from an out-of-process sensor (default memory/spool)
---gpu-layers N     GPU offload layers (default 0 / $LLAMACPP_GPU_LAYERS)
---threads N        Inference threads (default 9)
---max-tokens N     Response-pass max tokens (default 2048)
---temp FLOAT       Temperature (default 0.2)
---timeout N        Per-call timeout seconds (default 300)
 ```
+--no-vision / --no-audio     skip observers
+--no-retrieval               disable web/DB retrieval
+--skip-analysis              single-pass, fastest mode
+--audio-query                autonomous: speech = query
+--stop-server                kill server on exit
 
-## The autonomous loop
+--model PATH                 GGUF model
+--mmproj PATH                projector GGUF (or auto)
+--ctx-size N                 context window (default 65536)
+--gpu-layers N               GPU offload layers
+--threads N                  inference threads
+--max-tokens N               response max tokens
+--temp FLOAT                 temperature
+--timeout N                  per-call timeout
 
-With observers running, LAWRENCE works without being asked:
+--api-base URL               use remote OpenAI-compatible model
+--api-key KEY                bearer token
+--api-model NAME             model name
 
-1. **Capture** — vision/audio observers run as daemon threads and write gated,
-   distilled events to the event log + rolling memory autonomously.
-2. **Retrieve** — each significant event triggers a rate-limited background pass
-   that decides what's worth pre-fetching and warms the retrieval DB.
-3. **Surface** — when a finding is genuinely worth your attention, it is presented
-   unprompted as a card (and a desktop notification):
+--ingest-spool [DIR]         ingest from out-of-process sensor
 
-   ```text
-   ╭─ ⚡ LAWRENCE noticed ───────────────────────────────────────────────
-   │ <headline>
-   │
-   │ <1-3 sentence insight with [N] citations>
-   │ [1] Source title — https://…
-   ╰─────────────────────────────────────────────────────────────────────
-   ```
-
-Tune it: `/set proactive-interval N` (cadence), `/set proactive-present off`
-(warm cache silently, no cards), `/set proactive-present on` (default).
-
-## Out-of-process sensors (headless / Docker)
-
-Capture + preprocessing can run as a **separate process** so vision/audio keep
-working when the kernel is headless. The sensor writes events to a spool dir; the
-kernel ingests them.
-
-```bash
-# on a host with screen + mic (writes events to a shared spool):
-python3 lk_sensor.py --spool memory/spool
-#   options: --no-vision --no-audio --vision-interval N --vision-write-min N
-
-# the kernel (can be headless / in a container) ingests them:
-python3 lk.py --no-vision --no-audio --ingest-spool memory/spool
+LK_API_BASE / LK_API_KEY / LK_API_MODEL    env alternatives
+LK_CTX_SIZE / LK_KV_TYPE / LK_FLASH_ATTN  server params
+LK_VISION / LK_AUDIO                        force modalities on/off
+LLAMACPP_GPU_LAYERS                          GPU layers
+EDITOR                                       for /journal edit
 ```
-
-The spool is just a directory of atomic JSON files — share it via a mounted
-volume between host and container. The kernel applies the same proactive loop to
-ingested events as to local ones.
-
-## Running detached (tmux)
-
-The CLI is normally run inside a tmux session so it survives terminal close; the
-server survives the CLI either way.
-
-```bash
-# create a detached session and launch
-tmux -S /tmp/lk-tmux new-session -d -s lawrence -x 220 -y 50
-tmux -S /tmp/lk-tmux send-keys -t lawrence "cd /path/to/LAWRENCE && python3 lk.py" Enter
-
-# attach / detach
-tmux -S /tmp/lk-tmux attach -t lawrence      # attach
-#   (detach from inside with: Ctrl-b then d)
-tmux -S /tmp/lk-tmux ls                       # list
-tmux -S /tmp/lk-tmux kill-session -t lawrence # stop CLI (server keeps running)
-```
-
-From Windows (WSL2 forwards localhost), attach via:
-
-```powershell
-wsl.exe -d Ubuntu -- bash -lic "tmux -S /tmp/lk-tmux attach -t lawrence"
-```
-
-or talk to the server directly: `curl.exe http://127.0.0.1:8190/health`.

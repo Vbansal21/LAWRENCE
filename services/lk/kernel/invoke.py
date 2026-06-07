@@ -105,13 +105,22 @@ def _build_messages(
 
 @dataclass
 class TurnConfig:
-    max_tokens:    int   = 2048
-    temperature:   float = 0.2
-    timeout:       int   = 300
-    skip_analysis: bool  = False
-    no_retrieval:  bool  = False
-    allow_images:  bool  = True   # False for text-only / non-vision models
-    allow_audio:   bool  = True   # False for models without audio input
+    max_tokens:        int         = 2048
+    temperature:       float       = 0.2
+    timeout:           int         = 300
+    skip_analysis:     bool        = False
+    no_retrieval:      bool        = False
+    allow_images:      bool        = True   # False for text-only / non-vision models
+    allow_audio:       bool        = True   # False for models without audio input
+    # Advanced sampling — None = use backend default (omitted from payload)
+    top_p:             float | None = None
+    min_p:             float | None = None
+    top_k:             int   | None = None
+    repeat_penalty:    float | None = None
+    presence_penalty:  float | None = None
+    frequency_penalty: float | None = None
+    seed:              int   | None = None
+    stop_sequences:    list[str] | None = None
 
 
 # ── main turn ─────────────────────────────────────────────────────────────────
@@ -188,10 +197,17 @@ def run_turn(
         parts.append(f"[SITUATION] {analysis['situation']}")
     parts.append(f"USER QUESTION: {user_text}")
 
+    _sampling = dict(
+        top_p=cfg.top_p, min_p=cfg.min_p, top_k=cfg.top_k,
+        repeat_penalty=cfg.repeat_penalty,
+        presence_penalty=cfg.presence_penalty, frequency_penalty=cfg.frequency_penalty,
+        seed=cfg.seed, stop=cfg.stop_sequences or None,
+    )
     try:
         raw_resp = call_model(
             _build_messages(prompts.RESPONSE, "\n\n".join(parts), images, audios),
             max_tokens=cfg.max_tokens, temperature=cfg.temperature, timeout=cfg.timeout,
+            **_sampling,
         )
         resp_text = raw_resp.get("text", "")
         response  = _extract_json(resp_text) or _fallback_response(resp_text)
@@ -217,7 +233,7 @@ def run_turn(
                 raw2 = call_model(
                     _build_messages(prompts.RESPONSE, "\n\n".join(parts2), images, audios),
                     max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-                    timeout=cfg.timeout,
+                    timeout=cfg.timeout, **_sampling,
                 )
                 t2 = raw2.get("text", "")
                 response = _extract_json(t2) or response

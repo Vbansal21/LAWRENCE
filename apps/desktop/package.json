@@ -1,0 +1,29 @@
+{
+  "name": "lawrence-desktop",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "bootstrap": "bash scripts/bootstrap.sh",
+    "doctor": "bash scripts/doctor.sh",
+    "deps:system": "bash scripts/install-system-deps-ubuntu.sh",
+    "bridge": "python3 scripts/ui_bridge.py",
+    "popup": "bash scripts/desktopctl.sh start",
+    "popup:stop": "bash scripts/desktopctl.sh stop",
+    "popup:restart": "bash scripts/desktopctl.sh restart",
+    "popup:status": "bash scripts/desktopctl.sh status",
+    "popup:logs": "bash scripts/desktopctl.sh logs",
+    "popup:hotkey": "bash scripts/desktopctl.sh hotkey",
+    "dev": "bash scripts/dev-tauri.sh",
+    "dev:raw": "tauri dev",
+    "dev:web": "bash scripts/web-preview.sh",
+    "build": "bash scripts/build-tauri.sh",
+    "build:raw": "tauri build",
+    "stress": "bash scripts/stress-ui.sh"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
+    "happy-dom": "^20.10.2",
+    "playwright": "^1.60.0"
+  }
+}

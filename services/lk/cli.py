@@ -56,14 +56,24 @@ from pathlib import Path
 
 from . import server as _server
 from . import admin  as _admin
+from . import model  as _model
 from .ctx        import ContextStore
 from .ctx.gate   import gate_config
 from .kernel     import run_turn, run_proactive, run_compaction, write_journal_entry, TurnConfig
 from .obs        import VisionObserver, AudioObserver, capture_now, record_now, SpoolReader
-from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS
+from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS, REGION_EMA, REGION_CHANGE_MIN
 from .profile    import ModelProfile
 from .retrieval  import SemanticDB, RetrievalPipeline
 from .ui         import UIConnector
+
+
+# ── helpers ─────────────────────────────────────────────────────────────────
+
+def _env_flag(key: str, default: bool) -> bool:
+    v = os.environ.get(key)
+    if v is None:
+        return default
+    return v.strip().lower() in ("1", "true", "yes", "on")
 
 
 # ── args ──────────────────────────────────────────────────────────────────────
@@ -84,6 +94,13 @@ def _args() -> argparse.Namespace:
     p.add_argument("--mmproj",  default=None,
                    help="multimodal projector GGUF (auto-detected next to --model if omitted)")
     p.add_argument("--bin",     default=str(_server.DEFAULT_BIN))
+    # external API backend (OpenAI-compatible). If --api-base / $LK_API_BASE is set,
+    # the local llama-server is not started; calls go to the remote endpoint instead.
+    p.add_argument("--api-base",  default=None,
+                   help="OpenAI-compatible base URL (e.g. https://api.openai.com/v1). "
+                        "Enables the external API backend. Also $LK_API_BASE.")
+    p.add_argument("--api-key",   default=None, help="bearer token for --api-base ($LK_API_KEY)")
+    p.add_argument("--api-model", default=None, help="model name for --api-base ($LK_API_MODEL)")
     p.add_argument("--ctx-size",    type=int,   default=65_536)
     p.add_argument("--gpu-layers",  type=int,   default=None)
     p.add_argument("--threads",     type=int,   default=None)
@@ -114,13 +131,26 @@ class _LiveState:
     flash_attn:   str           # on | off | auto
     jinja:        bool
     server_dirty: bool = False  # True → staged settings changed, restart needed
+    # backend: "local" (llama-server) or "api" (external OpenAI-compatible)
+    backend:      str = "local"
+    api_base:     str = ""
+    api_model:    str = ""
 
     # ── turn ──────────────────────────────────────────────────────────────
-    max_tokens:   int   = 2048
-    temperature:  float = 0.2
-    timeout:      int   = 300
-    no_retrieval: bool  = False
-    skip_analysis: bool = False
+    max_tokens:        int         = 2048
+    temperature:       float       = 0.2
+    timeout:           int         = 300
+    no_retrieval:      bool        = False
+    skip_analysis:     bool        = False
+    # Advanced sampling (None = backend default)
+    top_p:             float | None = None
+    min_p:             float | None = None
+    top_k:             int   | None = None
+    repeat_penalty:    float | None = None
+    presence_penalty:  float | None = None
+    frequency_penalty: float | None = None
+    seed:              int   | None = None
+    stop_sequences:    list[str] = field(default_factory=list)
 
     # ── observer tunables ─────────────────────────────────────────────────
     vision_interval:   float = POLL_INTERVAL
@@ -128,6 +158,9 @@ class _LiveState:
     vision_high:       float = field(default_factory=lambda: gate_config.vision_high)
     vision_pixel_min:  float = field(default_factory=lambda: gate_config.vision_pixel_min)
     vision_novelty_min: float = field(default_factory=lambda: gate_config.vision_novelty_min)
+    vision_regions:    bool  = True    # per-window OCR vs whole-screen
+    region_ema:        float = REGION_EMA
+    region_change_min: float = REGION_CHANGE_MIN
     audio_min_words:   int   = field(default_factory=lambda: gate_config.audio_min_words)
     audio_dedup_max:   float = field(default_factory=lambda: gate_config.audio_dedup_max)
 
@@ -354,6 +387,38 @@ def _apply_set(
         suffix = " (applied to running observer)" if vi else " (will apply on next start)"
         return f"[set] vision-write-min → {n}s{suffix}"
 
+    if k == "vision-regions":
+        v = val.lower() not in ("off", "0", "false", "no")
+        state.vision_regions = v
+        vi = vision_ref[0]
+        if vi is not None:
+            vi.regions = v
+        return f"[set] vision-regions → {'on (per-window OCR)' if v else 'off (whole-screen)'}"
+
+    if k == "region-ema":
+        try:
+            f = float(val)
+            if not 0 < f <= 1:
+                return "[set] region-ema must be in (0, 1]"
+        except ValueError:
+            return "[set] region-ema must be a float in (0, 1]"
+        state.region_ema = f
+        vi = vision_ref[0]
+        if vi is not None:
+            vi._tracker.ema = f
+        return f"[set] region-ema → {f}"
+
+    if k == "region-change-min":
+        try:
+            f = float(val)
+        except ValueError:
+            return "[set] region-change-min must be a float (0-1)"
+        state.region_change_min = f
+        vi = vision_ref[0]
+        if vi is not None:
+            vi.region_change_min = f
+        return f"[set] region-change-min → {f}"
+
     # ── live: audio gate ──────────────────────────────────────────────────
     if k == "audio-min-words":
         try:
@@ -444,6 +509,99 @@ def _apply_set(
         pipeline.db_min_hits = n
         return f"[set] retrieval-db-min → {n}"
 
+    if k == "api-model":
+        if state.backend != "api":
+            return "[set] api-model only applies to the API backend (start with --api-base)"
+        _model.configure_backend(model=val)
+        state.api_model = val
+        return f"[set] api-model → {val}"
+
+    # ── live: advanced sampling ───────────────────────────────────────────
+    if k == "top-p":
+        if val.lower() in ("off", "none", ""):
+            state.top_p = cfg.top_p = None
+            return "[set] top-p → off (backend default)"
+        try:
+            f = float(val)
+        except ValueError:
+            return "[set] top-p must be a float (0-1) or 'off'"
+        state.top_p = cfg.top_p = f
+        return f"[set] top-p → {f}"
+
+    if k == "min-p":
+        if val.lower() in ("off", "none", ""):
+            state.min_p = cfg.min_p = None
+            return "[set] min-p → off (backend default)"
+        try:
+            f = float(val)
+        except ValueError:
+            return "[set] min-p must be a float (0-1) or 'off'"
+        state.min_p = cfg.min_p = f
+        return f"[set] min-p → {f}"
+
+    if k == "top-k":
+        if val.lower() in ("off", "none", "0", ""):
+            state.top_k = cfg.top_k = None
+            return "[set] top-k → off (backend default)"
+        try:
+            n = int(val)
+        except ValueError:
+            return "[set] top-k must be an integer or 'off'"
+        state.top_k = cfg.top_k = n
+        return f"[set] top-k → {n}"
+
+    if k == "repeat-penalty":
+        if val.lower() in ("off", "none", ""):
+            state.repeat_penalty = cfg.repeat_penalty = None
+            return "[set] repeat-penalty → off (backend default)"
+        try:
+            f = float(val)
+        except ValueError:
+            return "[set] repeat-penalty must be a float (e.g. 1.1) or 'off'"
+        state.repeat_penalty = cfg.repeat_penalty = f
+        return f"[set] repeat-penalty → {f}"
+
+    if k == "presence-penalty":
+        if val.lower() in ("off", "none", ""):
+            state.presence_penalty = cfg.presence_penalty = None
+            return "[set] presence-penalty → off (backend default)"
+        try:
+            f = float(val)
+        except ValueError:
+            return "[set] presence-penalty must be a float (-2 to 2) or 'off'"
+        state.presence_penalty = cfg.presence_penalty = f
+        return f"[set] presence-penalty → {f}"
+
+    if k == "frequency-penalty":
+        if val.lower() in ("off", "none", ""):
+            state.frequency_penalty = cfg.frequency_penalty = None
+            return "[set] frequency-penalty → off (backend default)"
+        try:
+            f = float(val)
+        except ValueError:
+            return "[set] frequency-penalty must be a float (-2 to 2) or 'off'"
+        state.frequency_penalty = cfg.frequency_penalty = f
+        return f"[set] frequency-penalty → {f}"
+
+    if k == "seed":
+        if val.lower() in ("off", "none", "random", ""):
+            state.seed = cfg.seed = None
+            return "[set] seed → random (no fixed seed)"
+        try:
+            n = int(val)
+        except ValueError:
+            return "[set] seed must be an integer or 'off'"
+        state.seed = cfg.seed = n
+        return f"[set] seed → {n}"
+
+    if k == "stop":
+        if val.lower() in ("off", "none", "clear", ""):
+            state.stop_sequences = cfg.stop_sequences = []
+            return "[set] stop → cleared"
+        seqs = [s.strip() for s in val.split(",") if s.strip()]
+        state.stop_sequences = cfg.stop_sequences = seqs
+        return f"[set] stop → {seqs}"
+
     return f"[set] unknown key '{key}' — use /help set for all keys"
 
 
@@ -456,6 +614,16 @@ def _do_server(
     cfg: TurnConfig,
 ) -> None:
     v = verb.strip().lower() if verb else "status"
+
+    # External API backend: there is no local server to manage.
+    if state.backend == "api":
+        if v == "status":
+            print(f"  backend: {'reachable' if _model.health() else 'UNREACHABLE'} "
+                  f"({_model.describe_backend()})")
+        else:
+            print(f"  [server] external API backend — nothing to {v}. "
+                  f"({_model.describe_backend()})")
+        return
 
     if v == "status":
         ok = _server.health_check()
@@ -491,9 +659,16 @@ def _do_server(
 
 def _print_config(state: _LiveState, profile: ModelProfile, pipeline: RetrievalPipeline) -> None:
     dirty = "  [! staged settings changed — /server restart to apply]" if state.server_dirty else ""
+    backend_line = (
+        f"\n  ── backend ────────────────────────────────────────────────────────────"
+        f"\n  backend     : {state.backend}"
+        + (f"\n  api-base    : {state.api_base}\n  api-model   : {state.api_model or '(unset)'}"
+           if state.backend == "api" else "")
+    )
     print(
         f"\n[CONFIG]{dirty}"
-        f"\n  ── server (staged: need /server restart) ──────────────────────────────"
+        + backend_line +
+        f"\n  ── server (staged: need /server restart; local backend only) ──────────"
         f"\n  model       : {state.model_path.name}"
         f"\n  mmproj      : {state.mmproj_path.name if state.mmproj_path else 'auto'}"
         f"\n  bin         : {state.bin_path.name}"
@@ -521,6 +696,9 @@ def _print_config(state: _LiveState, profile: ModelProfile, pipeline: RetrievalP
         f"\n  vision-novelty-min : {state.vision_novelty_min}"
         f"\n  vision-interval    : {state.vision_interval}s"
         f"\n  vision-write-min   : {state.vision_write_min}s"
+        f"\n  vision-regions     : {'on (per-window OCR)' if state.vision_regions else 'off (whole-screen)'}"
+        f"\n  region-ema         : {state.region_ema}"
+        f"\n  region-change-min  : {state.region_change_min}"
         f"\n  ── audio gate (live) ──────────────────────────────────────────────────"
         f"\n  audio-min-words : {state.audio_min_words}"
         f"\n  audio-dedup-max : {state.audio_dedup_max}"
@@ -544,6 +722,12 @@ def _print_obs(vision: "VisionObserver | None", audio: "AudioObserver | None") -
             ocr_preview = f.ocr_text[:120].replace("\n", " ")
             diff_preview = f.heuristic_diff[:80]
             print(f"  vision : ON | score={f.change_score:.2f} | {f.ts[:19]}")
+            if vision.regions:
+                tr = vision._tracker.active()
+                print(f"           regions: {len(tr)} tracked"
+                      + (" — " + ", ".join(f'{r.title[:24]}' for r in tr[:4]) if tr else ""))
+            else:
+                print("           regions: off (whole-screen OCR)")
             print(f"           ocr: {ocr_preview}")
             if diff_preview:
                 print(f"           diff: {diff_preview}")
@@ -944,6 +1128,9 @@ def _print_help_set() -> None:
         "  vision-novelty-min F  text Jaccard distance required (default 0.30)\n"
         "  vision-interval N     poll every N seconds (default 10)\n"
         "  vision-write-min N    min gap between context writes (default 60s)\n"
+        "  vision-regions on|off per-window OCR vs whole-screen (default on)\n"
+        "  region-ema F          box smoothing 0-1, higher=snappier (default 0.4)\n"
+        "  region-change-min F   per-region pixel change to re-OCR (default 0.06)\n"
         "\n  ── audio gate (live) ──────────────────────────────────────────────────\n"
         "  audio-min-words N   minimum words to pass gate (default 3)\n"
         "  audio-dedup-max F   Jaccard sim ceiling before dedup-skip (default 0.60)\n"
@@ -954,6 +1141,8 @@ def _print_help_set() -> None:
         "  compact-min N   min seconds between compaction runs (default 300)\n"
         "  l2-budget N     L2 summary budget chars before L2→L3 (default 10000)\n"
         "  l3-budget N     L3 long-range budget chars (default 4000)\n"
+        "\n  ── backend (api only; select at launch with --api-base) ────────────────\n"
+        "  api-model NAME  model name sent to the external API endpoint\n"
     )
 
 
@@ -965,10 +1154,13 @@ def _print_status(
     ctx:    ContextStore,
     state:  _LiveState,
 ) -> None:
-    ok = _server.health_check()
-    print(f"  server : {'healthy' if ok else 'DOWN'} @ {_server.server_url()}")
-    if state.server_dirty:
-        print("  [!] staged settings changed — /server restart to apply")
+    ok = _model.health()
+    if state.backend == "api":
+        print(f"  backend: {'reachable' if ok else 'UNREACHABLE'} ({_model.describe_backend()})")
+    else:
+        print(f"  server : {'healthy' if ok else 'DOWN'} @ {_server.server_url()}")
+        if state.server_dirty:
+            print("  [!] staged settings changed — /server restart to apply")
     print(
         f"  memory : L1={ctx._l1_size // 1024}K  "
         f"L2={ctx._l2_size // 1024}K  "
@@ -1126,21 +1318,47 @@ def main() -> int:
     args = _args()
     print("\nLAWRENCE v0.1")
 
-    # Build initial model profile from args + environment
-    profile = ModelProfile.detect(
-        model=args.model, bin_path=args.bin,
-        mmproj=args.mmproj, ctx_size=args.ctx_size,
-    )
+    # ── backend selection ───────────────────────────────────────────────────
+    # External API backend if --api-base / $LK_API_BASE is set; else local server.
+    api_base = args.api_base or os.environ.get("LK_API_BASE")
+    use_api  = bool(api_base)
+
+    if use_api:
+        _model.configure_backend(
+            kind="api",
+            base_url=api_base,
+            api_key=args.api_key or os.environ.get("LK_API_KEY"),
+            model=args.api_model or os.environ.get("LK_API_MODEL"),
+        )
+        # No local model files → modalities come from env (default text-only).
+        vis = _env_flag("LK_VISION", False)
+        aud = _env_flag("LK_AUDIO", False)
+        profile = ModelProfile(
+            model=Path(_model.backend().model or "api-model"), bin=Path("(api)"),
+            mmproj=None, vision=vis, audio=aud, ctx_size=args.ctx_size,
+            flash_attn="off", kv_type=None, jinja=False,
+        )
+        print(f"  backend      : {_model.describe_backend()}")
+        if not _model.backend().model:
+            print("  [api] no model set — use --api-model or $LK_API_MODEL", file=sys.stderr)
+    else:
+        profile = ModelProfile.detect(
+            model=args.model, bin_path=args.bin,
+            mmproj=args.mmproj, ctx_size=args.ctx_size,
+        )
 
     # profile_ref lets server-restart update the profile without restarting CLI
     profile_ref: list[ModelProfile] = [profile]
 
-    # Attempt to start the server — failure enters degraded mode (no LLM turns)
-    try:
-        _server.start(profile, gpu_layers=args.gpu_layers, threads=args.threads)
-    except RuntimeError as e:
-        print(f"  [server] failed to start: {e}", file=sys.stderr)
-        print("  [server] running in degraded mode — use /server start to retry")
+    # Local backend: start the server (failure → degraded). API backend: probe reachability.
+    if use_api:
+        print(f"  backend      : {'reachable' if _model.health() else 'UNREACHABLE'} ({_model.describe_backend()})")
+    else:
+        try:
+            _server.start(profile, gpu_layers=args.gpu_layers, threads=args.threads)
+        except RuntimeError as e:
+            print(f"  [server] failed to start: {e}", file=sys.stderr)
+            print("  [server] running in degraded mode — use /server start to retry")
 
     def _on_signal(sig: int, _f: object) -> None:
         if args.stop_server:
@@ -1198,6 +1416,9 @@ def main() -> int:
         compact_min  = ctx._min_compact_secs,
         l2_budget    = ctx.l2_budget,
         l3_budget    = ctx.l3_budget,
+        backend      = "api" if use_api else "local",
+        api_base     = api_base or "",
+        api_model    = (_model.backend().model or "") if use_api else "",
     )
 
     print(f"  model        : {profile.modalities}")
@@ -1254,6 +1475,9 @@ def main() -> int:
                 poll_interval=state.vision_interval,
                 min_write_secs=state.vision_write_min,
             )
+            vision.regions          = state.vision_regions
+            vision.region_change_min = state.region_change_min
+            vision._tracker.ema      = state.region_ema
             vision_ref[0] = vision
             vision.start()
             return True
@@ -1445,9 +1669,12 @@ def main() -> int:
                     sys.stdout.flush()
                     continue
 
-                # ── server health gate ────────────────────────────────────────────
-                if not _server.health_check():
-                    print("[server is DOWN — use /server start or /server restart]")
+                # ── backend health gate ───────────────────────────────────────────
+                if not _model.health():
+                    if state.backend == "api":
+                        print(f"[API backend unreachable — {_model.describe_backend()}]")
+                    else:
+                        print("[server is DOWN — use /server start or /server restart]")
                     sys.stdout.write("\nyou> ")
                     sys.stdout.flush()
                     continue

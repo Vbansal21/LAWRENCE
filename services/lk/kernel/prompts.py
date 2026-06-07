@@ -37,17 +37,23 @@ RESPONSE = (
     "Retrieved sources are shown as previews (first ~150 chars). If a preview is relevant but "
     "insufficient, list its number in expand_sources and a second pass will give you the full text.\n"
     "Return ONLY a valid JSON object with these exact keys:\n"
-    '  "answer_text": string (complete answer with inline [N] citations where applicable),\n'
+    '  "answer_text": string — the complete answer formatted as Markdown. Use ## sub-headings '
+    "for multi-section answers, - bullets for lists, `inline code` for identifiers/commands, "
+    "``` fenced blocks for multi-line code, and **bold** for key terms. "
+    "Include inline [N] citations where applicable. "
+    "JSON-escape all special characters: newlines as \\n, quotes as \\\".\n"
     '  "modalities_used": array of strings from ["text","image","audio","memory","web"],\n'
-    '  "note_compact": string (≤120 chars — one crisp sentence worth remembering, or ""),\n'
-    '  "note_full": string (2-4 sentences: what was asked, what context existed, what was found),\n'
+    '  "note_compact": string (≤120 chars — one plain-text sentence worth remembering, or ""),\n'
+    '  "note_full": string — Markdown prose: 2-4 sentences covering what was asked, '
+    "context used, and what was found. Use - bullets for 2+ key points. "
+    "JSON-escape all special characters.\n"
     '  "context_tags": array of 2-5 topic keyword strings,\n'
     '  "confidence": number 0.0-1.0,\n'
     '  "expand_sources": array of citation numbers (e.g. [2,3]) to expand to full text — omit or [] if not needed,\n'
     '  "controls": object (omit entirely if no action needed) with optional keys:\n'
     '    "vision": "hi" (capture hi-res screenshot now), "on", or "off"\n'
     '    "audio": "on" or "off"\n'
-    "No markdown fences. No preamble. Output ONLY the JSON."
+    "No markdown fences around the outer JSON. No preamble. Output ONLY the JSON object."
 )
 
 PROACTIVE = (

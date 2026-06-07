@@ -69,8 +69,9 @@ class RetrievalPipeline:
                     seen_texts.add(sc.text)
                     all_chunks.append(_db_to_chunk(sc, q))
 
-        # 2. Decide what needs a web fetch
-        needs_web = [q for q, n in hits_by_query.items() if n == 0]
+        # 2. Decide what needs a web fetch — trigger for any query below the threshold,
+        # not just zero-hit queries (1–2 cached hits is still "insufficient context")
+        needs_web = [q for q, n in hits_by_query.items() if n < self.db_min_hits]
         if not needs_web and len(all_chunks) < self.db_min_hits:
             needs_web = queries
 

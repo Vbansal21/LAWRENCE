@@ -264,6 +264,49 @@ m2 = _build_messages("SYS", "body", [img], [])
 check("media msg is block list", isinstance(m2[1]["content"], list))
 shutil.rmtree(tmp, ignore_errors=True)
 
+# ───────────────────────── region tracker ─────────────────────────
+section("regions: tracker IoU/EMA/TTL/dedup")
+from lk.obs.regions import RegionTracker, WinRect, _iou, _dedup_overlapping, screen_windows
+check("iou identical", _iou((0,0,10,10),(0,0,10,10))==1.0)
+check("iou disjoint", _iou((0,0,10,10),(20,20,30,30))==0.0)
+tk = RegionTracker(ema=0.5, iou_match=0.3, ttl=2)
+a = tk.update([WinRect("Ed",0,0,100,100), WinRect("Tm",200,0,300,100)])
+check("two regions tracked", len(a)==2)
+ed_id = [r.rid for r in a if r.title=="Ed"][0]
+b = tk.update([WinRect("Ed",10,0,110,100), WinRect("Tm",200,0,300,100)])
+ed = [r for r in b if r.title=="Ed"][0]
+check("stable id across nudge", ed.rid==ed_id)
+check("ema smooths box (0<l<10)", 0 < ed.box[0] < 10, f"l={ed.box[0]}")
+tk.update([WinRect("Ed",10,0,110,100)]); tk.update([WinRect("Ed",10,0,110,100)])
+tk.update([WinRect("Ed",10,0,110,100)])
+check("ttl evicts gone region", "Tm" not in {r.title for r in tk.active()})
+# dedup: occluded duplicate maximized windows collapse to the topmost
+dd = _dedup_overlapping([WinRect("Top",0,0,1000,1000), WinRect("Behind",0,0,1000,1000),
+                         WinRect("Side",1000,0,1200,400)])
+check("dedup drops occluded", len(dd)==2 and dd[0].title=="Top", f"dd={[w.title for w in dd]}")
+
+# ───────────────────────── model backend ─────────────────────────
+section("model backend: local vs api request construction")
+import lk.model as MB
+_cap = {}
+def _fake_post(payload, timeout):
+    _cap.update(payload=payload, timeout=timeout, endpoint=MB._endpoint()); return {"choices":[{"message":{"content":"x"}}]}
+MB._post = _fake_post
+MB.configure_backend(kind="local")
+MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=300)
+check("local endpoint", _cap["endpoint"].endswith(":8190/v1/chat/completions"))
+check("local cache_prompt on", _cap["payload"].get("cache_prompt") is True)
+check("local no model field", "model" not in _cap["payload"])
+check("local blocks (timeout None)", _cap["timeout"] is None)
+MB.configure_backend(kind="api", base_url="https://x.test/v1/", api_key="k", model="m1")
+MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=99)
+check("api endpoint", _cap["endpoint"]=="https://x.test/v1/chat/completions")
+check("api model field", _cap["payload"].get("model")=="m1")
+check("api no cache_prompt", "cache_prompt" not in _cap["payload"])
+check("api timeout set", _cap["timeout"]==99)
+check("describe api", "x.test" in MB.describe_backend())
+MB.configure_backend(kind="local")  # restore
+
 # ───────────────────────── summary ─────────────────────────
 section("RESULT")
 if FAILS:

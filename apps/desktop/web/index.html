@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LAWRENCE</title>
+    <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <main class="launcher">
+      <section class="feed" id="feed" aria-label="Assistant output" data-tauri-drag-region></section>
+
+      <form class="composer" id="composer">
+        <button type="button" class="tool-btn" id="video-toggle" aria-label="Use visual context" aria-pressed="false" title="Use visual context">
+          <svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
+        </button>
+        <button type="button" class="tool-btn" id="audio-toggle" aria-label="Use audio context" aria-pressed="false" title="Use audio context">
+          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M19 11a7 7 0 0 1-14 0" /><path d="M12 18v3" /></svg>
+        </button>
+        <button type="button" class="tool-btn" id="deep-search-toggle" aria-label="Deep web search" aria-pressed="false" title="Deep web search">
+          <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" /><path d="M8 11h6M11 8v6" /></svg>
+        </button>
+        <button type="button" class="tool-btn" id="drawer-toggle" aria-label="Options" aria-expanded="false" title="Options">
+          <svg viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+        </button>
+        <textarea id="prompt" rows="1" placeholder="LAWRENCE"></textarea>
+        <span class="stream-pill" id="stream-state">Idle</span>
+        <button class="send-btn" type="submit" title="Send" aria-label="Send">
+          <svg viewBox="0 0 24 24"><path d="m5 12 14-7-4 14-3-6z" /></svg>
+        </button>
+      </form>
+
+      <section class="option-drawer" id="option-drawer" hidden aria-label="Assistant options">
+        <details open>
+          <summary>Context</summary>
+          <div class="drawer-actions">
+            <button type="button" class="chip ghost" id="screen-now" title="Ask the kernel for a fresh screenshot via its capture path.">Screen now</button>
+            <button type="button" class="chip ghost" id="mic-now" title="Ask the kernel for a short microphone sample via its record path.">Mic now</button>
+            <button type="button" class="chip active" id="proactive-toggle" aria-pressed="true">Proactive</button>
+          </div>
+        </details>
+        <details>
+          <summary>Retrieval</summary>
+          <div class="drawer-actions">
+            <button type="button" class="chip active" id="retrieval-toggle" aria-pressed="true">Retrieval</button>
+            <button type="button" class="chip" id="deep-search-detail" aria-pressed="false">Deep web</button>
+          </div>
+        </details>
+        <details>
+          <summary>Files</summary>
+          <div class="drawer-actions">
+            <button type="button" class="chip ghost" id="attach-file">Attach file</button>
+            <button type="button" class="chip ghost" id="attach-url">Attach URL</button>
+          </div>
+        </details>
+        <details>
+          <summary>Runtime</summary>
+          <div class="drawer-actions">
+            <button type="button" class="chip ghost" id="settings-toggle" aria-expanded="false" title="Click for quick config. Shift-click for advanced config.">Config</button>
+            <button type="button" class="chip ghost" id="advanced-open">Sampling</button>
+            <label class="mini-control">
+              <span>Zoom <output id="content-zoom-value">100%</output></span>
+              <input id="content-zoom" type="range" min="85" max="125" step="5" value="100" />
+            </label>
+            <label class="mini-control">
+              <span>Font <output id="font-size-value">13</output></span>
+              <input id="font-size" type="range" min="11" max="17" step="1" value="13" />
+            </label>
+            <button type="button" class="chip ghost" id="minimize-btn">Minimize</button>
+            <button type="button" class="chip ghost" id="close-btn">Dismiss</button>
+          </div>
+        </details>
+      </section>
+
+      <div class="url-row" id="url-row" hidden>
+        <input id="url-input" type="url" placeholder="https://example.com/page" />
+        <button type="button" class="detail-btn compact" id="url-add">Add URL</button>
+      </div>
+
+      <div class="attachment-row" id="attachment-row"></div>
+
+      <section class="context-strip" id="context-strip" aria-label="Runtime context metrics"></section>
+
+      <section class="settings" id="settings" hidden aria-label="Assistant settings">
+        <label>
+          <span>Backend</span>
+          <select id="backend">
+            <option>Kernel bridge</option>
+            <option>OpenAI-compatible API</option>
+          </select>
+        </label>
+        <label>
+          <span>Mode</span>
+          <select id="mode">
+            <option>Auto</option>
+            <option>Text</option>
+            <option>Screen</option>
+            <option>Audio</option>
+          </select>
+        </label>
+        <label class="wide">
+          <span>Kernel URL</span>
+          <input id="kernel-url" value="http://127.0.0.1:8765" />
+        </label>
+        <label class="wide">
+          <span>Model hint</span>
+          <input id="model-name" value="kernel-default" />
+        </label>
+        <label>
+          <span>Temp <output id="temperature-value">0.20</output></span>
+          <input id="temperature" type="range" min="0" max="1" step="0.05" value="0.2" />
+        </label>
+        <label>
+          <span>Max tokens</span>
+          <input id="max-tokens" type="number" min="128" step="128" value="2048" />
+        </label>
+        <button type="button" class="detail-btn" id="advanced-open-settings">Advanced sampling</button>
+      </section>
+
+      <section class="advanced-panel" id="advanced-panel" hidden aria-label="Advanced sampling settings">
+        <header class="panel-head" data-tauri-drag-region>
+          <strong>Advanced sampling</strong>
+          <button type="button" class="icon-btn" id="advanced-close" title="Close advanced settings" aria-label="Close advanced settings">
+            <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
+          </button>
+        </header>
+        <div class="advanced-grid">
+          <label>
+            <span>Context budget</span>
+            <input id="context-budget" type="number" min="2048" step="1024" value="24000" />
+          </label>
+          <label>
+            <span>Top P <output id="top-p-value">0.95</output></span>
+            <input id="top-p" type="range" min="0" max="1" step="0.01" value="0.95" />
+          </label>
+          <label>
+            <span>Min P <output id="min-p-value">0.05</output></span>
+            <input id="min-p" type="range" min="0" max="0.5" step="0.01" value="0.05" />
+          </label>
+          <label>
+            <span>Typical P <output id="typical-p-value">1.00</output></span>
+            <input id="typical-p" type="range" min="0" max="1" step="0.01" value="1" />
+          </label>
+          <label>
+            <span>Top K</span>
+            <input id="top-k" type="number" min="0" step="1" value="40" />
+          </label>
+          <label>
+            <span>Repeat penalty</span>
+            <input id="repeat-penalty" type="number" min="1" step="0.01" value="1.10" />
+          </label>
+          <label>
+            <span>Repeat last N</span>
+            <input id="repeat-last-n" type="number" min="0" step="16" value="256" />
+          </label>
+          <label>
+            <span>Presence penalty</span>
+            <input id="presence-penalty" type="number" min="-2" max="2" step="0.05" value="0" />
+          </label>
+          <label>
+            <span>Frequency penalty</span>
+            <input id="frequency-penalty" type="number" min="-2" max="2" step="0.05" value="0" />
+          </label>
+          <label>
+            <span>TFS Z</span>
+            <input id="tfs-z" type="number" min="0" step="0.01" value="1" />
+          </label>
+          <label>
+            <span>Epsilon cutoff</span>
+            <input id="epsilon-cutoff" type="number" min="0" step="0.0001" value="0" />
+          </label>
+          <label>
+            <span>Eta cutoff</span>
+            <input id="eta-cutoff" type="number" min="0" step="0.0001" value="0" />
+          </label>
+          <label>
+            <span>Mirostat</span>
+            <select id="mirostat">
+              <option value="0">Off</option>
+              <option value="1">v1</option>
+              <option value="2">v2</option>
+            </select>
+          </label>
+          <label>
+            <span>Mirostat tau</span>
+            <input id="mirostat-tau" type="number" min="0" step="0.1" value="5" />
+          </label>
+          <label>
+            <span>Mirostat eta</span>
+            <input id="mirostat-eta" type="number" min="0" step="0.01" value="0.1" />
+          </label>
+          <label>
+            <span>DRY multiplier</span>
+            <input id="dry-multiplier" type="number" min="0" step="0.05" value="0" />
+          </label>
+          <label>
+            <span>DRY base</span>
+            <input id="dry-base" type="number" min="1" step="0.05" value="1.75" />
+          </label>
+          <label>
+            <span>DRY allowed length</span>
+            <input id="dry-allowed-length" type="number" min="0" step="1" value="2" />
+          </label>
+          <label>
+            <span>Seed</span>
+            <input id="seed" type="number" step="1" placeholder="random" />
+          </label>
+          <label>
+            <span><label class="inline-check"><input id="timeout-enabled" type="checkbox" checked /> Timeout sec</label></span>
+            <input id="timeout" type="number" min="5" step="5" value="300" />
+          </label>
+          <label>
+            <span>Tool rounds</span>
+            <input id="tool-rounds" type="number" min="0" step="1" value="8" />
+          </label>
+          <label>
+            <span>Tool call limit</span>
+            <input id="tool-call-limit" type="number" min="0" step="1" value="24" />
+          </label>
+          <label>
+            <span>Web depth</span>
+            <select id="web-depth">
+              <option>Auto</option>
+              <option>Light</option>
+              <option>Comprehensive</option>
+            </select>
+          </label>
+          <label>
+            <span>Citation mode</span>
+            <select id="citation-mode">
+              <option>Auto</option>
+              <option>Required</option>
+              <option>Compact</option>
+            </select>
+          </label>
+          <label class="wide">
+            <span>Grammar / schema</span>
+            <input id="grammar-schema" placeholder="JSON schema, grammar name, or path" />
+          </label>
+          <label class="wide">
+            <span>Stop sequences</span>
+            <input id="stop-sequences" placeholder="comma separated" />
+          </label>
+        </div>
+      </section>
+
+      <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.tif,.tiff,.wav,.mp3,.m4a,.flac,.ogg,.opus,.mp4,.mov,.mkv,.webm,.avi,.pdf,.md,.mdx,.txt,.html,.htm,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,.xls,.xlsx,.ods,.csv,.tsv,.tex,.bib,.mmd,.mermaid,.json,.jsonl,.yaml,.yml,.xml,.epub" hidden />
+    </main>
+    <script src="./app.js" type="module"></script>
+  </body>
+</html>

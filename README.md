@@ -6,12 +6,12 @@ Local Agentic Watcher Reasoning on Edge Node Contextualizing Engine — a local-
 
 ## What It Does
 
-- **Watches passively.** Vision and audio observer daemons run in the background. The screen is captured every ~10s and a short audio window every ~4s. When something significant happens (layout change, new speech) it is distilled into a compact context event. Heuristic gates keep noise out — only meaningful changes are written.
+- **Watches passively.** Vision and audio observer daemons run in the background. A cheap low-res frame every ~10s decides whether anything changed; if so a full-resolution frame is captured and **segmented into windows** — each window/section is OCR'd separately, tracked across frames with EMA-smoothed bounding boxes, and only re-read when its pixels actually change. A short audio window is sampled every ~4s. Heuristic gates keep noise out — only meaningful changes are written.
 - **Builds hierarchical memory.** Events are written to a permanent per-day event log (`memory/context-YYYY-MM-DD.log`) and to a three-tier rolling store (L1 → L2 → L3) that the model reads as working memory. As L1 fills, the model compresses the oldest events into dense L2 summaries; L2 compresses into L3. Nothing is truly dropped — it is progressively summarised across layers that span minutes to weeks.
 - **Retrieves and surfaces proactively.** After a significant sensor event, a background thread decides what adjacent information is worth pre-fetching, runs DuckDuckGo search + full-page extraction, and caches results in a local SQLite FTS5 database. When something is genuinely worth your attention it is **presented unprompted** as a finding card (+ desktop notification) — not just silently cached. This is the core loop: realize context → retrieve → present, without being asked. (`/set proactive-present off` to keep it silent.)
 - **Answers in two passes.** When you type a question: (1) a fast analysis pass reads context + question and decides what to retrieve; (2) a response pass reads context + retrieved sources + analysis and produces a JSON answer with inline citations and a memory note. Retrieval is progressive — snippet previews first, full text only when the model asks (`expand_sources`).
 - **Journals.** At session end (or `/journal`), the model writes a structured narrative of the session to `memory/journal/YYYY-MM-DD.mdx` — frontmatter (title, date, tags, entry count) plus a summary callout, highlights, topic pills, and collapsible open-threads per timestamped entry. Rich in MDX viewers (Docusaurus/Nextra/Obsidian), readable as plain Markdown anywhere.
-- **Is model-agnostic.** A capability profile auto-detects modalities (text / vision / audio), projector, KV type, and flash-attention from the model files, so swapping GGUF models needs no code changes — even live, via `/set model … ; /server restart`.
+- **Is model-agnostic.** A capability profile auto-detects modalities (text / vision / audio), projector, KV type, and flash-attention from the model files, so swapping GGUF models needs no code changes — even live, via `/set model … ; /server restart`. The model can also be a **remote OpenAI-compatible API** instead of the local llama-server (`--api-base` / `$LK_API_BASE`).
 - **Is fully steerable at runtime.** Every data-stream knob (gate thresholds, observer rates, memory budgets, retrieval depth, proactive cadence) is configurable live from the CLI with `/set`. The LLM is the most replaceable part; the scripts and heuristics that shape the data streams are directly controllable.
 
 ---
@@ -60,7 +60,8 @@ LAWRENCE/
 │   │   └── store.py            # ContextStore: L1/L2/L3, dynamic budget, layer ops
 │   │
 │   ├── obs/                    # Sensor observers (daemon threads)
-│   │   ├── vision.py           # Capture → OCR → gate → distill → store
+│   │   ├── vision.py           # Low-res gate → full-res → per-window OCR → store
+│   │   ├── regions.py          # Window-rect providers + RegionTracker (IoU+EMA)
 │   │   ├── audio.py            # Record → VAD → transcribe → gate → distill → store
 │   │   └── spool.py            # SpoolWriter/Reader — decoupled (out-of-process) capture
 │   │
@@ -101,16 +102,22 @@ LAWRENCE/
 
 ```text
 VisionObserver._tick()              [every ~10s]
-  capture screen (640×360 PNG via PowerShell/scrot)
+  capture low-res 640×360            (cheap "did anything change?" gate)
   pixel_change_score(prev, curr)
     if score < vision-pixel-min (0.10) → skip
-  run_ocr(frame) via tesseract (PSM 11, sparse-text)
-  vision_gate(score, prev_written_ocr, curr_ocr)
-    if score ≥ vision-high (0.50) → pass (significant layout change)
-    else: OCR Jaccard novelty ≥ vision-novelty-min (0.30) → pass
+  ── useful change → full read, per window ─────────────────────────────────
+  capture_fullres()                  (native, DPI-aware, full virtual screen)
+  screen_windows()                   (OS window rects: PowerShell / wmctrl)
+  RegionTracker.update(rects)        (stable ids + EMA-smoothed boxes, occluded
+                                      windows deduped, top-to-bottom ordering)
+  per region: crop → change-sig → OCR only if changed (>= region-change-min)
+              else reuse the region's cached text
+  combine → "[Window Title]\n<text>" blocks
+  ── whole-screen OCR is the fallback when no window source / no Pillow ─────
+  vision_gate(score, prev_written, combined_text)
+    score ≥ vision-high (0.50) → pass;  else OCR novelty ≥ 0.30 → pass
   rate-limit: ≥ vision-write-min (60s) since last write
-  distill.vision() → compact line + detailed block
-  ContextStore.append() → context-DATE.log + rolling-l1.jsonl
+  distill.vision() → ContextStore.append() → context-DATE.log + rolling-l1.jsonl
   if on_event → trigger proactive retrieval (rate-limited)
 
 AudioObserver._tick()               [every ~4s, parallel]
@@ -209,10 +216,26 @@ Swap models live: `/set model PATH` → `/set mmproj auto` → `/server restart`
 
 ### LLM backend
 
-llama-server runs as a persistent process on `127.0.0.1:8190`; the model is never
-reloaded between turns. Requests send `cache_prompt: true` so the KV cache is
-reused across turns when the prefix matches. With `--parallel 1`, one request runs
-at a time — a proactive background call briefly delays the next user turn.
+Two interchangeable backends behind one client ([model.py](services/lk/model.py)):
+
+- **local** (default) — llama-server runs as a persistent process on
+  `127.0.0.1:8190`; the model is never reloaded between turns. Requests send
+  `cache_prompt: true` so the KV cache is reused when the prefix matches. With
+  `--parallel 1`, one request runs at a time — a proactive call briefly delays
+  the next turn.
+- **api** — any external OpenAI-compatible endpoint (OpenAI, OpenRouter, Together,
+  vLLM, LM Studio, …). Enable with `--api-base URL --api-model NAME [--api-key KEY]`
+  or the env vars `LK_API_BASE` / `LK_API_MODEL` / `LK_API_KEY`. The local server
+  is not started; `/server` reports the external endpoint, and `/set api-model`
+  switches model live. Modalities for the API backend come from `LK_VISION` /
+  `LK_AUDIO` (default text-only).
+
+```bash
+# use a hosted model instead of the local one
+python3 lk.py --api-base https://api.openai.com/v1 --api-model gpt-4o-mini --api-key "$OPENAI_API_KEY"
+# or via env
+LK_API_BASE=https://openrouter.ai/api/v1 LK_API_MODEL=anthropic/claude-3.5-sonnet LK_API_KEY=… python3 lk.py
+```
 
 ---
 
@@ -262,18 +285,25 @@ pip install -e ".[full]"    # + vision, audio, web extraction
 ## Running
 
 ```bash
-python3 lk.py                      # standard: vision + audio observers
-python3 lk.py --no-vision --no-audio   # text-only, no observers
-python3 lk.py --audio-query        # autonomous: speech triggers answers
-python3 lk.py --skip-analysis      # single-pass, no retrieval (fastest)
-make run                           # same as: python3 lk.py
+# Most common — vision on, audio off (audio needs ALSA/PulseAudio + mic)
+python3 lk.py --no-audio
+
+# Text-only, no sensors
+python3 lk.py --no-vision --no-audio
+
+# Use a remote model instead of the local server
+python3 lk.py --api-base https://api.openai.com/v1 --api-model gpt-4o-mini --api-key "$OPENAI_API_KEY"
 ```
 
-With `--audio-query`, every significant speech segment is treated as a query and
-answered in a background thread; the response prints between prompts. Without it,
-speech enriches the rolling context only (passive observation).
+**Detached (recommended)** — survives terminal close, server stays warm:
 
-See **[docs/CLI.md](docs/CLI.md)** for all launch flags and in-REPL commands.
+```bash
+tmux -S /tmp/lk-tmux new-session -d -s lawrence -x 220 -y 50
+tmux -S /tmp/lk-tmux send-keys -t lawrence "cd $(pwd) && python3 lk.py --no-audio" Enter
+tmux -S /tmp/lk-tmux attach -t lawrence       # attach  (detach: Ctrl-b d)
+```
+
+See **[docs/CLI.md](docs/CLI.md)** for the full operations guide: start/stop/attach/detach, all launch flags, live configuration, and memory management.
 
 ### Running detached (tmux)
 
@@ -386,6 +416,10 @@ LK_FLASH_ATTN         on | off | auto
 LK_VISION / LK_AUDIO  force a modality on/off (default: from mmproj presence)
 LK_JINJA              embedded chat template on/off
 EDITOR                editor for /journal edit
+# external API backend (selects the "api" model backend when LK_API_BASE is set)
+LK_API_BASE           OpenAI-compatible base URL (e.g. https://api.openai.com/v1)
+LK_API_KEY            bearer token
+LK_API_MODEL          model name to request
 ```
 
 ---
@@ -399,8 +433,38 @@ methods are no-ops. The kernel emits three event types toward a UI:
 - `{type: "response", answer, citations, note_compact, confidence, latency_ms}`
 - `{type: "context", kind: "vision"|"audio"|"turn", text}`
 
-To connect a desktop UI, start a WebSocket server in `UIConnector.__init__`,
-replace the `pass` stubs with sends, and implement `get_query()` to receive input.
+The Tauri popup lives in `apps/desktop/`. It is intentionally a small
+Raycast-style input surface: transcript fade, one input bar, kernel-context
+controls, document attachment classification, and expandable config.
+
+The desktop UI uses `apps/desktop/scripts/ui_bridge.py`, a thin HTTP bridge that
+imports the existing `services/lk` kernel modules and calls the working kernel
+paths without changing kernel code.
+
+Desktop setup:
+
+```bash
+cd apps/desktop
+npm run bootstrap      # Rust/npm setup + dependency doctor
+npm run deps:system    # interactive sudo: Ubuntu GTK/WebKit/pkg-config packages
+npm run popup          # native Ctrl+Shift+L popup plus bridge
+```
+
+Useful non-native checks:
+
+```bash
+cd apps/desktop
+npm run dev:web        # static preview on http://127.0.0.1:${PORT:-1423}
+npm run bridge         # UI bridge on http://127.0.0.1:${LK_UI_PORT:-8765}
+npm run popup:status   # popup/bridge status
+npm run popup:restart  # restart after config or hotkey changes
+npm run stress         # DOM-level UI stress test
+npm run doctor         # dependency report
+```
+
+In WSL/Docker-style setups, the UI should talk to the kernel over the configured
+kernel URL instead of assuming the Python kernel runs inside the Tauri process.
+The async manager-facing bridge contract is in `apps/desktop/INTEGRATION.md`.
 
 ---
 
@@ -410,8 +474,8 @@ replace the `pass` stubs with sends, and implement `get_query()` to receive inpu
 |---|---|
 | Slow reasoning loop (draft → critique → revise) | Designed, not implemented |
 | Voice output / TTS | Not implemented |
-| Global hotkeys | Not implemented |
-| Tauri desktop UI | Scaffold only (`apps/desktop/`) |
+| Global hotkeys | Implemented in the Tauri popup; default `Ctrl+Shift+L` |
+| Tauri desktop UI | Popup and desktop bridge in `apps/desktop/`; manager-side deep search/MDX response contracts still pending |
 | Rust system hooks (pixel stream, audio tap, active window) | Scaffold only (`crates/system-hooks/`) |
 | macOS / Wayland screen-capture backends | Not wired |
 
