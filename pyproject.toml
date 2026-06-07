@@ -12,6 +12,7 @@ dependencies = []   # stdlib only for the core path; extras below
 
 [project.scripts]
 lk = "lk.cli:main"
+lk-sensor = "lk.sensor:main"
 
 [project.optional-dependencies]
 # install all optional runtime deps:  pip install -e ".[full]"
@@ -37,8 +38,8 @@ dev = [
 where = ["services"]
 include = ["lk*"]
 
-[tool.pytest.ini_options]
-testpaths = ["services/lk/tests"]
+# Offline regression suite lives in services/lk/tests/ and runs via `make test`
+# (plain stdlib scripts, no pytest dependency required).
 
 # ── legacy FastAPI kernel (services/kernel/) ───────────────────────────────────
 # Run separately:  uvicorn lawrence_kernel.main:app --app-dir services/kernel

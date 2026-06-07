@@ -55,11 +55,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import server as _server
+from . import admin  as _admin
 from .ctx        import ContextStore
-from .ctx        import gate as _gate_mod
 from .ctx.gate   import gate_config
 from .kernel     import run_turn, run_proactive, run_compaction, write_journal_entry, TurnConfig
-from .obs        import VisionObserver, AudioObserver, capture_now, record_now
+from .obs        import VisionObserver, AudioObserver, capture_now, record_now, SpoolReader
 from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS
 from .profile    import ModelProfile
 from .retrieval  import SemanticDB, RetrievalPipeline
@@ -77,11 +77,14 @@ def _args() -> argparse.Namespace:
     p.add_argument("--skip-analysis",  action="store_true", help="Single-pass mode (no retrieval)")
     p.add_argument("--audio-query",    action="store_true",
                    help="Treat all significant audio as a query (full turn, response printed)")
+    p.add_argument("--ingest-spool",   nargs="?", const="memory/spool", default=None,
+                   help="Ingest events from an external sensor's spool dir (default: memory/spool). "
+                        "Pair with `python3 lk_sensor.py` running on a host with screen/mic.")
     p.add_argument("--model",   default=str(_server.DEFAULT_MODEL))
     p.add_argument("--mmproj",  default=None,
                    help="multimodal projector GGUF (auto-detected next to --model if omitted)")
     p.add_argument("--bin",     default=str(_server.DEFAULT_BIN))
-    p.add_argument("--ctx-size",    type=int,   default=32_768)
+    p.add_argument("--ctx-size",    type=int,   default=65_536)
     p.add_argument("--gpu-layers",  type=int,   default=None)
     p.add_argument("--threads",     type=int,   default=None)
     p.add_argument("--max-tokens",  type=int,   default=2048)
@@ -130,6 +133,7 @@ class _LiveState:
 
     # ── proactive ─────────────────────────────────────────────────────────
     proactive_interval: float = 600.0   # 10-minute minimum between proactive calls
+    proactive_present:  bool  = True    # surface findings unprompted (vs. warm cache silently)
 
     # ── memory ────────────────────────────────────────────────────────────
     compact_min: int = 300   # seconds minimum between compaction runs
@@ -380,6 +384,11 @@ def _apply_set(
         state.proactive_interval = f
         return f"[set] proactive-interval → {f}s"
 
+    if k == "proactive-present":
+        v = val.lower() not in ("off", "0", "false", "no")
+        state.proactive_present = v
+        return f"[set] proactive-present → {'on' if v else 'off'} (surface findings unprompted)"
+
     # ── live: memory compaction ───────────────────────────────────────────
     if k == "compact-min":
         try:
@@ -517,6 +526,7 @@ def _print_config(state: _LiveState, profile: ModelProfile, pipeline: RetrievalP
         f"\n  audio-dedup-max : {state.audio_dedup_max}"
         f"\n  ── proactive (live) ───────────────────────────────────────────────────"
         f"\n  proactive-interval : {state.proactive_interval}s"
+        f"\n  proactive-present  : {'on' if state.proactive_present else 'off'}"
         f"\n  ── memory compaction (live) ────────────────────────────────────────────"
         f"\n  compact-min : {state.compact_min}s"
         f"\n  l2-budget   : {state.l2_budget} chars"
@@ -575,8 +585,12 @@ def _do_db(verb: str, db: SemanticDB) -> None:
         print("  /db info|clear")
 
 
-def _do_mem(verb: str, ctx: ContextStore) -> None:
-    v = verb.strip().lower() if verb else "info"
+def _do_mem(arg: str, ctx: ContextStore) -> None:
+    """Rolling memory (L1/L2/L3): info | show | clear | archive | export."""
+    parts = arg.split()
+    v     = parts[0].lower() if parts else "info"
+    rest  = parts[1:]
+
     if v == "info":
         cooldown = ctx._min_compact_secs - (time.monotonic() - ctx._last_compact)
         print(
@@ -590,14 +604,118 @@ def _do_mem(verb: str, ctx: ContextStore) -> None:
             f"\n  l2-budget : {ctx.l2_budget} chars"
             f"\n  l3-budget : {ctx.l3_budget} chars"
         )
+    elif v == "show":
+        if not rest:
+            print("\n[MEMORY — L1/L2/L3]\n" + ctx.tail_for_model())
+        else:
+            print(f"\n[{rest[0].upper()}]\n" + ctx.show_layer(rest[0]))
     elif v == "clear":
-        ctx.clear_rolling()
-        print("[memory cleared — L1, L2, L3 wiped]")
+        if not rest or rest[0].lower() == "all":
+            ctx.clear_rolling()
+            print("[memory cleared — L1, L2, L3 wiped]")
+        elif ctx.clear_layer(rest[0]):
+            print(f"[memory] {rest[0].upper()} cleared")
+        else:
+            print("  /mem clear [l1|l2|l3|all]")
     elif v == "archive":
         ctx._archive_l1()
         print("[memory] L1 archived — new session started")
+    elif v == "export":
+        if not rest:
+            print("  /mem export PATH")
+        else:
+            written = ctx.export(Path(rest[0]).expanduser().resolve())
+            print(f"[memory] exported {len(written)} layer(s) → {rest[0]}"
+                  if written else "[memory] nothing to export")
     else:
-        print("  /mem info|clear|archive")
+        print("  /mem info | show [l1|l2|l3] | clear [l1|l2|l3|all] | archive | export PATH")
+
+
+def _do_journal(arg: str, ctx: ContextStore) -> None:
+    """Daily MDX journals: (write) | list | show | export | edit | delete."""
+    parts = arg.split()
+    v     = parts[0].lower() if parts else ""
+    rest  = parts[1:]
+
+    if v == "":                                   # /journal → write a new entry now
+        print("  [writing journal…]")
+        entry = write_journal_entry(ctx)
+        print(f"\n[JOURNAL]\n{entry}" if entry else "[journal] nothing to journal yet")
+    elif v == "list":
+        rows = _admin.list_journals()
+        if not rows:
+            print("[journal] none yet")
+        else:
+            print("\n[JOURNALS]")
+            for date, size, entries in rows:
+                print(f"  {date}.mdx   {size // 1024 or 1}K   {entries} entr{'y' if entries == 1 else 'ies'}")
+    elif v == "show":
+        print("\n" + _admin.show_journal(rest[0] if rest else None))
+    elif v == "edit":
+        print(_admin.edit_journal(rest[0] if rest else None))
+    elif v == "export":
+        if not rest:
+            print("  /journal export PATH [DATE]")
+        else:
+            date    = rest[1] if len(rest) > 1 else None
+            written = _admin.export_journal(rest[0], date)
+            print(f"[journal] exported {len(written)} file(s) → {rest[0]}"
+                  if written else "[journal] nothing matched")
+    elif v == "delete":
+        if not rest:
+            print("  /journal delete DATE  (DATE = today|yesterday|YYYY-MM-DD)")
+        else:
+            print(f"[journal] deleted {rest[0]}" if _admin.delete_journal(rest[0])
+                  else f"[journal] no journal for {rest[0]}")
+    else:
+        print("  /journal | list | show [DATE] | export PATH [DATE] | edit [DATE] | delete DATE")
+
+
+def _do_log(arg: str, ctx: ContextStore) -> None:
+    """Event + turn logs: (tail) | list | show | export | trim | delete."""
+    parts = arg.split()
+    v     = parts[0].lower() if parts else ""
+    rest  = parts[1:]
+
+    if v == "" or v.isdigit():                    # /log [N] → tail today's event log
+        n = int(v) if v.isdigit() else 30
+        print(f"\n[EVENT LOG — last {n}]\n" + ctx.tail_compact(n))
+    elif v == "list":
+        rows = _admin.list_logs()
+        if not rows:
+            print("[log] none yet")
+        else:
+            print("\n[LOGS]  date         event-log  turn-log")
+            for date, ev, tn in rows:
+                print(f"  {date}   {ev // 1024 or (1 if ev else 0)}K        {tn // 1024 or (1 if tn else 0)}K")
+    elif v == "show":
+        date = rest[0] if rest else None
+        n    = int(rest[1]) if len(rest) > 1 and rest[1].isdigit() else None
+        print("\n[EVENT LOG]\n" + _admin.show_log(date, n))
+    elif v == "trim":
+        if len(rest) < 2 or not rest[1].isdigit():
+            print("  /log trim DATE N   (keep last N lines)")
+        else:
+            kept = _admin.trim_log(rest[0], int(rest[1]))
+            print(f"[log] {rest[0]} trimmed to {kept} lines" if kept >= 0
+                  else f"[log] no event log for {rest[0]}")
+    elif v == "export":
+        if not rest:
+            print("  /log export PATH [DATE]")
+        else:
+            date    = rest[1] if len(rest) > 1 else None
+            written = _admin.export_log(rest[0], date)
+            print(f"[log] exported {len(written)} file(s) → {rest[0]}"
+                  if written else "[log] nothing matched")
+    elif v == "delete":
+        if not rest:
+            print("  /log delete DATE")
+        else:
+            removed = _admin.delete_log(rest[0])
+            print(f"[log] deleted {', '.join(removed)}" if removed
+                  else f"[log] no logs for {rest[0]}")
+    else:
+        print("  /log [N] | list | show [DATE [N]] | export PATH [DATE] | trim DATE N | delete DATE")
 
 
 # ── command parsing ───────────────────────────────────────────────────────────
@@ -627,8 +745,6 @@ def _parse(
     if low == "/help set":           return "", [], [], "help_set"
     if low == "/status":             return "", [], [], "status"
     if low == "/context":            return "", [], [], "context"
-    if low == "/log":                return "", [], [], "log"
-    if low == "/journal":            return "", [], [], "journal"
     if low == "/vision on":          return "", [], [], "vision_on"
     if low == "/vision off":         return "", [], [], "vision_off"
     if low == "/audio-on":           return "", [], [], "audio_on"
@@ -656,9 +772,17 @@ def _parse(
     if cmd == "/db":
         return parts[1] if len(parts) > 1 else "", [], [], "db"
 
-    # /mem [VERB]
+    # /mem [VERB [ARGS]]   — full remainder carried in user_text
     if cmd == "/mem":
-        return parts[1] if len(parts) > 1 else "", [], [], "mem"
+        return text.removeprefix(parts[0]).strip(), [], [], "mem"
+
+    # /journal [SUBCMD [ARGS]]
+    if cmd == "/journal":
+        return text.removeprefix(parts[0]).strip(), [], [], "journal"
+
+    # /log [SUBCMD [ARGS] | N]
+    if cmd == "/log":
+        return text.removeprefix(parts[0]).strip(), [], [], "log"
 
     # /screenshot [q]
     if cmd == "/screenshot":
@@ -717,35 +841,77 @@ def _print_answer(answer: str, width: int = 100) -> None:
     print("\n" + "\n".join(out))
 
 
+def _print_briefing(finding: dict, width: int = 100) -> None:
+    """Render an unprompted proactive finding as a boxed card."""
+    inner = width - 2
+    head  = finding.get("headline", "").strip()
+    body  = finding.get("insight", "").strip()
+    cites = finding.get("citations", [])
+
+    out = ["\n╭─ ⚡ LAWRENCE noticed " + "─" * (inner - 20)]
+    for w in textwrap.wrap(head, inner - 2) or [""]:
+        out.append(f"│ {w}")
+    out.append("│")
+    for line in body.splitlines() or [""]:
+        for w in textwrap.wrap(line, inner - 2) or [""]:
+            out.append(f"│ {w}")
+    if cites:
+        out.append("│")
+        for c in cites[:4]:
+            ref = f"[{c['num']}] {c.get('title') or c.get('url','')}"
+            out.append(f"│ {ref[:inner - 2]}")
+    out.append("╰" + "─" * (inner + 1))
+    print("\n".join(out))
+
+
 # ── help ──────────────────────────────────────────────────────────────────────
 
 def _print_help() -> None:
     print(
-        "\nCommands:\n"
+        "\nCommands  (see docs/CLI.md for the full reference)\n"
+        "\n  ── ask / attach ──────────────────────────────────────────────────────\n"
         "  text                    send a query\n"
-        "  /screenshot [q]         attach screen capture\n"
-        "  /image PATH [q]         attach image file\n"
-        "  /audio PATH [q]         attach audio file\n"
-        "  /record SECS [q]        record mic\n"
-        "\n"
+        "  /screenshot [q]         attach a screen capture\n"
+        "  /image PATH [q]         attach an image file\n"
+        "  /audio PATH [q]         attach an audio file\n"
+        "  /record SECS [q]        record mic for SECS seconds\n"
+        "\n  ── sensors ───────────────────────────────────────────────────────────\n"
         "  /vision on|off          rolling screen observer\n"
         "  /audio-on|off           rolling audio observer\n"
-        "  /obs                    show live preprocessor state (frame, audio)\n"
-        "\n"
-        "  /context                show memory context (L1/L2/L3, model input)\n"
-        "  /log                    show today's event log tail\n"
-        "  /journal                write + print session journal entry\n"
+        "  /obs                    live preprocessor state (frame Δ, OCR, audio)\n"
+        "\n  ── rolling memory (L1/L2/L3) ──────────────────────────────────────────\n"
+        "  /context                what the model reads (L3→L2→L1)\n"
+        "  /mem info                       sizes, budget, compaction state\n"
+        "  /mem show [l1|l2|l3]            print a layer (default: all)\n"
+        "  /mem clear [l1|l2|l3|all]       wipe a layer (or everything)\n"
+        "  /mem archive                    snapshot + truncate L1 (new session)\n"
+        "  /mem export PATH                dump layers to a folder\n"
+        "  /clear                          shortcut for /mem clear all\n"
+        "\n  ── event + turn logs ──────────────────────────────────────────────────\n"
+        "  /log [N]                        tail today's event log (default 30)\n"
+        "  /log list                       all log dates + sizes\n"
+        "  /log show [DATE [N]]            view a day's event log\n"
+        "  /log export PATH [DATE]         copy logs out\n"
+        "  /log trim DATE N                keep only the last N lines\n"
+        "  /log delete DATE                remove a day's event + turn logs\n"
+        "\n  ── journal (daily MDX) ────────────────────────────────────────────────\n"
+        "  /journal                        write + show an entry now\n"
+        "  /journal list                   all journal dates\n"
+        "  /journal show [DATE]            view a journal\n"
+        "  /journal edit [DATE]            open in $EDITOR\n"
+        "  /journal export PATH [DATE]     copy journal(s) out\n"
+        "  /journal delete DATE            remove a journal\n"
+        "\n  ── config / server / retrieval ───────────────────────────────────────\n"
         "  /status                 server + observer + memory state\n"
-        "  /clear                  clear rolling context (L1+L2+L3)\n"
-        "\n"
-        "  /config                 show all configurable settings\n"
+        "  /config                 every configurable setting\n"
         "  /set KEY VAL            change a setting live (see /help set)\n"
         "  /server start|stop|restart|status\n"
-        "\n"
-        "  /db info|clear          semantic retrieval DB\n"
-        "  /mem info|clear|archive memory layers\n"
+        "  /db info|clear          semantic retrieval cache\n"
         "  /skip-retrieval         toggle web retrieval\n"
-        "  /exit                   quit (writes journal)\n"
+        "\n  ── session ────────────────────────────────────────────────────────────\n"
+        "  /help   /help set       this list / all /set keys\n"
+        "  /exit, /quit            quit (writes journal automatically)\n"
+        "  DATE = today | yesterday | YYYY-MM-DD\n"
     )
 
 
@@ -756,7 +922,7 @@ def _print_help_set() -> None:
         "  model PATH          path to GGUF model file\n"
         "  bin PATH            path to llama-server binary\n"
         "  mmproj PATH|auto    multimodal projector (auto = detect next to model)\n"
-        "  ctx N               context window tokens (default 32768)\n"
+        "  ctx N               context window tokens (default 65536)\n"
         "  threads N           inference threads (default 9)\n"
         "  gpu-layers N        GPU offload layers (0 = CPU only)\n"
         "  kv-type q4_0|q8_0|f16|none\n"
@@ -783,6 +949,7 @@ def _print_help_set() -> None:
         "  audio-dedup-max F   Jaccard sim ceiling before dedup-skip (default 0.60)\n"
         "\n  ── proactive (live) ───────────────────────────────────────────────────\n"
         "  proactive-interval N  min seconds between proactive calls (default 600)\n"
+        "  proactive-present on|off  surface findings unprompted vs. warm cache (default on)\n"
         "\n  ── memory compaction (live) ────────────────────────────────────────────\n"
         "  compact-min N   min seconds between compaction runs (default 300)\n"
         "  l2-budget N     L2 summary budget chars before L2→L3 (default 10000)\n"
@@ -856,12 +1023,14 @@ def _make_proactive_trigger(
     retrieval: RetrievalPipeline,
     cfg: TurnConfig,
     state: _LiveState,
-    live_fn: "Callable[[str], None] | None" = None,
+    live_fn:    "Callable[[str], None] | None"  = None,
+    present_fn: "Callable[[dict], None] | None" = None,
 ) -> Callable[[str, str], None]:
     """
-    Returns an on_event callback for sensor observers.
-    Reads state.proactive_interval live so /set proactive-interval takes effect
-    without a CLI restart.
+    Returns an on_event callback for sensor observers — the autonomous trigger.
+    Reads state live so /set proactive-interval and /set proactive-present take
+    effect without a CLI restart. present_fn is passed to run_proactive only when
+    surfacing is enabled, so disabling it also skips the extra briefing model call.
     """
     _lock = threading.Lock()
     _last_run: list[float] = [0.0]
@@ -874,10 +1043,11 @@ def _make_proactive_trigger(
         if not _lock.acquire(blocking=False):
             return
         _last_run[0] = time.monotonic()
+        pf = present_fn if state.proactive_present else None
 
         def _run() -> None:
             try:
-                run_proactive(ctx, retrieval, live_fn=live_fn)
+                run_proactive(ctx, retrieval, live_fn=live_fn, present_fn=pf)
             finally:
                 _lock.release()
         threading.Thread(target=_run, daemon=True, name="proactive").start()
@@ -970,7 +1140,7 @@ def main() -> int:
         _server.start(profile, gpu_layers=args.gpu_layers, threads=args.threads)
     except RuntimeError as e:
         print(f"  [server] failed to start: {e}", file=sys.stderr)
-        print(f"  [server] running in degraded mode — use /server start to retry")
+        print("  [server] running in degraded mode — use /server start to retry")
 
     def _on_signal(sig: int, _f: object) -> None:
         if args.stop_server:
@@ -985,6 +1155,7 @@ def main() -> int:
     response_q: queue.Queue[str]        = queue.Queue()
     control_q:  queue.Queue[dict]       = queue.Queue()
     live_q:     queue.Queue[str]        = queue.Queue()
+    brief_q:    queue.Queue[dict]       = queue.Queue()   # proactive findings to surface
 
     # mutable reference: audio-query handler and control handler always get latest observer
     vision_ref: list[VisionObserver | None] = [None]
@@ -1040,7 +1211,22 @@ def main() -> int:
         print("  audio-query  : ON — speech triggers full turns automatically")
     print("  Type /help for commands.\n")
 
-    on_proactive = _make_proactive_trigger(ctx, pipeline, cfg, state, live_fn=live_q.put)
+    def _present_finding(finding: dict) -> None:
+        brief_q.put(finding)
+        _notify("LAWRENCE noticed", finding.get("headline", ""))
+
+    on_proactive = _make_proactive_trigger(
+        ctx, pipeline, cfg, state, live_fn=live_q.put, present_fn=_present_finding,
+    )
+
+    # Ingest events captured by an out-of-process sensor (lk.sensor) — keeps
+    # vision/audio working when this kernel is headless (e.g. in a container).
+    spool_reader: SpoolReader | None = None
+    if args.ingest_spool:
+        spool_dir = Path(args.ingest_spool).expanduser().resolve()
+        spool_reader = SpoolReader(spool_dir, ctx, on_event=on_proactive)
+        spool_reader.start()
+        print(f"  ingest spool : {spool_dir}")
 
     _start_stdin_reader(input_q)
 
@@ -1156,6 +1342,16 @@ def main() -> int:
                     except queue.Empty:
                         break
 
+                # ── proactive findings surfaced unprompted ────────────────────────
+                while not brief_q.empty():
+                    try:
+                        sys.stdout.write("\r")
+                        _print_briefing(brief_q.get_nowait())
+                        sys.stdout.write("\nyou> ")
+                        sys.stdout.flush()
+                    except queue.Empty:
+                        break
+
                 # ── poll for user input (non-blocking, 150ms timeout) ─────────────
                 try:
                     raw = input_q.get(timeout=0.15)
@@ -1196,15 +1392,10 @@ def main() -> int:
                     print("\n[MEMORY CONTEXT — L1/L2/L3 — model input]\n" + ctx.tail_for_model())
 
                 elif action == "log":
-                    print("\n[EVENT LOG — last 30]\n" + ctx.tail_compact(30))
+                    _do_log(user_text, ctx)
 
                 elif action == "journal":
-                    print("  [writing journal…]")
-                    entry = write_journal_entry(ctx)
-                    if entry:
-                        print(f"\n[JOURNAL]\n{entry}")
-                    else:
-                        print("[journal] nothing to journal yet")
+                    _do_journal(user_text, ctx)
 
                 elif action == "vision_on":
                     if not profile_ref[0].vision:
@@ -1317,6 +1508,8 @@ def main() -> int:
                 vision.stop()
             if audio:
                 audio.stop()
+            if spool_reader:
+                spool_reader.stop()
             print("  [writing session journal…]")
             entry = write_journal_entry(ctx)
             if entry:

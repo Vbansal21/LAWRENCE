@@ -18,7 +18,7 @@ by environment variables, so any model runs with sensible defaults:
   LK_FLASH_ATTN=on|off|auto                        (default: on if KV quantized, else auto)
   LK_KV_TYPE=q4_0|q8_0|f16|none   KV cache type    (default: q4_0; f16/none → unquantized)
   LK_JINJA=0/1       embedded chat template        (default: on)
-  LK_CTX_SIZE=N      context window                (default: 32768)
+  LK_CTX_SIZE=N      context window                (default: 65536)
 """
 from __future__ import annotations
 
@@ -67,7 +67,7 @@ class ModelProfile:
         model:   Path | str,
         bin_path: Path | str,
         mmproj:  Path | str | None = None,
-        ctx_size: int = 32_768,
+        ctx_size: int = 65_536,
     ) -> "ModelProfile":
         """Build a profile, auto-detecting capabilities and applying env overrides."""
         model    = Path(model)

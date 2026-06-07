@@ -19,7 +19,8 @@ Hierarchical rolling context store — three memory layers.
 The model always receives: L3 → L2 → L1, oldest-first, with section headers,
 trimmed to a DYNAMIC working budget: it grows (toward ~20K tokens) as fresh
 activity accumulates and decays back toward a floor (~2K tokens) after the
-session goes stale. The fixed 32K KV cache is the ceiling this flexes within.
+session goes stale. The fixed KV cache (64K tokens by default) is the ceiling
+this flexes within.
 
 Compaction requires a compact_fn callable (provided by cli.py from the kernel).
 Without it the store falls back to plain L1 trimming (old behaviour, no L2/L3).
@@ -27,6 +28,7 @@ Without it the store falls back to plain L1 trimming (old behaviour, no L2/L3).
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from collections.abc import Callable
@@ -37,7 +39,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _MEM_DIR  = REPO_ROOT / "memory"
 
 # ── dynamic working-context budget (chars) ──────────────────────────────────
-# The llama-server KV cache is fixed at 32K tokens; the *effective* context we
+# The llama-server KV cache is fixed (64K tokens by default); the *effective* context we
 # inject flexes within it. It grows as fresh activity accumulates and decays
 # back down after a stale period. ~4 chars per token, so 80K chars ≈ 20K tokens,
 # leaving ample room for the system prompt, retrieval, images, and the response.
@@ -140,8 +142,13 @@ class ContextStore:
 
     @staticmethod
     def _write_lines(p: Path, lines: list[str]) -> int:
+        """Atomically replace a layer file. Write a sibling temp then os.replace
+        so a concurrent lock-free reader (e.g. tail_for_model) never sees a
+        half-written/truncated file — it sees either the old or new content."""
         content = ("\n".join(lines) + "\n") if lines else ""
-        p.write_text(content, encoding="utf-8")
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, p)
         return len(content)
 
     def _migrate_legacy(self) -> None:
@@ -395,10 +402,16 @@ class ContextStore:
         """
         L3 → L2 → L1 concatenated with section headers, oldest first.
         What the model receives as working memory on every turn.
-        """
-        parts: list[str] = []
 
-        l3 = self._read_lines(self._l3)
+        Reads all three layers under the lock so a concurrent compaction (which
+        rewrites the files) can't yield a partial/empty snapshot mid-turn.
+        """
+        with self._lock:
+            l3 = self._read_lines(self._l3)
+            l2 = self._read_lines(self._l2)
+            l1 = self._read_lines(self._l1)
+
+        parts: list[str] = []
         if l3:
             parts.append("[LONG-TERM MEMORY]")
             for l in l3:
@@ -406,8 +419,6 @@ class ContextStore:
                     parts.append(f"  {json.loads(l)['summary']}")
                 except Exception:
                     pass
-
-        l2 = self._read_lines(self._l2)
         if l2:
             parts.append("[SESSION MEMORY]")
             for l in l2:
@@ -415,8 +426,6 @@ class ContextStore:
                     parts.append(f"  {json.loads(l)['summary']}")
                 except Exception:
                     pass
-
-        l1 = self._read_lines(self._l1)
         if l1:
             parts.append("[CURRENT CONTEXT]")
             for l in l1:
@@ -463,3 +472,48 @@ class ContextStore:
                 f.write_text("", encoding="utf-8")
             self._l1_size = self._l2_size = self._l3_size = 0
             self._budget = _BUDGET_BASE
+
+    # ── selective rolling-memory management ─────────────────────────────────────
+
+    def _layer_file(self, level: str) -> Path | None:
+        return {"l1": self._l1, "l2": self._l2, "l3": self._l3}.get(level.lower())
+
+    def show_layer(self, level: str) -> str:
+        """Pretty-print a single rolling layer (l1/l2/l3). For /mem show."""
+        f = self._layer_file(level)
+        if f is None:
+            return "(layer must be l1, l2, or l3)"
+        lines = self._read_lines(f)
+        if not lines:
+            return f"({level.upper()} empty)"
+        out: list[str] = []
+        for l in lines:
+            try:
+                ev = json.loads(l)
+                out.append(ev.get("detailed") or ev.get("summary") or l)
+            except Exception:
+                out.append(l)
+        return "\n".join(out)
+
+    def clear_layer(self, level: str) -> bool:
+        """Clear one rolling layer (l1/l2/l3). Returns False for an unknown layer."""
+        f = self._layer_file(level)
+        if f is None:
+            return False
+        with self._lock:
+            f.write_text("", encoding="utf-8")
+            if   f is self._l1: self._l1_size = 0; self._budget = _BUDGET_BASE
+            elif f is self._l2: self._l2_size = 0
+            elif f is self._l3: self._l3_size = 0
+        return True
+
+    def export(self, dest: Path) -> list[Path]:
+        """Copy non-empty rolling layers to dest dir. Returns the written paths."""
+        dest.mkdir(parents=True, exist_ok=True)
+        out: list[Path] = []
+        for f in (self._l1, self._l2, self._l3):
+            if f.exists() and f.stat().st_size > 0:
+                tgt = dest / f.name
+                tgt.write_text(f.read_text(encoding="utf-8"), encoding="utf-8")
+                out.append(tgt)
+        return out

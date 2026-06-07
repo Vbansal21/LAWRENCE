@@ -32,8 +32,8 @@ from ..retrieval import RetrievalPipeline, format_snippets, format_for_model, fo
 from ..ui       import UIConnector
 from .          import prompts
 
-REPO_ROOT    = Path(__file__).resolve().parents[3]
-_JOURNAL_DIR = REPO_ROOT / "memory" / "journal"
+REPO_ROOT = Path(__file__).resolve().parents[3]
+# Journal files live under memory/journal/ — assembled by lk.admin (MDX writer).
 
 _turn_ctr = itertools.count(1)
 
@@ -41,18 +41,27 @@ _turn_ctr = itertools.count(1)
 # ── JSON helpers ──────────────────────────────────────────────────────────────
 
 def _extract_json(text: str) -> dict[str, Any] | None:
-    """Return the last valid JSON object found in text (skips thinking-block noise)."""
+    """Return the last *top-level* JSON object in text (skips thinking-block noise).
+
+    Scans left-to-right and, on each successful decode, jumps past the parsed
+    object rather than continuing into it — so a nested object (e.g. the RESPONSE
+    schema's `controls: {...}`) does NOT get mistaken for the result. Taking the
+    last top-level object still discards leading thinking/preamble noise.
+    """
     decoder = json.JSONDecoder()
     found: dict[str, Any] | None = None
-    for i, ch in enumerate(text):
-        if ch != "{":
+    i, n = 0, len(text)
+    while i < n:
+        if text[i] != "{":
+            i += 1
             continue
         try:
-            val, _ = decoder.raw_decode(text[i:])
+            val, end = decoder.raw_decode(text[i:])
             if isinstance(val, dict):
                 found = val
+            i += max(end, 1)          # skip past this object — don't descend into it
         except json.JSONDecodeError:
-            continue
+            i += 1
     return found
 
 
@@ -262,12 +271,20 @@ def run_turn(
 def run_proactive(
     ctx:       ContextStore,
     retrieval: RetrievalPipeline,
-    live_fn:   Callable[[str], None] | None = None,
+    live_fn:   Callable[[str], None]  | None = None,
+    present_fn: Callable[[dict], None] | None = None,
 ) -> None:
     """
-    Called from background thread after a significant sensor event.
-    Runs analysis against the current context to decide what to pre-fetch.
-    Stores retrieved content in the semantic DB only — no answer, no context write.
+    Called from a background thread after a significant sensor event — this is the
+    autonomous loop: realize context → retrieve → (optionally) surface.
+
+      1. PROACTIVE pass: does the current context warrant pre-fetching? which queries?
+      2. retrieve(queries) → warms the semantic DB (silent).
+      3. if present_fn is given, PROACTIVE_BRIEF pass: is anything worth surfacing
+         unprompted? If so, emit a structured finding via present_fn and record it
+         to context (kind="finding") so it is remembered and not repeated.
+
+    With present_fn=None it behaves as before: warm the cache, surface nothing.
     """
     tail = ctx.tail_for_model()
     if tail == "(no context yet)":
@@ -275,7 +292,7 @@ def run_proactive(
     try:
         raw = call_model(
             _build_messages(prompts.PROACTIVE, tail, [], []),
-            max_tokens=256, temperature=0.1,
+            max_tokens=512, temperature=0.1,   # headroom for the thinking block
         )
         parsed = _extract_json(raw.get("text", ""))
     except Exception:
@@ -283,11 +300,49 @@ def run_proactive(
     if not parsed or not parsed.get("needs_retrieval"):
         return
     queries = [str(q) for q in parsed.get("queries", []) if q][:3]
-    if queries:
-        results = retrieval.retrieve(queries)
-        if live_fn and results:
-            qs = ", ".join(f'"{q}"' for q in queries[:2])
-            live_fn(f"[proactive] {len(results)} sources warmed ({qs})")
+    if not queries:
+        return
+
+    results = retrieval.retrieve(queries)
+    if live_fn and results:
+        qs = ", ".join(f'"{q}"' for q in queries[:2])
+        live_fn(f"[proactive] {len(results)} sources warmed ({qs})")
+
+    # ── surface a finding unprompted (the "present nicely" step) ─────────────────
+    if present_fn is None or not results:
+        return
+    snippet_block = format_snippets(results)
+    body = f"{tail}\n\n{snippet_block}"
+    try:
+        raw2 = call_model(
+            _build_messages(prompts.PROACTIVE_BRIEF, body, [], []),
+            max_tokens=1024, temperature=0.2,
+        )
+        brief = _extract_json(raw2.get("text", ""))
+    except Exception:
+        return
+    if not brief or not brief.get("surface"):
+        return
+    headline = str(brief.get("headline", "")).strip()[:120]
+    insight  = str(brief.get("insight", "")).strip()
+    if not insight:
+        return
+
+    finding = {
+        "headline":  headline,
+        "insight":   insight,
+        "citations": [{"num": r.citation_num, "title": r.title, "url": r.url}
+                      for r in results],
+    }
+    present_fn(finding)
+
+    # Record so the agent remembers it surfaced this (and the user can see it later).
+    ts = datetime.now(timezone.utc).isoformat()
+    ctx.append(
+        ts=ts, kind="finding",
+        compact=f"[FOUND] {headline}",
+        detailed=f"[PROACTIVE FINDING] {headline}\n{insight}",
+    )
 
 
 # ── memory compaction (called by ContextStore background thread) ───────────────
@@ -300,7 +355,11 @@ def run_compaction(events_text: str, level: str) -> str:
     Returns empty string on failure so the store leaves its file unchanged.
     """
     prompt  = prompts.COMPACT_L1 if level == "l1" else prompts.COMPACT_L2
-    max_tok = 300 if level == "l1" else 180
+    # Headroom for the thinking block before the summary (same reason as the
+    # journal): with too small a ceiling the budget is spent thinking and the
+    # summary comes back empty, so no L2/L3 entry is ever stored. The model
+    # stops at EOS once the (short) summary is done.
+    max_tok = 768 if level == "l1" else 512
     try:
         raw = call_model(
             _build_messages(prompt, events_text, [], []),
@@ -315,27 +374,34 @@ def run_compaction(events_text: str, level: str) -> str:
 
 def write_journal_entry(ctx: ContextStore) -> str:
     """
-    Write a synthesized session journal entry to memory/journal/YYYY-MM-DD.md.
+    Write a synthesized session journal entry to memory/journal/YYYY-MM-DD.mdx.
     Called explicitly (/journal command) or at clean exit.
+
+    The model writes a title line + prose; admin.append_journal_entry assembles
+    it into a browseable MDX journal (frontmatter + timestamped, titled sections).
     Returns the prose written, or "" if there was nothing to journal.
     """
     tail = ctx.tail_for_model()
     if tail == "(no context yet)":
         return ""
     try:
+        # Headroom matters: thinking models (e.g. Gemma 4) spend tokens in a
+        # thought block before the answer channel, and the amount of thinking
+        # scales with context size. 400 ran out mid-thought on a large session
+        # (→ _strip_thinking returned ""). The model stops at EOS, so a high
+        # ceiling isn't wasteful — it just guarantees room to reach the answer.
         raw = call_model(
             _build_messages(prompts.JOURNAL, tail, [], []),
-            max_tokens=400, temperature=0.3,
+            max_tokens=2048, temperature=0.3,
         )
         entry = raw.get("text", "").strip()
     except Exception:
         return ""
     if not entry:
         return ""
-    _JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-    today  = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-    ts_str = datetime.now(timezone.utc).strftime("%H:%M UTC")
-    path   = _JOURNAL_DIR / f"{today}.md"
-    with path.open("a", encoding="utf-8") as f:
-        f.write(f"\n## {ts_str}\n\n{entry}\n")
-    return entry
+
+    from ..admin import append_journal_entry, day_tags, parse_journal_output
+    parsed = parse_journal_output(entry)
+    append_journal_entry(parsed, tags=day_tags())
+    # Return a short human-readable confirmation (summary, falling back to title)
+    return parsed.get("summary") or parsed.get("title") or ""
