@@ -8,8 +8,14 @@
   --soft: #78857c;
   --accent: #76d083;
   --amber: #d6ad55;
+<<<<<<< HEAD
   --shadow: 0 30px 90px rgba(0, 0, 0, 0.55);
   --ui-zoom: 1;
+=======
+  --ui-zoom: 1;
+  --surface-alpha: 0.88;
+  --surface-blur: 18px;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   --message-font: 13px;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -19,14 +25,27 @@
 }
 
 body {
+<<<<<<< HEAD
   min-width: 760px;
   min-height: 300px;
+=======
+  min-width: 720px;
+  min-height: 260px;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   margin: 0;
   color: var(--text);
   background: transparent;
   overflow: hidden;
 }
 
+<<<<<<< HEAD
+=======
+body.panel-window {
+  min-width: 260px;
+  min-height: 220px;
+}
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 button,
 input,
 select,
@@ -40,6 +59,7 @@ button {
 
 .launcher {
   height: 100vh;
+<<<<<<< HEAD
   min-height: 300px;
   position: relative;
   display: grid;
@@ -62,6 +82,68 @@ button {
   overflow: auto;
   padding: 8px 12px 2px;
   mask-image: linear-gradient(to bottom, transparent 0, black 34px, black calc(100% - 46px), transparent 100%);
+=======
+  min-height: 260px;
+  position: relative;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto auto auto auto;
+  gap: 9px;
+  padding: 16px 14px 13px;
+  font-size: 13px;
+  background: rgba(12, 17, 15, var(--surface-alpha));
+  border: 1px solid rgba(164, 188, 169, 0.22);
+  border-radius: 28px;
+  backdrop-filter: blur(var(--surface-blur)) saturate(1.22);
+  overflow: hidden;
+}
+
+.panel-window .launcher {
+  width: 100%;
+  height: 100vh;
+  min-height: 100vh;
+  display: block;
+  padding: 0;
+  border-radius: 22px;
+}
+
+.panel-window .feed,
+.panel-window .composer,
+.panel-window .option-drawer,
+.panel-window .url-row,
+.panel-window .attachment-row,
+.panel-window .context-strip,
+.panel-window .resize-grip {
+  display: none;
+}
+
+.panel-window .drag-zone {
+  left: 0;
+  right: 0;
+  height: 40px;
+}
+
+.drag-zone {
+  position: absolute;
+  top: 0;
+  left: 22px;
+  right: 22px;
+  height: 22px;
+  cursor: grab;
+  z-index: 3;
+}
+
+.drag-zone:active {
+  cursor: grabbing;
+}
+
+.feed {
+  min-height: 0;
+  overflow: auto;
+  padding: 14px 14px 12px;
+  mask-image: linear-gradient(to bottom, transparent 0, black 28px, black 100%);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(118, 208, 131, 0.42) transparent;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 .message {
@@ -87,6 +169,24 @@ button {
   color: var(--accent);
 }
 
+<<<<<<< HEAD
+=======
+.message.user.voice {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(214, 173, 85, 0.6);
+}
+
+.message.user.voice .message-head strong {
+  color: var(--amber);
+}
+
+.message.user.voice .mdx {
+  color: #f1e6cf;
+  font-style: italic;
+}
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 .message-head time {
   color: var(--soft);
   font-size: 11px;
@@ -180,6 +280,40 @@ button {
   color: var(--accent);
 }
 
+<<<<<<< HEAD
+=======
+.mdx img,
+.mdx-image {
+  max-width: min(100%, 520px);
+  max-height: 260px;
+  display: block;
+  border: 1px solid rgba(113, 134, 119, 0.24);
+  border-radius: 12px;
+  object-fit: contain;
+  background: rgba(8, 11, 10, 0.44);
+}
+
+.mdx table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.mdx th,
+.mdx td {
+  border: 1px solid rgba(113, 134, 119, 0.28);
+  padding: 5px 7px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.mdx th {
+  color: #edf5ee;
+  background: rgba(32, 56, 39, 0.45);
+}
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 .mdx hr {
   border: 0;
   border-top: 1px solid var(--line);
@@ -229,14 +363,83 @@ button {
   font-size: 11px;
 }
 
+<<<<<<< HEAD
 .composer {
   display: grid;
   grid-template-columns: repeat(4, 34px) minmax(0, 1fr) minmax(44px, auto) auto;
+=======
+.source-strip {
+  max-width: 100%;
+  display: flex;
+  gap: 7px;
+  overflow: auto;
+  margin-top: 7px;
+  padding-bottom: 1px;
+  scrollbar-width: none;
+}
+
+.source-strip::-webkit-scrollbar {
+  display: none;
+}
+
+.source-card {
+  min-width: 160px;
+  max-width: 260px;
+  display: grid;
+  gap: 2px;
+  border: 1px solid rgba(118, 208, 131, 0.25);
+  border-radius: 12px;
+  background: rgba(13, 18, 16, 0.7);
+  padding: 7px 9px;
+  color: #dfe7df;
+  text-decoration: none;
+}
+
+.source-card b {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
+.source-card small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--soft);
+  font-size: 10px;
+}
+
+.source-url,
+.source-snippet {
+  overflow: hidden;
+  display: block;
+  color: var(--soft);
+  font-size: 10px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+}
+
+.source-url {
+  white-space: nowrap;
+}
+
+.source-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.composer {
+  display: grid;
+  grid-template-columns: 18px repeat(4, 34px) minmax(0, 1fr) minmax(44px, auto) 36px;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   align-items: center;
   gap: 6px;
   min-height: 52px;
   padding: 7px;
   border: 1px solid rgba(145, 169, 150, 0.28);
+<<<<<<< HEAD
   border-radius: 18px;
   background: var(--bar);
   box-shadow: 0 12px 34px rgba(0, 0, 0, 0.22);
@@ -263,6 +466,27 @@ button {
     linear-gradient(150deg, transparent 32%, var(--accent) 34% 45%, transparent 47%);
   border: 2px solid var(--accent);
   transform: rotate(45deg);
+=======
+  border-radius: 22px;
+  background: rgba(22, 28, 25, var(--surface-alpha));
+  backdrop-filter: blur(16px) saturate(1.2);
+}
+
+.drag-handle {
+  width: 18px;
+  height: 34px;
+  display: block;
+  cursor: grab;
+  border-radius: 12px;
+  background-image: radial-gradient(rgba(168, 178, 170, 0.65) 1px, transparent 1.4px);
+  background-position: center;
+  background-size: 6px 6px;
+  opacity: 0.7;
+}
+
+.drag-handle:active {
+  cursor: grabbing;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 textarea {
@@ -274,7 +498,11 @@ textarea {
   border: 0;
   outline: 0;
   line-height: 1.45;
+<<<<<<< HEAD
   font-size: calc(13px * var(--ui-zoom));
+=======
+  font-size: 13px;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   padding: 10px 4px 0;
 }
 
@@ -385,6 +613,7 @@ svg {
 
 .option-drawer {
   position: absolute;
+<<<<<<< HEAD
   left: 10px;
   right: 10px;
   bottom: 106px;
@@ -399,12 +628,31 @@ svg {
   background: rgba(13, 18, 16, 0.96);
   box-shadow: 0 22px 60px rgba(0, 0, 0, 0.48);
   backdrop-filter: blur(18px);
+=======
+  left: 52px;
+  right: auto;
+  bottom: 84px;
+  z-index: 12;
+  width: min(390px, calc(100% - 76px));
+  max-height: min(150px, calc(100% - 112px));
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 6px;
+  padding: 7px;
+  border: 1px solid rgba(145, 169, 150, 0.3);
+  border-radius: 18px;
+  background: rgba(13, 18, 16, var(--surface-alpha));
+  backdrop-filter: blur(16px) saturate(1.18);
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 .option-drawer[hidden] {
   display: none;
 }
 
+<<<<<<< HEAD
 .option-drawer details {
   min-width: 0;
   border: 1px solid var(--line);
@@ -421,6 +669,25 @@ svg {
   color: #d7e1d8;
   font-size: 12px;
   cursor: pointer;
+=======
+.drawer-section {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: rgba(21, 27, 24, 0.78);
+  overflow: hidden;
+}
+
+.drawer-title {
+  min-height: 24px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: #d7e1d8;
+  font-size: 11px;
+  font-weight: 680;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   user-select: none;
 }
 
@@ -428,7 +695,11 @@ svg {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
+<<<<<<< HEAD
   padding: 0 8px 8px;
+=======
+  padding: 0 8px 9px;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 .chip {
@@ -525,6 +796,7 @@ svg {
 }
 
 .settings {
+<<<<<<< HEAD
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 9px;
@@ -532,18 +804,57 @@ svg {
   border: 1px solid var(--line);
   border-radius: 18px;
   background: rgba(17, 22, 19, 0.94);
+=======
+  position: absolute;
+  left: 46px;
+  right: 46px;
+  bottom: 86px;
+  z-index: 13;
+  max-height: min(230px, calc(100% - 112px));
+  overflow: auto;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(112px, 1fr));
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: rgba(17, 22, 19, var(--surface-alpha));
+  backdrop-filter: blur(16px) saturate(1.16);
+  resize: both;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 .settings[hidden] {
   display: none;
 }
 
+<<<<<<< HEAD
+=======
+.panel-window .settings {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100vh;
+  max-height: none;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-content: start;
+  border: 0;
+  border-radius: 22px;
+  resize: none;
+  padding: 16px;
+}
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 .settings label {
   min-width: 0;
   display: grid;
   gap: 5px;
   color: var(--muted);
+<<<<<<< HEAD
   font-size: 12px;
+=======
+  font-size: 11px;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 .settings .wide {
@@ -569,6 +880,7 @@ svg {
 
 .advanced-panel {
   position: absolute;
+<<<<<<< HEAD
   left: 10px;
   right: 10px;
   bottom: 106px;
@@ -580,12 +892,47 @@ svg {
   background: rgba(14, 18, 16, 0.97);
   box-shadow: 0 24px 70px rgba(0, 0, 0, 0.56);
   backdrop-filter: blur(18px);
+=======
+  left: auto;
+  right: 14px;
+  bottom: 94px;
+  z-index: 10;
+  width: min(700px, calc(100% - 28px));
+  max-height: calc(100% - 108px);
+  overflow: auto;
+  border: 1px solid rgba(145, 169, 150, 0.34);
+  border-radius: 20px;
+  background: rgba(14, 18, 16, var(--surface-alpha));
+  backdrop-filter: blur(16px) saturate(1.16);
+  resize: both;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 .advanced-panel[hidden] {
   display: none;
 }
 
+<<<<<<< HEAD
+=======
+.panel-window .advanced-panel,
+.panel-window .tasks-panel,
+.panel-window .reminders-panel,
+.panel-window .history-panel {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 100vh;
+  max-height: none;
+  border: 0;
+  border-radius: 22px;
+  resize: none;
+}
+
+.panel-window .advanced-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 .panel-head {
   height: 42px;
   display: flex;
@@ -690,13 +1037,271 @@ input[type="range"] {
   50% { opacity: 0; }
 }
 
+<<<<<<< HEAD
+=======
+/* ── side panels ──────────────────────────────────────────────────────── */
+.tasks-panel,
+.reminders-panel,
+.history-panel {
+  position: absolute;
+  top: 14px;
+  right: 12px;
+  bottom: 122px;
+  width: min(330px, calc(100% - 24px));
+  z-index: 11;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid rgba(145, 169, 150, 0.34);
+  border-radius: 20px;
+  background: rgba(14, 18, 16, var(--surface-alpha));
+  backdrop-filter: blur(16px) saturate(1.16);
+  resize: both;
+}
+
+.reminders-panel,
+.history-panel {
+  width: min(460px, calc(100% - 24px));
+}
+
+.tasks-panel[hidden],
+.reminders-panel[hidden],
+.history-panel[hidden] {
+  display: none;
+}
+
+.panel-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tasks-body,
+.reminders-body {
+  overflow: auto;
+  padding: 10px 12px 12px;
+}
+
+.tasks-add,
+.reminders-add {
+  display: flex;
+  gap: 7px;
+  margin-bottom: 8px;
+}
+
+.tasks-add input,
+.reminders-add input {
+  flex: 1;
+}
+
+.reminders-add {
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.reminders-add select {
+  flex: 0 0 112px;
+}
+
+.tasks-h {
+  margin: 12px 0 6px;
+  color: var(--soft);
+  font-size: 11px;
+  font-weight: 720;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tasks-h small {
+  font-weight: 600;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.tasks-h:first-child {
+  margin-top: 0;
+}
+
+.tasks-list,
+.remember-list,
+.reminders-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.task-item,
+.remember-item,
+.reminder-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 7px 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(21, 27, 24, 0.7);
+  font-size: 12px;
+}
+
+.task-item .task-text,
+.remember-item .task-text,
+.reminder-item .task-text {
+  flex: 1;
+  line-height: 1.35;
+}
+
+.task-item.done .task-text {
+  color: var(--soft);
+  text-decoration: line-through;
+}
+
+.task-check {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  margin-top: 1px;
+  appearance: none;
+  -webkit-appearance: none;
+  border: 1px solid rgba(139, 164, 145, 0.5);
+  border-radius: 5px;
+  background: rgba(9, 12, 11, 0.6);
+  cursor: pointer;
+}
+
+.task-check:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.task-src {
+  flex: 0 0 auto;
+  color: var(--soft);
+  font-size: 10px;
+  opacity: 0.7;
+}
+
+.task-del {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--soft);
+  cursor: pointer;
+}
+
+.task-del:hover {
+  color: #ffd9d9;
+  background: rgba(74, 34, 34, 0.7);
+}
+
+.tasks-empty,
+.reminders-empty {
+  color: var(--soft);
+  font-size: 11px;
+  font-style: italic;
+  padding: 4px 2px;
+}
+
+.history-body {
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 142px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+  overflow: hidden;
+}
+
+.history-list {
+  min-height: 0;
+  display: grid;
+  align-content: start;
+  gap: 5px;
+  overflow: auto;
+}
+
+.history-item {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  color: var(--muted);
+  background: rgba(21, 27, 24, 0.7);
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-item.active {
+  color: #e2f3e4;
+  border-color: rgba(90, 151, 100, 0.72);
+  background: rgba(32, 56, 39, 0.86);
+}
+
+.history-item b,
+.history-item small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-item b {
+  font-size: 12px;
+}
+
+.history-item small {
+  color: var(--soft);
+  font-size: 10px;
+}
+
+.history-preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(9, 12, 11, 0.45);
+  padding: 9px;
+}
+
+.drawer-badge {
+  margin-left: 6px;
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.resize-grip {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  z-index: 20;
+  opacity: 0.42;
+  background-image:
+    linear-gradient(135deg, transparent 0 50%, rgba(168, 178, 170, 0.72) 50% 56%, transparent 56% 68%, rgba(168, 178, 170, 0.72) 68% 74%, transparent 74%);
+}
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 @media (max-width: 720px) {
   body {
     min-width: 360px;
   }
 
   .composer {
+<<<<<<< HEAD
     grid-template-columns: repeat(4, 34px) minmax(0, 1fr) auto;
+=======
+    grid-template-columns: 18px repeat(4, 34px) minmax(0, 1fr) auto;
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   }
 
   .stream-pill {
@@ -713,6 +1318,21 @@ input[type="range"] {
     grid-column: auto;
   }
 
+<<<<<<< HEAD
+=======
+  .tasks-panel,
+  .reminders-panel,
+  .history-panel {
+    left: 10px;
+    right: 10px;
+    width: auto;
+  }
+
+  .history-body {
+    grid-template-columns: 1fr;
+  }
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   .advanced-grid {
     grid-template-columns: 1fr;
   }

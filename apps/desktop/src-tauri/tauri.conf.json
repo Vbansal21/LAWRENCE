@@ -4,8 +4,11 @@
   "version": "0.1.0",
   "identifier": "local.lawrence.desktop",
   "build": {
+<<<<<<< HEAD
     "beforeDevCommand": "python3 -m http.server 1420 --directory web",
     "devUrl": "http://127.0.0.1:1420",
+=======
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     "frontendDist": "../web"
   },
   "app": {
@@ -13,6 +16,7 @@
     "windows": [
       {
         "title": "LAWRENCE",
+<<<<<<< HEAD
         "width": 900,
         "height": 340,
         "minWidth": 760,
@@ -23,6 +27,21 @@
         "shadow": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
+=======
+        "width": 920,
+        "height": 340,
+        "minWidth": 720,
+        "minHeight": 260,
+        "maxWidth": 1200,
+        "maxHeight": 560,
+        "decorations": false,
+        "resizable": true,
+        "maximizable": false,
+        "transparent": true,
+        "shadow": false,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         "center": true
       }
     ]

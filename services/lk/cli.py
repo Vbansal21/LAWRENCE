@@ -61,6 +61,10 @@ from .ctx        import ContextStore
 from .ctx.gate   import gate_config
 from .kernel     import run_turn, run_proactive, run_compaction, write_journal_entry, TurnConfig
 from .obs        import VisionObserver, AudioObserver, capture_now, record_now, SpoolReader
+<<<<<<< HEAD
+=======
+from .tasks      import TaskStore
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS, REGION_EMA, REGION_CHANGE_MIN
 from .profile    import ModelProfile
 from .retrieval  import SemanticDB, RetrievalPipeline
@@ -968,6 +972,10 @@ def _parse(
     if cmd == "/log":
         return text.removeprefix(parts[0]).strip(), [], [], "log"
 
+    # /tasks [add TEXT | done TEXT | remember TEXT | clear [scope]]
+    if cmd == "/tasks":
+        return text.removeprefix(parts[0]).strip(), [], [], "tasks"
+
     # /screenshot [q]
     if cmd == "/screenshot":
         q   = text.removeprefix(parts[0]).strip() or "What do you see on my screen?"
@@ -1259,6 +1267,7 @@ def _make_audio_query_handler(
     vision_ref: "list[VisionObserver | None]",
     capture_fn: "Callable[[], Path | None] | None" = None,
     live_fn:    "Callable[[str], None] | None"     = None,
+    tasks_fn:   "Callable[[dict], None] | None"    = None,
 ) -> Callable[[str], None]:
     _lock = threading.Lock()
 
@@ -1280,6 +1289,7 @@ def _make_audio_query_handler(
                     ctx=ctx, retrieval=retrieval,
                     cfg=cfg, images=images, audios=[], ui=ui,
                     capture_fn=capture_fn, live_fn=live_fn,
+                    tasks_fn=tasks_fn,
                 )
                 msg = f"\n[heard] {transcript}\nLAWRENCE> {answer}"
                 response_q.put(msg)
@@ -1386,6 +1396,16 @@ def main() -> int:
     db        = SemanticDB()
     pipeline  = RetrievalPipeline(db)
     ui        = UIConnector()
+    tasks     = TaskStore()   # self-curated TODO + remember (shared with desktop UI)
+
+    def _tasks_fn(proposals: dict) -> None:
+        summary = tasks.apply_model(proposals)
+        bits = []
+        if summary.get("added"):      bits.append(f"+{len(summary['added'])} task")
+        if summary.get("done"):       bits.append(f"✓{len(summary['done'])} done")
+        if summary.get("remembered"): bits.append(f"★{len(summary['remembered'])} noted")
+        if bits:
+            live_q.put("[tasks] " + " ".join(bits))
 
     cfg = TurnConfig(
         max_tokens    = args.max_tokens,
@@ -1498,6 +1518,7 @@ def main() -> int:
                 _make_audio_query_handler(
                     ctx, pipeline, cfg, ui, response_q, control_q,
                     vision_ref, capture_fn=capture_fn, live_fn=live_q.put,
+                    tasks_fn=_tasks_fn,
                 ) if args.audio_query else None
             )
             audio = AudioObserver(
@@ -1621,6 +1642,36 @@ def main() -> int:
                 elif action == "journal":
                     _do_journal(user_text, ctx)
 
+                elif action == "tasks":
+                    sub  = user_text.split(maxsplit=1)
+                    verb = sub[0].lower() if sub else ""
+                    rest = sub[1] if len(sub) > 1 else ""
+                    if verb == "add" and rest:
+                        tasks.add_task(rest, source="user")
+                        print(f"[tasks] added: {rest}")
+                    elif verb in ("done", "complete") and rest:
+                        t = tasks.complete_task(text=rest, source="user")
+                        print(f"[tasks] done: {t['text']}" if t else "[tasks] no match")
+                    elif verb == "remember" and rest:
+                        tasks.add_remember(rest, source="user")
+                        print(f"[remember] {rest}")
+                    elif verb == "clear":
+                        tasks.clear(rest or "all")
+                        print(f"[tasks] cleared {rest or 'all'}")
+                    else:
+                        snap = tasks.snapshot()
+                        c = snap["counts"]
+                        print(f"\n[TASKS — {c['open']} open / {c['done']} done]")
+                        for t in snap["tasks"]:
+                            mark = "x" if t["status"] == "done" else " "
+                            tag  = " (auto)" if t.get("source") == "model" else ""
+                            print(f"  [{mark}] {t['text']}{tag}")
+                        if snap["remember"]:
+                            print(f"\n[REMEMBER — {len(snap['remember'])}]")
+                            for r in snap["remember"]:
+                                tag = " (auto)" if r.get("source") == "model" else ""
+                                print(f"  • {r['text']}{tag}")
+
                 elif action == "vision_on":
                     if not profile_ref[0].vision:
                         print("[vision] model has no vision input — unavailable")
@@ -1710,6 +1761,7 @@ def main() -> int:
                         ctx=ctx, retrieval=pipeline,
                         cfg=cfg, images=images, audios=audios, ui=ui,
                         capture_fn=capture_fn, live_fn=live_q.put,
+                        tasks_fn=_tasks_fn,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
                     sys.stdout.write(f"\r  done ({elapsed}ms)      \n")

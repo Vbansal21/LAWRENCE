@@ -148,10 +148,16 @@ def format_for_model(results: list[CitedResult]) -> str:
 
 
 def format_citations(results: list[CitedResult]) -> str:
-    """Short citation list for appending to the answer."""
+    """Short citation list for appending to the answer.
+
+    Emitted as a Markdown section with proper ``[title](url)`` links so the MDX
+    renderer in the desktop UI shows clickable sources; in a plain terminal it
+    still reads cleanly as ``- [N] title (url)``.
+    """
     if not results:
         return ""
-    lines = ["\nSources:"]
+    lines = ["", "---", "**Sources**", ""]
     for r in results:
-        lines.append(f"  [{r.citation_num}] {r.title or r.url} — {r.url}")
+        label = (r.title or r.url).replace("[", "(").replace("]", ")")
+        lines.append(f"- [{r.citation_num}] [{label}]({r.url})")
     return "\n".join(lines)

@@ -192,6 +192,7 @@ def call_model(
     max_tokens:        int         = 800,
     temperature:       float       = 0.2,
     timeout:           int         = 600,
+<<<<<<< HEAD
     top_p:             float | None = None,
     min_p:             float | None = None,
     top_k:             int   | None = None,
@@ -200,6 +201,25 @@ def call_model(
     frequency_penalty: float | None = None,
     seed:              int   | None = None,
     stop:              list[str] | None = None,
+=======
+    top_p:              float | None = None,
+    min_p:              float | None = None,
+    top_k:              int   | None = None,
+    typical_p:          float | None = None,
+    tfs_z:              float | None = None,
+    repeat_penalty:     float | None = None,
+    repeat_last_n:      int   | None = None,
+    presence_penalty:   float | None = None,
+    frequency_penalty:  float | None = None,
+    mirostat:           int   | None = None,
+    mirostat_tau:       float | None = None,
+    mirostat_eta:       float | None = None,
+    dry_multiplier:     float | None = None,
+    dry_base:           float | None = None,
+    dry_allowed_length: int   | None = None,
+    seed:               int   | None = None,
+    stop:               list[str] | None = None,
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 ) -> dict[str, Any]:
     """Returns {"text": stripped_content}. JSON extraction is the caller's job."""
     payload: dict[str, Any] = {
@@ -212,6 +232,7 @@ def call_model(
     # (None = leave to backend default). Both llama-server and OpenAI-compatible
     # endpoints silently ignore fields they don't recognise, so this is safe.
     _opt: dict[str, Any] = {
+<<<<<<< HEAD
         "top_p":             top_p,
         "min_p":             min_p,
         "top_k":             top_k,
@@ -220,6 +241,25 @@ def call_model(
         "frequency_penalty": frequency_penalty,
         "seed":              seed,
         "stop":              stop or None,
+=======
+        "top_p":              top_p,
+        "min_p":              min_p,
+        "top_k":              top_k,
+        "typical_p":          typical_p,
+        "tfs_z":              tfs_z,
+        "repeat_penalty":     repeat_penalty,
+        "repeat_last_n":      repeat_last_n,
+        "presence_penalty":   presence_penalty,
+        "frequency_penalty":  frequency_penalty,
+        "mirostat":           mirostat,
+        "mirostat_tau":       mirostat_tau,
+        "mirostat_eta":       mirostat_eta,
+        "dry_multiplier":     dry_multiplier,
+        "dry_base":           dry_base,
+        "dry_allowed_length": dry_allowed_length,
+        "seed":               seed,
+        "stop":               stop or None,
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     }
     payload.update({k: v for k, v in _opt.items() if v is not None})
 

@@ -1,0 +1,366 @@
+---
+title: Desktop UI Manager Feature Requests
+date: 2026-06-08
+scope: Tauri UI integration points outside the UI boundary
+---
+
+# Desktop UI Manager Feature Requests
+
+This is the single feature-request file for desktop UI needs that require
+kernel, server, CLI manager, or host integration. The Tauri UI can send intent
+and render state; the manager should own capture, retrieval, conversion,
+privacy policy, long-running jobs, and model-specific behavior.
+
+## FR-001: Host Launcher And Process Control
+
+**What:** Provide a host-reliable way to show, hide, restart, kill, and inspect
+the floating popup, with `Ctrl+Shift+L` as the default show/focus binding.
+
+**Why:** Tauri can register a global shortcut inside WSLg, but WSLg may not
+deliver that shortcut when a Windows-side app has focus. The UI can avoid
+hiding itself, but it cannot make host-level shortcut delivery reliable alone.
+
+**Where:** CLI manager entrypoint, `apps/desktop/scripts/desktopctl.sh`,
+Tauri single-instance/window control in `apps/desktop/src-tauri/src/main.rs`.
+
+**How:** Add manager commands such as `desktop show`, `desktop hide`,
+`desktop toggle`, `desktop restart`, and `desktop status`. Route them to the
+running Tauri process through a local socket, single-instance event, or small
+IPC file descriptor instead of restarting the popup just to show it. The Tauri
+UI registers several equivalent spellings of `Ctrl+Shift+L` as a best-effort
+stopgap, but the manager should still expose a host-triggerable show command.
+On WSL, optionally provide a Windows-side wrapper that can bind `Ctrl+Shift+L`
+and call `wsl.exe ... desktop show`.
+
+**Intent:** The shortcut should always bring the popup forward; dismissal stays
+an explicit UI action.
+
+**Expected Result:** The popup opens reliably from any focused app. Until host
+IPC exists, `npm run popup:show` can recover the UI by restarting the desktop
+popup visible.
+
+## FR-002: Canonical MDX Session Restore
+
+**What:** Expose recent chat turns, assistant responses, attachments, forced
+context chips, and UI-relevant run state as canonical manager data.
+
+**Why:** Browser `localStorage` is only a UI cache. Reloading or restarting the
+popup should retrieve the actual LAWRENCE conversation and not depend on stale
+renderer state.
+
+**Where:** Desktop bridge replacement, `services/lk/ui/connector.py`, rolling
+memory/journal readers, and the turn/job store used by the CLI manager.
+
+**How:** Add `GET /session/recent?limit=80` or equivalent. Return stable turn
+IDs, role, MDX text, timestamps, metadata, attachments, context references, and
+job state. Add history endpoints that return chat turns as structured records
+or MDX sections, not raw line logs and not UI-local JSON. Keep responses
+MDX/Markdown-safe; do not require a separate "context pack" button. For running
+or recently completed jobs, expose `jobId`, `source`, `state`, `createdAt`,
+`startedAt`, `finishedAt`, `elapsedSeconds`, `textPreview`, final `answer`,
+partial token/event stream, and structured `error`. SSE `response` events should
+include the same `jobId` and `source` so the UI can avoid duplicates after
+detaching a long-running turn.
+
+**Intent:** Every normal response from the model is rendered as MDX in the chat
+feed. If the user asks for a context compact/export, that answer also arrives as
+a normal MDX assistant response.
+
+**Expected Result:** Reloading the Tauri webview restores the previous chat and
+state from LAWRENCE, while local storage remains only a quick fallback. A slow
+or stuck turn never freezes the popup: the UI can detach, show the job as still
+running, and attach the final MDX answer when the manager marks it done.
+
+## FR-003: Declarative Visual, Audio, And Web Policies
+
+**What:** Treat visual, audio, and web buttons as policies, not direct raw data
+feeds. Defaults are visual auto-on, audio auto-on, and single-pass web search
+on for every turn. Toggling visual/audio disables those pipelines. Toggling the
+web button requests deep research for the next turn; Config can turn web search
+off entirely.
+
+**Why:** The kernel is the only layer that knows when high-resolution screen
+data, audio transcription, wake/catch phrase handling, or deep retrieval is
+worth the cost. The UI should not freeze itself when forcing capture on every
+toggle.
+
+**Where:** Vision/audio observers, retrieval pipeline, bridge `/observer`,
+bridge `/context`, turn config handling, and event streaming.
+
+**How:** Accept per-turn and persistent policy payloads:
+
+```json
+{
+  "contextPolicy": {
+    "visual": "auto-high-resolution-when-needed",
+    "audio": "auto-transcribe-and-run-spoken-turns"
+  },
+  "voiceListen": true,
+  "webSearchMode": "single-pass",
+  "webIntent": {
+    "enabled": true,
+    "shouldSearch": true,
+    "mode": "single-pass",
+    "policy": "single-pass default",
+    "reason": "default web pass for every turn"
+  }
+}
+```
+
+Support one-shot forced context from the UI's `Refresh selected` action through
+`/context`. Support observer enable/disable through `/observer`. Stream status
+events for vision, audio, transcript, wake phrase, voice-query turns, and
+retrieval decisions. The manager should expose one audio pipeline, not separate
+"audio input" and "voice input" concepts. Passive audio transcription and
+voice-query turn routing should be able to run at the same time: one updates
+context and the visible transcript, the other decides whether speech should
+become a user turn, task, note, reminder, web retrieval, or document retrieval.
+For autonomous voice turns, include the recognized transcript with the response
+payload so the UI can render it as its own `source=voice` user turn before the
+MDX answer without guessing from a separate status event.
+
+For audio, add structured transcript/action events rather than plain strings:
+
+```json
+{
+  "type": "audioTranscript",
+  "status": "partial|final",
+  "transcript": "spoken text",
+  "confidence": 0.91,
+  "speaker": "user|unknown",
+  "startedAt": "2026-06-08T00:00:00Z",
+  "endedAt": "2026-06-08T00:00:04Z",
+  "route": "context|spoken_turn|journal|task|note|reminder|web_retrieval|doc_retrieval",
+  "decision": "why this route was chosen"
+}
+```
+
+When audio is enabled, the manager should continuously decide whether a segment
+is background context, a direct spoken turn, a bullet-journal update, a note,
+an active reminder, a web retrieval trigger, or a document retrieval trigger.
+The UI only renders the transcript, chosen route, linked artifacts, and resulting
+model/job state.
+
+**Intent:** The UI expresses user consent and urgency; the kernel decides exact
+capture, transcription, and retrieval mechanics.
+
+**Expected Result:** Visual/audio context is available automatically when
+enabled, random spoken queries can become normal model turns when voice-listen
+is on, spoken text appears as a distinct user voice message in the desktop UI,
+high-resolution data is forced only when explicitly requested or model-needed,
+and web search can be single-pass, deep, or off. No prompt classifier should
+decide whether the default single-pass web search happens; when web is enabled,
+it happens for every turn.
+
+## FR-004: Runtime Telemetry And Bullet Journal Contract
+
+**What:** Provide compact, live UI state for context fill, CPU/RAM,
+accelerator usage, queue depth, model/background jobs, visual preprocessing,
+audio pipeline metrics, partial transcripts, and the shared bullet journal.
+
+**Why:** The floating popup has limited space. It needs reliable state from the
+manager so the user can see what LAWRENCE is doing without opening logs. The
+bullet journal is not a model query surface; it is a shared structured list that
+both the user and model can update.
+
+**Where:** `/health`, SSE/event stream, `/tasks`, task memory store, background
+job queue, vision/audio pipeline metrics.
+
+**How:** Extend health/SSE payloads with structured fields for context usage,
+system load, accelerator only when active, queued/running jobs, pipeline states,
+recent transcript text, current visual/audio context cards, and bullet-journal
+mutations. Context cards should be canonical and non-duplicative:
+
+- one `visual` card for live screen/video context, including thumbnail,
+  timestamp, source artifact, and whether high-resolution data is currently
+  forced;
+- one `audio` card for general live audio context, including current mode
+  such as passive audio or voice-query listen;
+- one optional `transcript` card only when there is actual audio/voice
+  transcription text;
+- `N` document/content cards for attached files, URLs, images, videos,
+  PDFs, diagrams, etc.
+
+Each card should include `kind`, `title`, `status`, `thumbnail`, optional
+`artifactPath`, `startedAt`, `updatedAt`, `confidence`, and whether the artifact
+is distilled, raw, or forced high-resolution. Bullet records should include
+`id`, `text`, `status`, `source`, optional `parentId`, `children`, `relations`,
+`order`, `confidence`, and source turn. Support moving bullets, nesting, linking
+related bullets, splitting/merging, and ticking items off.
+
+**Intent:** The UI remains a thin renderer of live system state.
+
+**Expected Result:** The context strip and bullet-journal panel reflect actual
+kernel state, while journal hierarchy and relations survive reloads.
+
+## FR-005: Converter-Aware Attachment Ingest
+
+**What:** Add a manager-owned document ingest path for files and URLs instead
+of blindly passing raw attachments to the model.
+
+**Why:** Images, audio, video, PDF, MDX, web pages, Office files, spreadsheets,
+LaTeX, Mermaid, structured data, and EPUB each need different preprocessing,
+privacy handling, citation capture, and model routing.
+
+**Where:** Attachment/document ingestion service, retrieval pipeline,
+converter jobs, bridge turn payload handling.
+
+**How:** Accept UI attachment intent containing kind, MIME, extension, source,
+path/URL, and preferred converter. Return prepared artifacts such as text
+chunks, thumbnails, transcripts, OCR output, keyframes, citations, or structured
+tables. Surface unsupported converters as structured warnings.
+
+**Intent:** The UI classifies and labels user intent; the manager performs safe
+conversion and chooses the model-compatible representation.
+
+**Expected Result:** Attachments become inspected, typed, citation-aware context
+instead of opaque blobs.
+
+## FR-006: Sampling And Agent Control Mapping
+
+**What:** Interpret the desktop UI's decoding and agent controls per turn:
+temperature, max tokens, top-p, min-p, typical-p, top-k, tail-free sampling,
+epsilon/eta cutoffs, Mirostat, repetition/presence/frequency/DRY penalties,
+seed, timeout on/off, grammar/schema, stop sequences, tool rounds, tool-call
+limit, web depth, and citation mode.
+
+**Why:** The UI should expose advanced controls without pretending every backend
+supports every field.
+
+**Where:** Turn config parsing, model invocation, backend adapter, job timeout
+policy, retrieval/citation policy.
+
+**How:** Map supported fields to the active backend. Return
+`controls.unsupportedSampling` and `controls.appliedSampling` so the UI can show
+what was used. Treat `timeoutEnabled: false` as no UI-requested timeout while
+still allowing the manager to enforce hard safety limits.
+
+**Intent:** Keep sampler changes per-turn and avoid mutating global CLI/model
+defaults.
+
+**Expected Result:** Advanced settings are useful, auditable, and honest about
+backend support.
+
+## FR-007: Active Reminder Scheduler
+
+**What:** Add a manager-owned reminder scheduler for active notifications:
+one-shot reminders, recurrences, time windows, timers, stopwatch sessions, and
+pomodoro blocks.
+
+**Why:** Reminders are operational notifications, not bullet-journal notes. The
+UI can collect reminder specs, but reliable delivery needs a manager/host
+service that continues running when the popup is minimized or restarted.
+
+**Where:** CLI manager, desktop bridge, task/reminder store, host notification
+adapter, optional model-side reminder parser.
+
+**How:** Accept reminder specs from the UI and from model proposals:
+`id`, `title`, `kind`, `schedule`, `timezone`, `recurrence`, `duration`,
+`state`, `source`, `createdAt`, `nextFireAt`, and optional linked bullet IDs.
+Expose create/update/delete/snooze/complete operations plus a live event stream
+for due reminders. Use host notifications where available; fall back to visible
+desktop UI events in constrained environments.
+
+**Intent:** Let users or the model specify reminders without conflating them
+with the tickable bullet journal.
+
+**Expected Result:** Reminders fire at the right time, can recur or run as
+timers/pomodoro/stopwatch sessions, and remain inspectable from the desktop UI.
+
+## FR-008: Response Evidence And Asset Cards
+
+**What:** Return structured evidence/assets with every answer: URLs, source
+snippets, images, diagrams, generated SVGs, downloaded files, web pages, and
+retrieval/database hits.
+
+**Why:** The UI can parse simple Markdown citations, but Perplexity-style
+scrollable evidence cards need typed payloads instead of scraping links from
+the final answer.
+
+**Where:** Retrieval pipeline, web search/deep research adapters, document
+ingest, artifact cache, bridge turn/job responses, and SSE response events.
+
+**How:** Add `assets` to turn results and pushed responses:
+
+```json
+{
+  "assets": [
+    {
+      "id": "src-1",
+      "kind": "webpage",
+      "title": "Example",
+      "url": "https://example.com",
+      "thumbnail": "data:image/png;base64,...",
+      "snippet": "Short quoted or summarized evidence",
+      "usedBy": ["answer-paragraph-2"]
+    }
+  ]
+}
+```
+
+Use the same shape for images, diagrams/SVGs, PDFs, generated files, and
+database entries, with fields omitted when unavailable.
+
+**Intent:** The model answer remains normal MDX while evidence and assets render
+as attached scrollable cards under that response.
+
+**Expected Result:** The desktop UI can show sources and rich assets reliably
+without brittle Markdown parsing.
+
+## FR-009: Managed Response Quality Loop
+
+**What:** Own a manager-side response-quality loop around model output:
+format repair, relevance checks, retrieval/tool retry, and final answer
+validation before a response is committed to logs or streamed to the UI.
+
+**Why:** The desktop bridge can repair common bad shapes such as JSON wrappers
+and escaped strings, but durable quality control belongs in the manager because
+it has access to the full tool trace, retrieval decisions, model settings, and
+canonical logs.
+
+**Where:** CLI manager turn runner, retrieval/tool orchestration, `UIConnector`
+response events, and turn logger.
+
+**How:** Add a bounded loop:
+
+1. Validate the model answer shape against `responseFormat=mdx`.
+2. If it is recognized JSON or escaped text, normalize locally.
+3. If it is malformed, send a formatter pass with a strict system prompt that
+   preserves facts and links but returns only MDX.
+4. Validate retrieval/tool relevance against the user request and tool outputs.
+5. If sources are irrelevant or tool calls are nonsensical, refine the query or
+   tool plan and retry within the requested `toolRounds` / `toolCallLimit`.
+6. Persist the final normalized answer, citations/assets, applied config, and
+   quality-loop trace to the canonical turn log.
+
+**Intent:** The UI should render final usable responses, not raw model envelopes
+or irrelevant source clutter.
+
+**Expected Result:** Every streamed and restored response is clean MDX with
+matching evidence cards, and bad web/tool passes are retried or omitted instead
+of being shown as authoritative.
+
+## FR-010: Magnetic Sidecar Panel Geometry
+
+**What:** Support robust separate Tauri sidecar windows for config, sampling,
+history, bullet journal, reminders, and response assets.
+
+**Why:** The UI now opens first-pass Tauri sidecar windows for the main panels,
+but robust "magnetic" behavior still needs desktop-manager ownership for
+cross-monitor placement, persistence, z-order, and host-compositor quirks.
+
+**Where:** `apps/desktop/src-tauri/src/main.rs`, desktop manager commands, and
+persisted UI layout preferences.
+
+**How:** Keep or extend commands such as `panel_open(name)`,
+`panel_close(name)`, `panel_resize(name, rect)`, and `panel_snap(name, anchor)`.
+Persist per-panel size/position. Snap panels to the main popup edge, avoid
+off-screen placement, close panels when the launcher is dismissed, and restore
+their last size/position on the next show. Sidecars should be addressable by
+the host manager, not only by in-renderer JavaScript.
+
+**Intent:** Main input stays compact while detail surfaces can open beside it
+without crowding the feed.
+
+**Expected Result:** Config and evidence panels feel magnetically attached to
+the launcher while remaining independently resizable.

@@ -7,6 +7,10 @@ import base64
 import copy
 import json
 import os
+<<<<<<< HEAD
+=======
+import re
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 import sys
 import tempfile
 import threading
@@ -15,19 +19,34 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+<<<<<<< HEAD
 from urllib.parse import quote
+=======
+from urllib.parse import quote, unquote, urlparse
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "services"))
 
 from lk import model as _model, server as _server  # noqa: E402
+<<<<<<< HEAD
 from lk.admin import show_journal, show_log  # noqa: E402
+=======
+from lk.admin import list_journals, list_logs, show_journal, show_log  # noqa: E402
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 from lk.converters import convert as _convert  # noqa: E402
 from lk.ctx import ContextStore  # noqa: E402
 from lk.kernel import TurnConfig, run_compaction, run_turn  # noqa: E402
 from lk.obs import AudioObserver, VisionObserver, capture_now, record_now  # noqa: E402
+<<<<<<< HEAD
 from lk.profile import ModelProfile  # noqa: E402
 from lk.retrieval import RetrievalPipeline, SemanticDB  # noqa: E402
+=======
+from lk.obs.audio import transcribe as _transcribe  # noqa: E402
+from lk.profile import ModelProfile  # noqa: E402
+from lk.retrieval import RetrievalPipeline, SemanticDB, format_citations, format_snippets  # noqa: E402
+from lk.tasks import TaskStore  # noqa: E402
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 from lk.ui import UIConnector  # noqa: E402
 
 # Deep-search retrieval profile — overrides for per-turn expanded breadth.
@@ -44,6 +63,69 @@ class BridgeError(Exception):
         self.message = message
 
 
+<<<<<<< HEAD
+=======
+class _AnnotatedUI:
+    """Small per-job wrapper that annotates pushed responses without kernel edits."""
+
+    def __init__(
+        self,
+        ui: UIConnector,
+        *,
+        source: str = "",
+        job_id: str = "",
+        transcript: str = "",
+        answer_suffix: str = "",
+        extra_citations: list[dict[str, Any]] | None = None,
+        answer_processor: Any = None,
+    ) -> None:
+        self._ui = ui
+        self.source = source
+        self.job_id = job_id
+        self.transcript = transcript
+        self.answer_suffix = answer_suffix
+        self.extra_citations = extra_citations or []
+        self.answer_processor = answer_processor
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._ui, name)
+
+    def push_response(
+        self,
+        *,
+        answer: str,
+        citations: list[dict[str, Any]],
+        note_compact: str,
+        confidence: float,
+        latency_ms: int,
+    ) -> None:
+        merged_citations = list(citations)
+        seen = {str(item.get("url", "")) for item in merged_citations}
+        for item in self.extra_citations:
+            url = str(item.get("url", ""))
+            if url and url not in seen:
+                seen.add(url)
+                merged_citations.append(item)
+        final_answer = self.answer_processor(answer) if self.answer_processor else answer
+        final_answer = _append_once(final_answer, self.answer_suffix)
+        payload: dict[str, Any] = {
+            "type": "response",
+            "answer": final_answer,
+            "citations": merged_citations,
+            "note_compact": note_compact,
+            "confidence": confidence,
+            "latency_ms": latency_ms,
+        }
+        if self.source:
+            payload["source"] = self.source
+        if self.job_id:
+            payload["jobId"] = self.job_id
+        if self.transcript:
+            payload["transcript"] = self.transcript
+        self._ui._push(payload)
+
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 class DesktopBridge:
     def __init__(self) -> None:
         self.tmp = tempfile.TemporaryDirectory(prefix="lawrence-ui-")
@@ -70,6 +152,14 @@ class DesktopBridge:
         self.retrieval = RetrievalPipeline(self.db)
         self.vision: VisionObserver | None = None
         self.audio: AudioObserver | None = None
+<<<<<<< HEAD
+=======
+        self.voice_enabled = False
+        self._voice_config: dict[str, Any] = {}
+        # Shared bullet journal, persisted with the CLI via memory/tasks.json.
+        self.tasks = TaskStore()
+        self._voice_lock = threading.Lock()
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
     def _profile(self) -> ModelProfile:
         if _model.backend_from_env():
@@ -107,6 +197,11 @@ class DesktopBridge:
                 "vision": bool(self.vision and self.vision.active),
                 "audio": bool(self.audio and self.audio.active),
             },
+<<<<<<< HEAD
+=======
+            "voice": {"listening": bool(self.voice_enabled and self.audio and self.audio.active)},
+            "tasks": self.tasks.snapshot()["counts"],
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             "jobs": {
                 "queued": sum(1 for job in jobs if job.get("state") == "queued"),
                 "running": sum(1 for job in jobs if job.get("state") == "running"),
@@ -189,19 +284,193 @@ class DesktopBridge:
                 return False
             if not self.profile.audio:
                 raise BridgeError(409, "active model profile has no audio input")
+<<<<<<< HEAD
             self.audio = AudioObserver(self.tmp_path, self.ctx, on_event=self._on_context_event)
             self.audio.start()
             return True
         if not self.audio:
             return False
+=======
+            self._start_audio()
+            return True
+        if not self.audio:
+            return False
+        self.voice_enabled = False
+        self._voice_config = {}
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         self.audio.stop()
         self.audio = None
         return True
 
+<<<<<<< HEAD
+=======
+    def _start_audio(self) -> None:
+        self.audio = AudioObserver(
+            self.tmp_path,
+            self.ctx,
+            on_event=self._on_context_event,
+            on_query=(lambda t: self._voice_on_query(t, self._voice_config)) if self.voice_enabled else None,
+        )
+        self.audio.start()
+
+    def _restart_audio(self) -> None:
+        if self.audio:
+            self.audio.stop()
+            self.audio = None
+        self._start_audio()
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     def _on_context_event(self, kind: str, compact: str) -> None:
         self.events.append(f"{kind}: {compact}")
         self.ui.push_context_event(kind, compact)
 
+<<<<<<< HEAD
+=======
+    # ── shared bullet journal ───────────────────────────────────────────────────
+    def _tasks_fn(self, proposals: dict[str, Any]) -> None:
+        """Persist model-proposed bullets/notes; announce changes via SSE."""
+        summary = self.tasks.apply_model(proposals)
+        bits = []
+        if summary.get("added"):
+            bits.append(f"+{len(summary['added'])} task")
+        if summary.get("done"):
+            bits.append(f"✓{len(summary['done'])} done")
+        if summary.get("remembered"):
+            bits.append(f"★{len(summary['remembered'])} noted")
+        if bits:
+            self.ui.push_context_event("tasks", " · ".join(bits))
+            self.ui.push_tasks(self.tasks.snapshot())
+
+    def tasks_state(self) -> dict[str, Any]:
+        return {"ok": True, **self.tasks.snapshot()}
+
+    def tasks_command(self, request: dict[str, Any]) -> dict[str, Any]:
+        op = str(request.get("op", "")).lower()
+        rid = str(request.get("id", ""))
+        text = str(request.get("text", ""))
+        if op == "add":
+            self.tasks.add_task(text, source="user")
+        elif op in ("done", "complete"):
+            self.tasks.complete_task(rid, text=text, source="user")
+        elif op == "reopen":
+            self.tasks.reopen_task(rid)
+        elif op in ("remove", "delete"):
+            if rid.startswith("rm-"):
+                self.tasks.remove_remember(rid)
+            else:
+                self.tasks.remove_task(rid)
+        elif op == "remember":
+            self.tasks.add_remember(text, source="user")
+        elif op == "clear":
+            self.tasks.clear(str(request.get("scope", "all")))
+        else:
+            raise BridgeError(400, f"unsupported tasks op: {op or '(missing)'}")
+        snap = self.tasks.snapshot()
+        self.ui.push_tasks(snap)
+        return {"ok": True, **snap}
+
+    # ── previous chats / journals ──────────────────────────────────────────────
+    def history_index(self) -> dict[str, Any]:
+        items: list[dict[str, Any]] = []
+        for date, size, entries in list_journals():
+            items.append({
+                "id": f"journal:{date}",
+                "kind": "journal",
+                "date": date,
+                "label": f"Journal {date}",
+                "size": size,
+                "entries": entries,
+            })
+        for date, event_size, turn_size in list_logs():
+            total = event_size + turn_size
+            if total:
+                items.append({
+                    "id": f"chat:{date}",
+                    "kind": "chat",
+                    "date": date,
+                    "label": f"Chat log {date}",
+                    "size": total,
+                    "entries": 0,
+                })
+        items.sort(key=lambda item: (item["date"], item["kind"]), reverse=True)
+        return {"ok": True, "items": items[:60]}
+
+    def history_item(self, kind: str, date: str) -> dict[str, Any]:
+        kind = kind.lower()
+        date = unquote(date)
+        if kind == "journal":
+            text = show_journal(date)
+            return {"ok": True, "kind": kind, "date": date, "format": "mdx", "text": text}
+        if kind == "chat":
+            text = _turn_log_mdx(date)
+            if text:
+                return {"ok": True, "kind": kind, "date": date, "format": "mdx", "text": text}
+            text = show_log(date, n=250)
+            return {"ok": True, "kind": kind, "date": date, "format": "chat-log", "text": text}
+        raise BridgeError(400, f"unsupported history kind: {kind or '(missing)'}")
+
+    # ── voice ───────────────────────────────────────────────────────────────────
+    def voice_once(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Push-to-talk: record a short window, transcribe, enqueue it as a turn.
+
+        Transcription uses whisper (faster-whisper / whisper-cli) and is independent
+        of whether the active model accepts audio input — so this works for
+        text-only models too.
+        """
+        secs = float(request.get("seconds") or os.environ.get("LK_UI_RECORD_SECS", "5"))
+        wav = record_now(self.tmp_path / f"voice-{_stamp()}.wav", secs)
+        text = (_transcribe(wav) or "").strip()
+        if not text:
+            raise BridgeError(422, "no speech detected — check the microphone")
+        self.ui.push_context_event("voice", f"heard: {text[:80]}")
+        job = self.enqueue_turn({
+            "source": "voice",
+            "transcript": text,
+            "turn": {"text": text, "config": request.get("config") or {}},
+        })
+        job["transcript"] = text
+        job["source"] = "voice"
+        return job
+
+    def set_voice_listen(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Always-listen voice mode: speech is auto-run as turns; replies go via SSE."""
+        enabled = bool(request.get("enabled"))
+        cfg_obj = request.get("config") or {}
+        with self._voice_lock:
+            if enabled:
+                if not self.profile.audio:
+                    raise BridgeError(409, "active model profile has no audio input")
+                changed = not self.voice_enabled
+                self.voice_enabled = True
+                self._voice_config = cfg_obj
+                if not self.audio:
+                    self._start_audio()
+                    changed = True
+                elif changed:
+                    self._restart_audio()
+                self.ui.push_status("listening", "voice-query mode on")
+                return {"accepted": True, "listening": True, "changed": changed}
+            changed = self.voice_enabled
+            self.voice_enabled = False
+            self._voice_config = {}
+            if self.audio and changed:
+                self._restart_audio()
+            self.ui.push_status("idle", "voice-query mode off")
+            return {"accepted": True, "listening": False, "changed": changed}
+
+    def _voice_on_query(self, transcript: str, config: dict[str, Any]) -> None:
+        transcript = (transcript or "").strip()
+        if not transcript:
+            return
+        self.ui.push_context_event("voice", f"heard: {transcript[:80]}")
+        # Response is delivered to the UI through the SSE push_response in run_turn.
+        self.enqueue_turn({
+            "source": "voice",
+            "transcript": transcript,
+            "turn": {"text": transcript, "config": config},
+        })
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     def _retrieval_for_turn(self, deep: bool) -> RetrievalPipeline:
         """Return a per-turn retrieval pipeline.
 
@@ -226,6 +495,7 @@ class DesktopBridge:
 
         config       = turn.get("config") or {}
         mode         = str(config.get("mode", "Auto"))
+<<<<<<< HEAD
         deep_search  = bool(config.get("deepSearch", False))
         visual_ctx   = bool(config.get("visualContext", True))
         audio_ctx    = bool(config.get("audioContext", True))
@@ -253,6 +523,37 @@ class DesktopBridge:
         elif mode == "Audio":
             allow_img = self.profile.vision and visual_ctx
             allow_aud = self.profile.audio
+=======
+        agent_cfg    = config.get("agent") or {}
+        web_depth    = str(agent_cfg.get("webDepth", "Auto")).lower()
+        deep_search  = bool(config.get("deepSearch", False)) or web_depth == "comprehensive"
+        visual_ctx   = bool(config.get("visualContext", True))
+        audio_ctx    = bool(config.get("audioContext", True))
+        source       = str(request.get("source") or turn.get("source") or "")
+        transcript   = str(request.get("transcript") or turn.get("transcript") or "")
+        job_id       = str(request.get("jobId") or request.get("job_id") or "")
+
+        images, audios, notes = self._media_for_turn(turn, mode)
+        if not visual_ctx:
+            images = []
+        if not audio_ctx:
+            audios = []
+        if notes:
+            # MDX-formatted attachment blocks — each note is already a ## section
+            text = text + "\n\n---\n\n" + "\n\n---\n\n".join(notes)
+        directives = _ui_directives(config)
+
+        # Capability gate: model must support the modality AND user must want it.
+        # mode=Text disables both; visual/audio toggles are hard consent gates.
+        if mode == "Text":
+            allow_img = allow_aud = False
+        elif mode == "Screen":
+            allow_img = self.profile.vision and visual_ctx
+            allow_aud = False
+        elif mode == "Audio":
+            allow_img = self.profile.vision and visual_ctx
+            allow_aud = self.profile.audio and audio_ctx
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         else:  # Auto
             allow_img = self.profile.vision and visual_ctx
             allow_aud = self.profile.audio  and audio_ctx
@@ -271,9 +572,24 @@ class DesktopBridge:
             top_p=_opt_float(dec.get("topP")),
             min_p=_opt_float(dec.get("minP")),
             top_k=_opt_int(dec.get("topK")),
+<<<<<<< HEAD
             repeat_penalty=_opt_float(dec.get("repeatPenalty")),
             presence_penalty=_opt_float(dec.get("presencePenalty")),
             frequency_penalty=_opt_float(dec.get("frequencyPenalty")),
+=======
+            typical_p=_opt_float(dec.get("typicalP")),
+            tfs_z=_opt_float(dec.get("tfsZ")),
+            repeat_penalty=_opt_float(dec.get("repeatPenalty")),
+            repeat_last_n=_opt_int(dec.get("repeatLastN")),
+            presence_penalty=_opt_float(dec.get("presencePenalty")),
+            frequency_penalty=_opt_float(dec.get("frequencyPenalty")),
+            mirostat=_opt_int(dec.get("mirostat")),
+            mirostat_tau=_opt_float(dec.get("mirostatTau")),
+            mirostat_eta=_opt_float(dec.get("mirostatEta")),
+            dry_multiplier=_opt_float(dec.get("dryMultiplier")),
+            dry_base=_opt_float(dec.get("dryBase")),
+            dry_allowed_length=_opt_int(dec.get("dryAllowedLength")),
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             seed=_opt_int(dec.get("seed")),
             stop_sequences=[s for s in (dec.get("stopSequences") or []) if s] or None,
         )
@@ -282,34 +598,234 @@ class DesktopBridge:
 
         with self.lock:
             self.events.clear()
+<<<<<<< HEAD
+=======
+            forced_results = self._forced_web_results(text, config, deep_search)
+            forced_citations = [
+                {"num": r.citation_num, "url": r.url, "title": r.title}
+                for r in forced_results
+            ]
+            forced_suffix = format_citations(forced_results) if forced_results else ""
+            processed_answers: dict[str, str] = {}
+
+            def _process_answer(raw_answer: str) -> str:
+                if raw_answer not in processed_answers:
+                    processed_answers[raw_answer] = self._answer_middleware(raw_answer, text, config)
+                return processed_answers[raw_answer]
+
+            turn_text = text
+            if forced_results:
+                turn_text = (
+                    turn_text
+                    + "\n\n---\n\n"
+                    + "## UI-forced web retrieval\n\n"
+                    + format_snippets(forced_results)
+                )
+            if directives:
+                turn_text = turn_text + "\n\n" + directives
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
             def _live_fn(msg: str) -> None:
                 """Collect turn events for the sync response AND push through SSE."""
                 self.events.append(msg)
                 self.ui.push_context_event("turn", msg)
 
+<<<<<<< HEAD
             answer, controls = run_turn(
                 text,
+=======
+            ui = _AnnotatedUI(
+                self.ui,
+                source=source,
+                job_id=job_id,
+                transcript=transcript,
+                answer_suffix=forced_suffix,
+                extra_citations=forced_citations,
+                answer_processor=_process_answer,
+            )
+
+            answer, controls = run_turn(
+                turn_text,
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
                 ctx=self.ctx,
                 retrieval=retrieval,
                 cfg=cfg,
                 images=images,
                 audios=audios,
+<<<<<<< HEAD
                 ui=self.ui,
                 capture_fn=self._capture_for_model,
                 live_fn=_live_fn,
             )
+=======
+                ui=ui,
+                capture_fn=self._capture_for_model,
+                live_fn=_live_fn,
+                tasks_fn=self._tasks_fn,
+            )
+            answer = _process_answer(answer)
+            answer = _append_once(answer, forced_suffix)
+            controls = dict(controls or {})
+            controls["uiAppliedConfig"] = _applied_config_summary(config, cfg, deep_search)
+            unsupported = _unsupported_config(config)
+            if unsupported:
+                controls["uiUnsupportedConfig"] = unsupported
+                self.events.append("[config] unsupported by current backend: " + ", ".join(unsupported))
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             if deep_search:
                 src_count = sum(1 for e in self.events if "[retrieval]" in e)
                 self.events.append(f"deep-search: {src_count} sources considered")
             return {"answer": answer, "controls": controls, "events": list(self.events)}
 
+<<<<<<< HEAD
     def enqueue_turn(self, request: dict[str, Any]) -> dict[str, Any]:
         job_id = f"turn-{uuid.uuid4().hex[:12]}"
+=======
+    def _forced_web_results(self, text: str, config: dict[str, Any], deep: bool) -> list[Any]:
+        web_intent = config.get("webIntent") or {}
+        enabled = bool(config.get("retrieval", True)) and bool(web_intent.get("enabled", True))
+        mode = str(web_intent.get("mode") or config.get("webSearchMode") or "single-pass")
+        if not enabled or mode == "off":
+            return []
+        query = _web_query_from_text(text)
+        if not query:
+            return []
+        pipeline = self._retrieval_for_turn(deep or mode == "deep")
+        try:
+            self.ui.push_status("retrieving", f"{mode} default")
+            results = pipeline.retrieve([query])
+        except Exception as exc:
+            self.events.append(f"[retrieval] UI-forced web failed: {exc}")
+            return []
+        if results and not _results_relevant(query, results):
+            refined = self._refine_web_query(text, query)
+            if refined and refined.lower() != query.lower():
+                try:
+                    self.events.append(f"[retrieval] retrying with refined query: {refined}")
+                    retry_results = pipeline.retrieve([refined])
+                    if retry_results and _results_relevant(refined, retry_results):
+                        results = retry_results
+                        query = refined
+                    else:
+                        results = []
+                except Exception as exc:
+                    self.events.append(f"[retrieval] refined web failed: {exc}")
+                    results = []
+            else:
+                results = []
+        if not results:
+            self.events.append("[retrieval] UI-forced web produced no relevant sources")
+            return []
+        if results:
+            self.events.append(f"[retrieval] UI-forced {mode}: {len(results)} sources for \"{query}\"")
+        return results
+
+    def _refine_web_query(self, text: str, current_query: str) -> str:
+        if not _model.health():
+            return ""
+        system = (
+            "Write exactly one concise web search query for the user's request. "
+            "Use only the request text and local context. No quotes, bullets, JSON, or explanation."
+        )
+        user = (
+            f"Current bad query: {current_query}\n\n"
+            f"User request:\n{_strip_ui_blocks(text)[:1200]}\n\n"
+            f"Recent LAWRENCE context:\n{self.ctx.tail_for_model()[-1600:]}"
+        )
+        try:
+            raw = _model.call_model(
+                [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                max_tokens=48,
+                temperature=0.1,
+                timeout=45,
+            ).get("text", "")
+        except Exception:
+            return ""
+        return _clean_query(raw)
+
+    def _answer_middleware(self, answer: str, user_text: str, config: dict[str, Any]) -> str:
+        text, reason = _normalize_answer_text(answer)
+        if not _needs_reformat(text):
+            return text
+        repaired = self._reformat_answer_with_model(text, user_text, config, reason)
+        if repaired:
+            repaired, _ = _normalize_answer_text(repaired)
+            if not _looks_like_raw_payload(repaired):
+                self.events.append(f"[ui-middleware] reformatted answer ({reason})")
+                return repaired
+        if not _has_mdx_shape(text):
+            text = "## Response\n\n" + text.strip()
+        self.events.append(f"[ui-middleware] repaired answer locally ({reason})")
+        return text
+
+    def _reformat_answer_with_model(
+        self,
+        answer: str,
+        user_text: str,
+        config: dict[str, Any],
+        reason: str,
+    ) -> str:
+        if not _model.health():
+            return ""
+        system = (
+            "You are a strict response formatter for the LAWRENCE desktop UI. "
+            "Rewrite the assistant answer as clean MDX-compatible Markdown only. "
+            "Do not add new facts. Preserve all useful links as [label](url). "
+            "Remove JSON wrappers, escaped newlines, dangling quotes, and malformed code fences. "
+            "Return only the final MDX."
+        )
+        body = (
+            f"Reason formatting failed: {reason}\n\n"
+            f"User request:\n{_strip_ui_blocks(user_text)[:1200]}\n\n"
+            f"Assistant answer to repair:\n{answer[:5000]}"
+        )
+        dec = config.get("decoding") or {}
+        try:
+            return _model.call_model(
+                [{"role": "system", "content": system}, {"role": "user", "content": body}],
+                max_tokens=min(_int(config.get("maxTokens"), 2048), 2048),
+                temperature=0.05,
+                timeout=_int(dec.get("timeout") or config.get("timeout"), 180),
+                top_p=_opt_float(dec.get("topP")),
+                min_p=_opt_float(dec.get("minP")),
+                top_k=_opt_int(dec.get("topK")),
+                typical_p=_opt_float(dec.get("typicalP")),
+                repeat_penalty=_opt_float(dec.get("repeatPenalty")),
+                repeat_last_n=_opt_int(dec.get("repeatLastN")),
+                presence_penalty=_opt_float(dec.get("presencePenalty")),
+                frequency_penalty=_opt_float(dec.get("frequencyPenalty")),
+                mirostat=_opt_int(dec.get("mirostat")),
+                mirostat_tau=_opt_float(dec.get("mirostatTau")),
+                mirostat_eta=_opt_float(dec.get("mirostatEta")),
+                seed=_opt_int(dec.get("seed")),
+                stop=[s for s in (dec.get("stopSequences") or []) if s] or None,
+            ).get("text", "")
+        except Exception as exc:
+            self.events.append(f"[ui-middleware] model reformat failed: {exc}")
+            return ""
+
+    def enqueue_turn(self, request: dict[str, Any]) -> dict[str, Any]:
+        job_id = f"turn-{uuid.uuid4().hex[:12]}"
+        turn = request.get("turn") or {}
+        source = str(request.get("source") or turn.get("source") or "typed")
+        transcript = str(request.get("transcript") or turn.get("transcript") or "")
+        text_preview = str(turn.get("text") or "")[:180]
+        request = dict(request)
+        request["jobId"] = job_id
+        request["source"] = source
+        if transcript:
+            request["transcript"] = transcript
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         with self.job_lock:
             self.jobs[job_id] = {
                 "id": job_id,
                 "state": "queued",
+<<<<<<< HEAD
+=======
+                "source": source,
+                "transcript": transcript,
+                "textPreview": text_preview,
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
         thread = threading.Thread(
@@ -319,7 +835,17 @@ class DesktopBridge:
             name=f"ui-turn-{job_id}",
         )
         thread.start()
+<<<<<<< HEAD
         return {"accepted": True, "jobId": job_id, "state": "queued"}
+=======
+        return {
+            "accepted": True,
+            "jobId": job_id,
+            "state": "queued",
+            "source": source,
+            "transcript": transcript,
+        }
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
     def _run_turn_job(self, job_id: str, request: dict[str, Any]) -> None:
         self._update_job(job_id, state="running", startedAt=datetime.now(timezone.utc).isoformat())
@@ -438,7 +964,17 @@ class DesktopBridge:
             job = self.jobs.get(job_id)
             if not job:
                 raise BridgeError(404, f"unknown job: {job_id}")
+<<<<<<< HEAD
             return dict(job)
+=======
+            return _job_view(job)
+
+    def jobs_index(self) -> dict[str, Any]:
+        with self.job_lock:
+            items = [_job_view(job) for job in self.jobs.values()]
+        items.sort(key=lambda job: job.get("createdAt", ""), reverse=True)
+        return {"ok": True, "items": items[:30]}
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
     def _media_for_turn(
         self, turn: dict[str, Any], mode: str = "Auto"
@@ -618,6 +1154,306 @@ def _mdx_attachment(kind: str, name: str, source: str, content: str) -> str:
     return f"### Attachment: {name} `[{kind}]`\n\n{source_line}{content}"
 
 
+<<<<<<< HEAD
+=======
+def _append_once(text: str, suffix: str) -> str:
+    if not suffix:
+        return text
+    if suffix.strip() in text:
+        return text
+    return text.rstrip() + "\n\n" + suffix.lstrip()
+
+
+def _job_view(job: dict[str, Any]) -> dict[str, Any]:
+    view = dict(job)
+    started = str(job.get("startedAt") or job.get("createdAt") or "")
+    try:
+        started_at = datetime.fromisoformat(started)
+        view["elapsedSeconds"] = max(0, int((datetime.now(timezone.utc) - started_at).total_seconds()))
+    except Exception:
+        view["elapsedSeconds"] = 0
+    return view
+
+
+_QUERY_STOPWORDS = {
+    "about", "after", "again", "agent", "answer", "based", "before", "being",
+    "current", "diagram", "does", "from", "going", "here", "look", "model",
+    "please", "previous", "really", "request", "search", "should", "tell",
+    "that", "their", "there", "these", "thing", "this", "understand", "what",
+    "when", "where", "with", "would", "your",
+}
+
+
+def _strip_ui_blocks(text: str) -> str:
+    text = re.sub(r"\n+\[UI directives\]\n.*", "", text, flags=re.DOTALL)
+    text = re.sub(r"\n+---\n+## UI-forced web retrieval\n.*?(?=\n+---\n+|\n+\[UI directives\]|\Z)", "\n", text, flags=re.DOTALL)
+    return text.strip()
+
+
+def _clean_query(text: str) -> str:
+    text = re.sub(r"```.*?```", " ", text, flags=re.DOTALL)
+    text = re.sub(r"^[\s\-*#>\"']+|[\s\-*#>\"']+$", "", text.strip())
+    text = re.sub(r"https?://\S+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text[:220].strip()
+
+
+def _web_query_from_text(text: str) -> str:
+    cleaned = _clean_query(_strip_ui_blocks(text))
+    if not cleaned:
+        return ""
+    words = re.findall(r"[A-Za-z][A-Za-z0-9_\-]{2,}", cleaned)
+    useful = [w for w in words if w.lower() not in _QUERY_STOPWORDS]
+    if len(useful) >= 3:
+        return " ".join(useful[:14])
+    return cleaned[:160]
+
+
+def _keywords(text: str) -> set[str]:
+    return {
+        word.lower()
+        for word in re.findall(r"[A-Za-z][A-Za-z0-9_\-]{2,}", text)
+        if word.lower() not in _QUERY_STOPWORDS
+    }
+
+
+def _results_relevant(query: str, results: list[Any]) -> bool:
+    q = _keywords(query)
+    if not q:
+        return True
+    best = 0.0
+    for result in results[:4]:
+        hay = " ".join([
+            str(getattr(result, "title", "")),
+            str(getattr(result, "url", "")),
+            str(getattr(result, "text", ""))[:600],
+        ])
+        overlap = len(q & _keywords(hay)) / max(1, min(len(q), 8))
+        best = max(best, overlap)
+    return best >= 0.25
+
+
+def _extract_json_object(text: str) -> dict[str, Any] | None:
+    decoder = json.JSONDecoder()
+    found = None
+    for i, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text[i:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            found = value
+    return found
+
+
+def _decode_jsonish_string(value: str) -> str:
+    value = value.strip()
+    try:
+        decoded = json.loads(value)
+        if isinstance(decoded, str):
+            return decoded
+    except Exception:
+        pass
+    return value.replace("\\n", "\n").replace('\\"', '"').replace("\\/", "/")
+
+
+def _normalize_answer_text(answer: str) -> tuple[str, str]:
+    text = str(answer or "").strip()
+    reason = "ok"
+    if not text:
+        return "(empty response)", "empty"
+
+    fence = re.fullmatch(r"```(?:json|mdx|markdown)?\s*(.*?)```", text, flags=re.DOTALL | re.IGNORECASE)
+    if fence:
+        text = fence.group(1).strip()
+        reason = "code fence"
+
+    parsed = _extract_json_object(text) if "{" in text else None
+    if parsed:
+        for key in ("answer_text", "answer", "text", "message", "content"):
+            value = parsed.get(key)
+            if isinstance(value, str) and value.strip():
+                return _decode_jsonish_string(value).strip(), f"json.{key}"
+
+    fragment = re.search(
+        r'"(?:answer_text|answer|text|message|content)"\s*:\s*"((?:[^"\\]|\\.)*)',
+        text,
+        flags=re.DOTALL,
+    )
+    if fragment:
+        return _decode_jsonish_string('"' + fragment.group(1) + '"').strip(), "json fragment"
+
+    if (text.startswith('"') and text.endswith('"')) or "\\n" in text:
+        decoded = _decode_jsonish_string(text)
+        if decoded != text:
+            return decoded.strip(), "escaped string"
+
+    return text, reason
+
+
+def _looks_like_raw_payload(text: str) -> bool:
+    trimmed = text.strip()
+    return (
+        bool(re.match(r'^"?\s*(answer_text|answer|text|message|content)"\s*:', trimmed))
+        or trimmed.startswith("{")
+        or trimmed.endswith('"}')
+        or "\\n" in trimmed
+    )
+
+
+def _has_mdx_shape(text: str) -> bool:
+    return bool(re.search(r"(?m)^(#{1,4}\s+|[-*]\s+|\d+\.\s+|>\s+|```|\|.+\|)", text))
+
+
+def _needs_reformat(text: str) -> bool:
+    if _looks_like_raw_payload(text):
+        return True
+    if not _has_mdx_shape(text):
+        return len(text.split()) > 24
+    return False
+
+
+def _turn_log_path(date: str) -> Path:
+    return ROOT / "memory" / "logs" / f"{date}.jsonl"
+
+
+def _turn_log_mdx(date: str) -> str:
+    path = _turn_log_path(date)
+    try:
+        rows = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    except FileNotFoundError:
+        return ""
+    except Exception:
+        return ""
+    sections: list[str] = [f"# Chat {date}"]
+    for row in rows[-80:]:
+        ts = str(row.get("ts") or "")
+        stamp = ts[11:16] if len(ts) >= 16 else ""
+        user = _strip_ui_blocks(str(row.get("user_text") or "")).strip()
+        answer, _reason = _normalize_answer_text(str(row.get("answer") or ""))
+        if user:
+            sections.append(f"## You {stamp}\n\n{user}")
+        if answer:
+            sections.append(f"## LAWRENCE {stamp}\n\n{answer}")
+    return "\n\n---\n\n".join(sections)
+
+
+def _applied_config_summary(config: dict[str, Any], cfg: TurnConfig, deep_search: bool) -> dict[str, Any]:
+    dec = config.get("decoding") or {}
+    return {
+        "mode": config.get("mode", "Auto"),
+        "responseFormat": config.get("responseFormat", "mdx"),
+        "webSearchMode": "deep" if deep_search else config.get("webSearchMode", "single-pass"),
+        "timeout": cfg.timeout,
+        "maxTokens": cfg.max_tokens,
+        "temperature": cfg.temperature,
+        "topP": cfg.top_p,
+        "minP": cfg.min_p,
+        "topK": cfg.top_k,
+        "typicalP": cfg.typical_p,
+        "repeatPenalty": cfg.repeat_penalty,
+        "repeatLastN": cfg.repeat_last_n,
+        "presencePenalty": cfg.presence_penalty,
+        "frequencyPenalty": cfg.frequency_penalty,
+        "mirostat": cfg.mirostat,
+        "mirostatTau": cfg.mirostat_tau,
+        "mirostatEta": cfg.mirostat_eta,
+        "seed": cfg.seed,
+        "stopSequences": dec.get("stopSequences") or [],
+    }
+
+
+def _unsupported_config(config: dict[str, Any]) -> list[str]:
+    dec = config.get("decoding") or {}
+    unsupported = []
+    if _opt_float(dec.get("epsilonCutoff")):
+        unsupported.append("epsilonCutoff")
+    if _opt_float(dec.get("etaCutoff")):
+        unsupported.append("etaCutoff")
+    if str(dec.get("grammarSchema") or "").strip():
+        unsupported.append("grammarSchema")
+    return unsupported
+
+
+def _ui_directives(config: dict[str, Any]) -> str:
+    """Build a per-turn instruction block from the UI's model-I/O controls.
+
+    These ride along in the user message so they never conflict with the kernel's
+    JSON-envelope contract: the model still emits the JSON object, but the
+    answer_text/note fields follow these formatting and style hints.
+    """
+    lines: list[str] = []
+
+    fmt = str(config.get("responseFormat", "mdx")).lower()
+    if fmt == "plain":
+        lines.append("- Write answer_text as plain prose; avoid Markdown structure.")
+    else:
+        lines.append(
+            "- Format answer_text as rich Markdown: ## headings, - bullet and 1. numbered "
+            "lists, tables, ``` fenced code, and [label](url) hyperlinks. Put inline [N] "
+            "citations right after any claim taken from a [RETRIEVED SOURCES] entry."
+        )
+
+    length = str(config.get("responseLength", "Auto")).lower()
+    if length == "concise":
+        lines.append("- Be concise: a few sentences or a tight list. No filler.")
+    elif length == "balanced":
+        lines.append("- Use a balanced length — enough to be complete, no more.")
+    elif length == "detailed":
+        lines.append("- Be thorough: cover edge cases, caveats, and examples.")
+
+    effort = str(config.get("reasoningEffort", "Auto")).lower()
+    if effort == "low":
+        lines.append("- Answer directly with minimal deliberation.")
+    elif effort == "high":
+        lines.append("- Reason carefully and verify before answering.")
+
+    lang = str(config.get("outputLanguage", "")).strip()
+    if lang and lang.lower() != "auto":
+        lines.append(f"- Write the answer in {lang}.")
+
+    persona = str(config.get("persona", "")).strip()
+    if persona:
+        lines.append(f"- Adopt this persona/voice: {persona}")
+
+    web_intent = config.get("webIntent") or {}
+    agent = config.get("agent") or {}
+    if web_intent.get("enabled") and web_intent.get("shouldSearch"):
+        mode = str(web_intent.get("mode") or config.get("webSearchMode") or "single-pass")
+        if mode == "deep" or str(agent.get("webDepth", "")).lower() == "comprehensive":
+            lines.append("- Run deep web/retrieval for this turn before answering.")
+        else:
+            lines.append(
+                "- Run exactly one single-pass web/retrieval lookup for this turn before answering, "
+                "regardless of whether the prompt appears to need web search."
+            )
+        citation = str(agent.get("citationMode", "Auto")).lower()
+        if citation == "required":
+            lines.append("- Include concise inline citations for retrieved-source claims and a Sources section.")
+        elif citation == "compact":
+            lines.append("- Keep citations compact: inline source numbers and a short Sources section.")
+
+    dec = config.get("decoding") or {}
+    schema = str(dec.get("grammarSchema") or "").strip()
+    if schema:
+        lines.append(f"- Shape the answer to this requested grammar/schema as far as the backend allows: {schema}")
+
+    rounds = _opt_int(agent.get("toolRounds"))
+    calls = _opt_int(agent.get("toolCallLimit"))
+    if rounds is not None or calls is not None:
+        lines.append(
+            f"- Tool/retrieval budget requested by UI: rounds={rounds if rounds is not None else 'auto'}, "
+            f"calls={calls if calls is not None else 'auto'}."
+        )
+
+    if not lines:
+        return ""
+    return "[UI directives]\n" + "\n".join(lines)
+
+
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 class Handler(BaseHTTPRequestHandler):
     bridge: DesktopBridge
 
@@ -625,10 +1461,33 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:
+<<<<<<< HEAD
         if self.path == "/health":
             self._send(200, self.bridge.health())
         elif self.path.startswith("/jobs/"):
             job_id = self.path.rsplit("/", 1)[-1]
+=======
+        path = urlparse(self.path).path
+        if path == "/health":
+            self._send(200, self.bridge.health())
+        elif path == "/tasks":
+            self._send(200, self.bridge.tasks_state())
+        elif path == "/history":
+            self._send(200, self.bridge.history_index())
+        elif path == "/jobs":
+            self._send(200, self.bridge.jobs_index())
+        elif path.startswith("/history/"):
+            parts = path.strip("/").split("/", 2)
+            if len(parts) != 3:
+                self._send(400, {"error": "usage: /history/{journal|chat}/{date}"})
+                return
+            try:
+                self._send(200, self.bridge.history_item(parts[1], parts[2]))
+            except BridgeError as exc:
+                self._send(exc.status, {"error": exc.message})
+        elif path.startswith("/jobs/"):
+            job_id = path.rsplit("/", 1)[-1]
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             try:
                 self._send(200, self.bridge.job(job_id))
             except BridgeError as exc:
@@ -649,6 +1508,15 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.request_context(body))
             elif self.path == "/observer":
                 self._send(200, self.bridge.set_observer(body))
+<<<<<<< HEAD
+=======
+            elif self.path == "/tasks":
+                self._send(200, self.bridge.tasks_command(body))
+            elif self.path == "/voice":
+                self._send(202, self.bridge.voice_once(body))
+            elif self.path == "/voice/listen":
+                self._send(200, self.bridge.set_voice_listen(body))
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:

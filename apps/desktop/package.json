@@ -9,6 +9,10 @@
     "deps:system": "bash scripts/install-system-deps-ubuntu.sh",
     "bridge": "python3 scripts/ui_bridge.py",
     "popup": "bash scripts/desktopctl.sh start",
+<<<<<<< HEAD
+=======
+    "popup:show": "bash scripts/desktopctl.sh show",
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     "popup:stop": "bash scripts/desktopctl.sh stop",
     "popup:restart": "bash scripts/desktopctl.sh restart",
     "popup:status": "bash scripts/desktopctl.sh status",

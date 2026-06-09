@@ -6,7 +6,7 @@ Only segments that pass the significance gate (speech, non-duplicate) are
 written to the context store.
 
 In --audio-query mode the transcript is handed to on_query (a full turn);
-otherwise on_event fires passive proactive retrieval.
+on_event may also fire so the desktop UI can display/store the transcript.
 """
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ def transcribe(wav: Path) -> str:
 class AudioObserver(threading.Thread):
     """Daemon thread: records audio windows, gates on significance, writes to ContextStore.
 
-    Two callback modes (mutually exclusive — on_query takes precedence):
+    Callback modes can be combined:
       on_event(kind, compact) — passive: writes context, triggers proactive retrieval
       on_query(transcript)    — active:  treats speech as a user query (full turn)
     """
@@ -206,12 +206,12 @@ class AudioObserver(threading.Thread):
 
         compact, detailed = D.audio(ts, text, db)
         self._ctx.append(ts=ts, kind="audio", compact=compact, detailed=detailed)
+        if self._on_event:
+            # passive event: update UI/context even when speech also becomes a turn
+            self._on_event("audio", compact)
         if self._on_query:
             # active mode: treat speech as a query (handles retrieval internally)
             self._on_query(text)
-        elif self._on_event:
-            # passive mode: trigger proactive background retrieval only
-            self._on_event("audio", compact)
 
         self._recent_transcripts.append(text)
         if len(self._recent_transcripts) > MAX_RECENT_KEEP:

@@ -113,6 +113,7 @@ class TurnConfig:
     allow_images:      bool        = True   # False for text-only / non-vision models
     allow_audio:       bool        = True   # False for models without audio input
     # Advanced sampling — None = use backend default (omitted from payload)
+<<<<<<< HEAD
     top_p:             float | None = None
     min_p:             float | None = None
     top_k:             int   | None = None
@@ -121,6 +122,25 @@ class TurnConfig:
     frequency_penalty: float | None = None
     seed:              int   | None = None
     stop_sequences:    list[str] | None = None
+=======
+    top_p:              float | None = None
+    min_p:              float | None = None
+    top_k:              int   | None = None
+    typical_p:          float | None = None
+    tfs_z:              float | None = None
+    repeat_penalty:     float | None = None
+    repeat_last_n:      int   | None = None
+    presence_penalty:   float | None = None
+    frequency_penalty:  float | None = None
+    mirostat:           int   | None = None
+    mirostat_tau:       float | None = None
+    mirostat_eta:       float | None = None
+    dry_multiplier:     float | None = None
+    dry_base:           float | None = None
+    dry_allowed_length: int   | None = None
+    seed:               int   | None = None
+    stop_sequences:     list[str] | None = None
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 
 # ── main turn ─────────────────────────────────────────────────────────────────
@@ -136,6 +156,7 @@ def run_turn(
     ui:         UIConnector,
     capture_fn: Callable[[], Path | None] | None = None,
     live_fn:    Callable[[str], None]     | None = None,
+    tasks_fn:   Callable[[dict], None]    | None = None,
 ) -> tuple[str, dict]:
     turn_id  = f"t-{next(_turn_ctr):04d}"
     ts_start = time.monotonic()
@@ -199,8 +220,17 @@ def run_turn(
 
     _sampling = dict(
         top_p=cfg.top_p, min_p=cfg.min_p, top_k=cfg.top_k,
+<<<<<<< HEAD
         repeat_penalty=cfg.repeat_penalty,
         presence_penalty=cfg.presence_penalty, frequency_penalty=cfg.frequency_penalty,
+=======
+        typical_p=cfg.typical_p, tfs_z=cfg.tfs_z,
+        repeat_penalty=cfg.repeat_penalty, repeat_last_n=cfg.repeat_last_n,
+        presence_penalty=cfg.presence_penalty, frequency_penalty=cfg.frequency_penalty,
+        mirostat=cfg.mirostat, mirostat_tau=cfg.mirostat_tau, mirostat_eta=cfg.mirostat_eta,
+        dry_multiplier=cfg.dry_multiplier, dry_base=cfg.dry_base,
+        dry_allowed_length=cfg.dry_allowed_length,
+>>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         seed=cfg.seed, stop=cfg.stop_sequences or None,
     )
     try:
@@ -247,6 +277,18 @@ def run_turn(
 
     if note_compact and live_fn:
         live_fn(note_compact)   # rolling narrative: model's synthesized note
+
+    # Self-curated tasks / remember points — the model decides these on its own.
+    if tasks_fn:
+        proposals = {
+            "tasks":    response.get("tasks") or [],
+            "remember": response.get("remember") or [],
+        }
+        if proposals["tasks"] or proposals["remember"]:
+            try:
+                tasks_fn(proposals)
+            except Exception:
+                pass
 
     if cited_results:
         answer += format_citations(cited_results)
