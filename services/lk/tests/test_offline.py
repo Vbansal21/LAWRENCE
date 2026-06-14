@@ -75,6 +75,11 @@ for _ in range(80):
     if ctx._l3_size > 0: break
     time.sleep(0.1)
 check("L3 entry written (cascade)", ctx._l3_size > 0, f"l3_size={ctx._l3_size} calls={calls}")
+# let the background compaction settle — reading mid-rewrite makes this flaky
+for _ in range(50):
+    if not ctx._compacting:
+        break
+    time.sleep(0.1)
 # tail_for_model includes all layers
 tail = ctx.tail_for_model()
 check("tail has section headers", "[CURRENT CONTEXT]" in tail)
@@ -284,6 +289,118 @@ check("ttl evicts gone region", "Tm" not in {r.title for r in tk.active()})
 dd = _dedup_overlapping([WinRect("Top",0,0,1000,1000), WinRect("Behind",0,0,1000,1000),
                          WinRect("Side",1000,0,1200,400)])
 check("dedup drops occluded", len(dd)==2 and dd[0].title=="Top", f"dd={[w.title for w in dd]}")
+
+# ───────────────────────── proactive surfacing ─────────────────────────
+section("proactive surfacing (run_proactive)")
+import lk.model as MPro
+from lk.ctx.store import ContextStore as _PCtx
+from lk.kernel.invoke import run_proactive, AnswerTextStreamer
+from lk.retrieval.pipeline import CitedResult
+
+_pseq = [
+    '{"needs_retrieval": true, "queries": ["adjacent info"]}',
+    '{"surface": true, "headline": "Heads-up", "insight": "Useful fact [1]"}',
+]
+def _proactive_post(payload, timeout):
+    return {"choices": [{"message": {"content": _pseq.pop(0)}}]}
+MPro._post = _proactive_post
+MPro.configure_backend(kind="local")
+
+class _FakeRetrieval:
+    def retrieve(self, queries, top_k=None):
+        return [CitedResult(citation_num=1, url="https://x.test/a", title="A", text="chunk text")]
+
+_ptmp = Path(tempfile.mkdtemp())
+_pctx = _PCtx(mem_dir=_ptmp)
+_pctx.append(ts=datetime.now(timezone.utc).isoformat(), kind="vision",
+             compact="[VISION] editing", detailed="[VISION] user editing report.md")
+_found = []
+run_proactive(_pctx, _FakeRetrieval(), present_fn=_found.append)
+check("finding presented", len(_found) == 1 and _found[0]["headline"] == "Heads-up",
+      f"found={_found}")
+check("finding has citations", bool(_found) and _found[0]["citations"][0]["url"] == "https://x.test/a")
+check("finding recorded to context", "[PROACTIVE FINDING]" in _pctx.tail_for_model())
+# droppable: gate held → proactive skips silently, nothing surfaced
+_pseq2 = ['{"needs_retrieval": true, "queries": ["x"]}']
+MPro._post = lambda payload, timeout: {"choices": [{"message": {"content": _pseq2.pop(0)}}]}
+MPro._gate.acquire(MPro.PRI_TURN)
+_found2 = []
+run_proactive(_pctx, _FakeRetrieval(), present_fn=_found2.append)
+MPro._gate.release()
+check("proactive skipped while slot busy", _found2 == [])
+shutil.rmtree(_ptmp, ignore_errors=True)
+
+# ───────────────────────── answer streamer ─────────────────────────
+section("AnswerTextStreamer (live answer extraction from JSON deltas)")
+_out = []
+_st = AnswerTextStreamer(_out.append)
+_env = '{"answer_text": "Hi \\"there\\"\\nline2 \\u00e9!", "note_compact": "x"}'
+for _i in range(0, len(_env), 3):
+    _st.feed(_env[_i:_i + 3])
+check("streams unescaped answer", "".join(_out) == 'Hi "there"\nline2 é!', repr("".join(_out)))
+check("stops at closing quote", _st.emitted and '"note_compact"' not in "".join(_out))
+_out2, _st2 = [], AnswerTextStreamer(lambda t: _out2.append(t))
+for _c in "plain text, not json":
+    _st2.feed(_c)
+check("non-JSON emits nothing", _out2 == [] and not _st2.emitted)
+
+# ───────────────────────── document ingestion ─────────────────────────
+section("document ingestion (knowledge base)")
+from lk.retrieval.db import SemanticDB as _IngestDB
+from lk.retrieval.ingest import ingest as _ingest
+
+_itmp = Path(tempfile.mkdtemp())
+_doc = _itmp / "notes.md"
+_doc.write_text(
+    "# Project Phoenix\n\n"
+    "The launch window for Project Phoenix opens on March 3rd. "
+    "The propulsion subsystem uses a methalox engine with regenerative cooling. "
+    "Telemetry downlink runs at 2.4 GHz with a 6 dB link margin requirement.\n",
+    encoding="utf-8",
+)
+_idb = _IngestDB(path=_itmp / "test.db")
+_n, _title = _ingest(str(_doc), db=_idb)
+check("ingest inserts chunks", _n >= 1, f"n={_n}")
+check("ingest title is filename", _title == "notes.md")
+_hits = _idb.search("methalox propulsion")
+check("ingested text is searchable", any("methalox" in h.text for h in _hits))
+check("ingested url is file://", bool(_hits) and _hits[0].url.startswith("file://"))
+try:
+    _ingest(str(_itmp / "missing.pdf"), db=_idb)
+    check("missing file raises", False)
+except FileNotFoundError:
+    check("missing file raises", True)
+shutil.rmtree(_itmp, ignore_errors=True)
+
+# ───────────────────────── web search provider chain ─────────────────────────
+section("web search provider chain (bot-block fallthrough)")
+import lk.retrieval.web as W
+
+_saved_providers = W._PROVIDERS
+_saved_cooldowns = dict(W._cooldown_until)
+def _blocked(query, n):  raise W._BotBlocked("HTTP 202 bot-block page")
+def _erroring(query, n): raise RuntimeError("connection refused")
+def _working(query, n):  return [{"url": "https://ok.test/a", "title": "A"}]
+W._PROVIDERS = [("p_blocked", _blocked), ("p_error", _erroring), ("p_ok", _working)]
+W._cooldown_until.clear()
+W._stats.clear()
+
+res = W.ddg_search("anything", 3)
+check("chain falls through to working provider", res and res[0]["url"] == "https://ok.test/a")
+st = W.search_stats()
+check("blocked provider counted", st["providers"].get("p_blocked", {}).get("blocked") == 1, st)
+check("erroring provider counted", st["providers"].get("p_error", {}).get("fail") == 1)
+check("blocked provider cooling down", "p_blocked" in st["cooling_down"])
+res2 = W.ddg_search("again", 3)   # blocked provider must be skipped instantly now
+check("cooldown skips blocked provider", res2 and W._stats["p_blocked"]["blocked"] == 1)
+# all providers down → empty result but last_error recorded, no exception
+W._PROVIDERS = [("p_error", _erroring)]
+W._stats.clear()
+check("all-down returns [] with error noted",
+      W.ddg_search("x", 3) == [] and "p_error" in W.search_stats()["last_error"])
+W._PROVIDERS = _saved_providers
+W._cooldown_until.clear()
+W._cooldown_until.update(_saved_cooldowns)
 
 # ───────────────────────── model backend ─────────────────────────
 section("model backend: local vs api request construction")

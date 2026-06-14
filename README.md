@@ -284,16 +284,44 @@ pip install -e ".[full]"    # + vision, audio, web extraction
 
 ## Running
 
+**The front door is `./lk`** — fast, works before anything heavy loads:
+
 ```bash
-# Most common — vision on, audio off (audio needs ALSA/PulseAudio + mic)
+./lk wizard          # first run: detects model/server/deps, writes .runtime/lk.json
+./lk start           # THE normal way: bridge + model + popup (hotkey Ctrl+Shift+L)
+./lk status          # who's running, model health, who owns memory/
+./lk repl            # terminal REPL instead of the UI (mutually exclusive kernels)
+./lk stop [--all]    # stop popup+bridge (--all also stops the warm llama-server)
+./lk doctor          # full dependency + audio/retrieval pipeline diagnosis
+./lk logs            # bridge / popup / server logs when something misbehaves
+./lk ingest F.pdf    # add a document to the knowledge base (NotebookLM-style)
+./lk config list     # persistent settings (backend, model, api keys env, …)
+```
+
+Backend selection is persistent — e.g. native Claude:
+`./lk config set backend anthropic && export ANTHROPIC_API_KEY=…` then `./lk start`.
+Exactly **one kernel** (UI bridge *or* REPL) owns `memory/` at a time; the
+writer lock tells you who has it if you try to start a second one.
+
+<details>
+<summary>Manual invocations (advanced)</summary>
+
+```bash
+# REPL directly — vision on, audio off
 python3 lk.py --no-audio
 
 # Text-only, no sensors
 python3 lk.py --no-vision --no-audio
 
-# Use a remote model instead of the local server
+# Remote model instead of the local server
 python3 lk.py --api-base https://api.openai.com/v1 --api-model gpt-4o-mini --api-key "$OPENAI_API_KEY"
+
+# UI pieces individually
+cd apps/desktop && npm run popup        # bridge + popup (what `lk start` calls)
+cd apps/desktop && npm run popup:status
 ```
+
+</details>
 
 **Detached (recommended)** — survives terminal close, server stays warm:
 

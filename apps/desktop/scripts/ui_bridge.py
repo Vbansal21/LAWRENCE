@@ -7,46 +7,36 @@ import base64
 import copy
 import json
 import os
-<<<<<<< HEAD
-=======
 import re
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 import sys
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-<<<<<<< HEAD
-from urllib.parse import quote
-=======
 from urllib.parse import quote, unquote, urlparse
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "services"))
 
 from lk import model as _model, server as _server  # noqa: E402
-<<<<<<< HEAD
-from lk.admin import show_journal, show_log  # noqa: E402
-=======
 from lk.admin import list_journals, list_logs, show_journal, show_log  # noqa: E402
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 from lk.converters import convert as _convert  # noqa: E402
 from lk.ctx import ContextStore  # noqa: E402
-from lk.kernel import TurnConfig, run_compaction, run_turn  # noqa: E402
+from lk.config import apply_to_env as _apply_config_env  # noqa: E402
+from lk.kernel import TurnConfig, run_compaction, run_proactive, run_turn  # noqa: E402
+from lk.lock import acquire_writer_lock  # noqa: E402
+from lk.notify import notify as _notify  # noqa: E402
+from lk.retrieval.ingest import ingest as _ingest  # noqa: E402
 from lk.obs import AudioObserver, VisionObserver, capture_now, record_now  # noqa: E402
-<<<<<<< HEAD
-from lk.profile import ModelProfile  # noqa: E402
-from lk.retrieval import RetrievalPipeline, SemanticDB  # noqa: E402
-=======
 from lk.obs.audio import transcribe as _transcribe  # noqa: E402
 from lk.profile import ModelProfile  # noqa: E402
 from lk.retrieval import RetrievalPipeline, SemanticDB, format_citations, format_snippets  # noqa: E402
+from lk.retrieval.web import search_stats as _web_search_stats  # noqa: E402
 from lk.tasks import TaskStore  # noqa: E402
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 from lk.ui import UIConnector  # noqa: E402
 
 # Deep-search retrieval profile — overrides for per-turn expanded breadth.
@@ -63,8 +53,6 @@ class BridgeError(Exception):
         self.message = message
 
 
-<<<<<<< HEAD
-=======
 class _AnnotatedUI:
     """Small per-job wrapper that annotates pushed responses without kernel edits."""
 
@@ -125,9 +113,15 @@ class _AnnotatedUI:
         self._ui._push(payload)
 
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 class DesktopBridge:
     def __init__(self) -> None:
+        # Single-writer invariant: exactly one kernel process owns memory/.
+        ok, owner = acquire_writer_lock("ui-bridge")
+        if not ok:
+            raise RuntimeError(
+                f"another LAWRENCE kernel already owns memory/ ({owner}) — "
+                "stop the REPL (or other bridge) first; kernel processes are mutually exclusive"
+            )
         self.tmp = tempfile.TemporaryDirectory(prefix="lawrence-ui-")
         self.tmp_path = Path(self.tmp.name)
         self.lock = threading.Lock()
@@ -152,14 +146,20 @@ class DesktopBridge:
         self.retrieval = RetrievalPipeline(self.db)
         self.vision: VisionObserver | None = None
         self.audio: AudioObserver | None = None
-<<<<<<< HEAD
-=======
         self.voice_enabled = False
         self._voice_config: dict[str, Any] = {}
+        # Proactive loop (context → retrieve → surface unprompted) — G4.
+        self.proactive_interval = float(os.environ.get("LK_PROACTIVE_INTERVAL", "600"))
+        self._last_proactive = 0.0
+        self._proactive_busy = False
+        # In-flight turn tracking — voice-listen mode auto-submits a turn per
+        # transcribed segment, which floods the single-slot CPU queue when a
+        # video/conversation plays. Drop voice turns while one is already running.
+        self._turns_in_flight = 0
+        self._turn_count_lock = threading.Lock()
         # Shared bullet journal, persisted with the CLI via memory/tasks.json.
         self.tasks = TaskStore()
         self._voice_lock = threading.Lock()
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
     def _profile(self) -> ModelProfile:
         if _model.backend_from_env():
@@ -197,11 +197,8 @@ class DesktopBridge:
                 "vision": bool(self.vision and self.vision.active),
                 "audio": bool(self.audio and self.audio.active),
             },
-<<<<<<< HEAD
-=======
             "voice": {"listening": bool(self.voice_enabled and self.audio and self.audio.active)},
             "tasks": self.tasks.snapshot()["counts"],
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             "jobs": {
                 "queued": sum(1 for job in jobs if job.get("state") == "queued"),
                 "running": sum(1 for job in jobs if job.get("state") == "running"),
@@ -217,6 +214,9 @@ class DesktopBridge:
                 "pendingAudio": len(self.pending_audios),
                 "transcript": self.events[-1] if self.events else "idle",
             },
+            # web-search provider counters + cooldowns (bot-block visibility)
+            "retrieval": _web_search_stats(),
+            "fallbackParses": _model.fallback_parses(),
             # SSE event stream port — None when the port was already in use at startup
             "eventsPort": self.ui.port,
             "eventsUrl": f"http://127.0.0.1:{self.ui.port}/events" if self.ui.port else None,
@@ -284,26 +284,49 @@ class DesktopBridge:
                 return False
             if not self.profile.audio:
                 raise BridgeError(409, "active model profile has no audio input")
-<<<<<<< HEAD
-            self.audio = AudioObserver(self.tmp_path, self.ctx, on_event=self._on_context_event)
-            self.audio.start()
-            return True
-        if not self.audio:
-            return False
-=======
             self._start_audio()
             return True
         if not self.audio:
             return False
         self.voice_enabled = False
         self._voice_config = {}
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         self.audio.stop()
         self.audio = None
         return True
 
-<<<<<<< HEAD
-=======
+    def _apply_model_controls(self, controls: dict[str, Any]) -> dict[str, str]:
+        """Actuate model-emitted sensor controls (the agentic half of the loop).
+
+        The REPL applies these in cli.py:_apply_controls; this is the bridge-side
+        equivalent so model agency works from the UI too. Returns what changed.
+        """
+        applied: dict[str, str] = {}
+        v = str((controls or {}).get("vision", "") or "")
+        a = str((controls or {}).get("audio", "") or "")
+        try:
+            if v == "hi":
+                out = capture_now(self.tmp_path / f"model-hi-{_stamp()}.png")
+                self.pending_images.append(out)
+                applied["vision"] = "hi-res captured"
+            elif v == "on" and self._set_vision(True):
+                applied["vision"] = "observer started"
+            elif v == "off" and self._set_vision(False):
+                applied["vision"] = "observer stopped"
+        except Exception as exc:
+            applied["vision"] = f"request failed: {exc}"
+        try:
+            if a == "on" and self._set_audio(True):
+                applied["audio"] = "observer started"
+            elif a == "off" and self._set_audio(False):
+                applied["audio"] = "observer stopped"
+        except Exception as exc:
+            applied["audio"] = f"request failed: {exc}"
+        if applied:
+            summary = " · ".join(f"{k}: {msg}" for k, msg in applied.items())
+            self.events.append(f"[controls] {summary}")
+            self.ui.push_context_event("controls", summary)
+        return applied
+
     def _start_audio(self) -> None:
         self.audio = AudioObserver(
             self.tmp_path,
@@ -319,13 +342,60 @@ class DesktopBridge:
             self.audio = None
         self._start_audio()
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     def _on_context_event(self, kind: str, compact: str) -> None:
         self.events.append(f"{kind}: {compact}")
         self.ui.push_context_event(kind, compact)
+        self._maybe_proactive()
 
-<<<<<<< HEAD
-=======
+    # ── proactive loop (realize context → retrieve → surface unprompted) ────────
+    def _maybe_proactive(self) -> None:
+        """Trigger background proactive retrieval after a significant sensor
+        event — the same loop the REPL wires (G4); previously missing in UI
+        mode. Rate-limited; the inference gate additionally drops the call when
+        the model slot is busy."""
+        now = time.monotonic()
+        if now - self._last_proactive < self.proactive_interval:
+            return
+        if self._proactive_busy:
+            return
+        self._last_proactive = now
+        self._proactive_busy = True
+
+        def _run() -> None:
+            try:
+                run_proactive(
+                    self.ctx, self.retrieval,
+                    live_fn=lambda msg: self.ui.push_context_event("proactive", msg),
+                    present_fn=self._present_finding,
+                )
+            except Exception:
+                pass
+            finally:
+                self._proactive_busy = False
+
+        threading.Thread(target=_run, daemon=True, name="ui-proactive").start()
+
+    def _present_finding(self, finding: dict[str, Any]) -> None:
+        """Surface an unprompted finding: SSE card + desktop notification."""
+        self.events.append(f"[finding] {finding.get('headline', '')}")
+        self.ui._push({"type": "finding", **finding})
+        _notify(finding.get("headline", "LAWRENCE noticed something"),
+                finding.get("insight", ""))
+
+    # ── document ingestion (NotebookLM-style knowledge base) ────────────────────
+    def ingest_document(self, request: dict[str, Any]) -> dict[str, Any]:
+        target = str(request.get("path") or request.get("url") or "").strip()
+        if not target:
+            raise BridgeError(400, "ingest needs {'path': ...} or {'url': ...}")
+        try:
+            inserted, title = _ingest(target, db=self.db)
+        except FileNotFoundError as exc:
+            raise BridgeError(404, str(exc))
+        except Exception as exc:
+            raise BridgeError(422, f"ingest failed: {exc}")
+        self.ui.push_context_event("ingest", f"knowledge base ← {title} ({inserted} chunks)")
+        return {"ok": True, "title": title, "chunks": inserted}
+
     # ── shared bullet journal ───────────────────────────────────────────────────
     def _tasks_fn(self, proposals: dict[str, Any]) -> None:
         """Persist model-proposed bullets/notes; announce changes via SSE."""
@@ -462,6 +532,14 @@ class DesktopBridge:
         transcript = (transcript or "").strip()
         if not transcript:
             return
+        # Coalesce: while a turn is already answering, drop new voice segments
+        # rather than queueing one per utterance (a playing video would otherwise
+        # pile up dozens of slow CPU turns). The user still sees what was heard.
+        with self._turn_count_lock:
+            busy = self._turns_in_flight > 0
+        if busy:
+            self.ui.push_context_event("voice", f"(heard, still answering) {transcript[:60]}")
+            return
         self.ui.push_context_event("voice", f"heard: {transcript[:80]}")
         # Response is delivered to the UI through the SSE push_response in run_turn.
         self.enqueue_turn({
@@ -470,7 +548,6 @@ class DesktopBridge:
             "turn": {"text": transcript, "config": config},
         })
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     def _retrieval_for_turn(self, deep: bool) -> RetrievalPipeline:
         """Return a per-turn retrieval pipeline.
 
@@ -495,35 +572,6 @@ class DesktopBridge:
 
         config       = turn.get("config") or {}
         mode         = str(config.get("mode", "Auto"))
-<<<<<<< HEAD
-        deep_search  = bool(config.get("deepSearch", False))
-        visual_ctx   = bool(config.get("visualContext", True))
-        audio_ctx    = bool(config.get("audioContext", True))
-
-        images, audios, notes = self._media_for_turn(turn, mode)
-        if notes:
-            # MDX-formatted attachment blocks — each note is already a ## section
-            text = text + "\n\n---\n\n" + "\n\n---\n\n".join(notes)
-        if str(config.get("responseFormat", "")).lower() == "mdx":
-            text = (
-                text
-                + "\n\n[UI response format]\n"
-                + "Respond in MDX-compatible Markdown. Use headings, lists, code fences, tables, "
-                + "and frontmatter when useful. Do not wrap the answer in JSON."
-            )
-
-        # Capability gate: model must support the modality AND user must want it.
-        # mode=Text disables both; mode=Screen/Audio unlock the respective channel
-        # regardless of the per-turn toggle (toggle affects observers, not mode capture).
-        if mode == "Text":
-            allow_img = allow_aud = False
-        elif mode == "Screen":
-            allow_img = self.profile.vision
-            allow_aud = False
-        elif mode == "Audio":
-            allow_img = self.profile.vision and visual_ctx
-            allow_aud = self.profile.audio
-=======
         agent_cfg    = config.get("agent") or {}
         web_depth    = str(agent_cfg.get("webDepth", "Auto")).lower()
         deep_search  = bool(config.get("deepSearch", False)) or web_depth == "comprehensive"
@@ -553,7 +601,6 @@ class DesktopBridge:
         elif mode == "Audio":
             allow_img = self.profile.vision and visual_ctx
             allow_aud = self.profile.audio and audio_ctx
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         else:  # Auto
             allow_img = self.profile.vision and visual_ctx
             allow_aud = self.profile.audio  and audio_ctx
@@ -572,11 +619,6 @@ class DesktopBridge:
             top_p=_opt_float(dec.get("topP")),
             min_p=_opt_float(dec.get("minP")),
             top_k=_opt_int(dec.get("topK")),
-<<<<<<< HEAD
-            repeat_penalty=_opt_float(dec.get("repeatPenalty")),
-            presence_penalty=_opt_float(dec.get("presencePenalty")),
-            frequency_penalty=_opt_float(dec.get("frequencyPenalty")),
-=======
             typical_p=_opt_float(dec.get("typicalP")),
             tfs_z=_opt_float(dec.get("tfsZ")),
             repeat_penalty=_opt_float(dec.get("repeatPenalty")),
@@ -589,7 +631,6 @@ class DesktopBridge:
             dry_multiplier=_opt_float(dec.get("dryMultiplier")),
             dry_base=_opt_float(dec.get("dryBase")),
             dry_allowed_length=_opt_int(dec.get("dryAllowedLength")),
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             seed=_opt_int(dec.get("seed")),
             stop_sequences=[s for s in (dec.get("stopSequences") or []) if s] or None,
         )
@@ -598,8 +639,6 @@ class DesktopBridge:
 
         with self.lock:
             self.events.clear()
-<<<<<<< HEAD
-=======
             forced_results = self._forced_web_results(text, config, deep_search)
             forced_citations = [
                 {"num": r.citation_num, "url": r.url, "title": r.title}
@@ -623,17 +662,12 @@ class DesktopBridge:
                 )
             if directives:
                 turn_text = turn_text + "\n\n" + directives
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
             def _live_fn(msg: str) -> None:
                 """Collect turn events for the sync response AND push through SSE."""
                 self.events.append(msg)
                 self.ui.push_context_event("turn", msg)
 
-<<<<<<< HEAD
-            answer, controls = run_turn(
-                text,
-=======
             ui = _AnnotatedUI(
                 self.ui,
                 source=source,
@@ -646,41 +680,33 @@ class DesktopBridge:
 
             answer, controls = run_turn(
                 turn_text,
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
                 ctx=self.ctx,
                 retrieval=retrieval,
                 cfg=cfg,
                 images=images,
                 audios=audios,
-<<<<<<< HEAD
-                ui=self.ui,
-                capture_fn=self._capture_for_model,
-                live_fn=_live_fn,
-            )
-=======
                 ui=ui,
                 capture_fn=self._capture_for_model,
                 live_fn=_live_fn,
                 tasks_fn=self._tasks_fn,
+                stream_fn=self.ui.push_delta,   # live answer tokens → SSE "delta"
             )
             answer = _process_answer(answer)
             answer = _append_once(answer, forced_suffix)
             controls = dict(controls or {})
+            applied = self._apply_model_controls(controls)
+            if applied:
+                controls["applied"] = applied
             controls["uiAppliedConfig"] = _applied_config_summary(config, cfg, deep_search)
             unsupported = _unsupported_config(config)
             if unsupported:
                 controls["uiUnsupportedConfig"] = unsupported
                 self.events.append("[config] unsupported by current backend: " + ", ".join(unsupported))
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             if deep_search:
                 src_count = sum(1 for e in self.events if "[retrieval]" in e)
                 self.events.append(f"deep-search: {src_count} sources considered")
             return {"answer": answer, "controls": controls, "events": list(self.events)}
 
-<<<<<<< HEAD
-    def enqueue_turn(self, request: dict[str, Any]) -> dict[str, Any]:
-        job_id = f"turn-{uuid.uuid4().hex[:12]}"
-=======
     def _forced_web_results(self, text: str, config: dict[str, Any], deep: bool) -> list[Any]:
         web_intent = config.get("webIntent") or {}
         enabled = bool(config.get("retrieval", True)) and bool(web_intent.get("enabled", True))
@@ -815,17 +841,13 @@ class DesktopBridge:
         request["source"] = source
         if transcript:
             request["transcript"] = transcript
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         with self.job_lock:
             self.jobs[job_id] = {
                 "id": job_id,
                 "state": "queued",
-<<<<<<< HEAD
-=======
                 "source": source,
                 "transcript": transcript,
                 "textPreview": text_preview,
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
                 "createdAt": datetime.now(timezone.utc).isoformat(),
             }
         thread = threading.Thread(
@@ -835,9 +857,6 @@ class DesktopBridge:
             name=f"ui-turn-{job_id}",
         )
         thread.start()
-<<<<<<< HEAD
-        return {"accepted": True, "jobId": job_id, "state": "queued"}
-=======
         return {
             "accepted": True,
             "jobId": job_id,
@@ -845,10 +864,11 @@ class DesktopBridge:
             "source": source,
             "transcript": transcript,
         }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
     def _run_turn_job(self, job_id: str, request: dict[str, Any]) -> None:
         self._update_job(job_id, state="running", startedAt=datetime.now(timezone.utc).isoformat())
+        with self._turn_count_lock:
+            self._turns_in_flight += 1
         try:
             result = self.turn(request)
             self._update_job(
@@ -873,6 +893,9 @@ class DesktopBridge:
                 error=str(exc),
                 status=500,
             )
+        finally:
+            with self._turn_count_lock:
+                self._turns_in_flight -= 1
 
     def _update_job(self, job_id: str, **values: Any) -> None:
         with self.job_lock:
@@ -964,9 +987,6 @@ class DesktopBridge:
             job = self.jobs.get(job_id)
             if not job:
                 raise BridgeError(404, f"unknown job: {job_id}")
-<<<<<<< HEAD
-            return dict(job)
-=======
             return _job_view(job)
 
     def jobs_index(self) -> dict[str, Any]:
@@ -974,7 +994,6 @@ class DesktopBridge:
             items = [_job_view(job) for job in self.jobs.values()]
         items.sort(key=lambda job: job.get("createdAt", ""), reverse=True)
         return {"ok": True, "items": items[:30]}
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
     def _media_for_turn(
         self, turn: dict[str, Any], mode: str = "Auto"
@@ -1154,8 +1173,6 @@ def _mdx_attachment(kind: str, name: str, source: str, content: str) -> str:
     return f"### Attachment: {name} `[{kind}]`\n\n{source_line}{content}"
 
 
-<<<<<<< HEAD
-=======
 def _append_once(text: str, suffix: str) -> str:
     if not suffix:
         return text
@@ -1453,7 +1470,6 @@ def _ui_directives(config: dict[str, Any]) -> str:
     return "[UI directives]\n" + "\n".join(lines)
 
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 class Handler(BaseHTTPRequestHandler):
     bridge: DesktopBridge
 
@@ -1461,12 +1477,6 @@ class Handler(BaseHTTPRequestHandler):
         self._send(204, {})
 
     def do_GET(self) -> None:
-<<<<<<< HEAD
-        if self.path == "/health":
-            self._send(200, self.bridge.health())
-        elif self.path.startswith("/jobs/"):
-            job_id = self.path.rsplit("/", 1)[-1]
-=======
         path = urlparse(self.path).path
         if path == "/health":
             self._send(200, self.bridge.health())
@@ -1487,7 +1497,6 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(exc.status, {"error": exc.message})
         elif path.startswith("/jobs/"):
             job_id = path.rsplit("/", 1)[-1]
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             try:
                 self._send(200, self.bridge.job(job_id))
             except BridgeError as exc:
@@ -1508,15 +1517,14 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.request_context(body))
             elif self.path == "/observer":
                 self._send(200, self.bridge.set_observer(body))
-<<<<<<< HEAD
-=======
             elif self.path == "/tasks":
                 self._send(200, self.bridge.tasks_command(body))
             elif self.path == "/voice":
                 self._send(202, self.bridge.voice_once(body))
             elif self.path == "/voice/listen":
                 self._send(200, self.bridge.set_voice_listen(body))
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
+            elif self.path == "/ingest":
+                self._send(200, self.bridge.ingest_document(body))
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:
@@ -1547,6 +1555,7 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main() -> int:
+    _apply_config_env()   # .runtime/lk.json defaults (env always wins)
     parser = argparse.ArgumentParser(description="LAWRENCE desktop UI bridge")
     parser.add_argument("--host", default=os.environ.get("LK_UI_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.environ.get("LK_UI_PORT", "8765")))

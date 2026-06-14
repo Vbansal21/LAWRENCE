@@ -230,6 +230,74 @@ def capture_fullres(out: Path) -> tuple[int, int, int, int] | None:
     return None
 
 
+# ── foreground-window capture (fast, focused — the primary watch path) ────────
+#
+# The full region pipeline enumerates+captures+OCRs every visible window via two
+# slow PowerShell round-trips (~11s/tick on WSLg) and feeds the model garbled
+# text from background windows. A watcher should report what the user is *looking
+# at*: one PowerShell call grabs the foreground window's rect, title, and a
+# native-resolution capture of just that window. Faster, and the OCR is relevant.
+
+_PS_FOREGROUND = r'''
+Add-Type -AssemblyName System.Windows.Forms,System.Drawing
+Add-Type @"
+using System; using System.Text; using System.Runtime.InteropServices;
+public class LkFg {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern int GetWindowText(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
+  [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
+  public struct RECT { public int Left, Top, Right, Bottom; }
+}
+"@
+[void][LkFg]::SetProcessDPIAware()
+$h = [LkFg]::GetForegroundWindow()
+$sb = New-Object System.Text.StringBuilder 512
+[void][LkFg]::GetWindowText($h, $sb, 512)
+$r = New-Object LkFg+RECT
+[void][LkFg]::GetWindowRect($h, [ref]$r)
+$w = $r.Right - $r.Left; $hh = $r.Bottom - $r.Top
+if ($w -lt 40 -or $hh -lt 40 -or [LkFg]::IsIconic($h)) { Write-Output "ERR none"; exit }
+$bmp = New-Object System.Drawing.Bitmap $w, $hh
+$g = [System.Drawing.Graphics]::FromImage($bmp)
+try { $g.CopyFromScreen($r.Left, $r.Top, 0, 0, $bmp.Size) } catch { Write-Output "ERR capture"; exit }
+$bmp.Save('__OUT__', [System.Drawing.Imaging.ImageFormat]::Png)
+$g.Dispose(); $bmp.Dispose()
+Write-Output "$($r.Left),$($r.Top),$w,$hh`t$($sb.ToString())"
+'''
+
+
+def capture_foreground(out: Path) -> tuple[tuple[int, int, int, int], str] | None:
+    """Capture just the active (foreground) window at native resolution.
+    Returns ((left, top, width, height), title) or None. WSL/Windows only;
+    callers fall back to the whole-screen / region path elsewhere."""
+    if not shutil.which("powershell.exe"):
+        return None
+    out.parent.mkdir(parents=True, exist_ok=True)
+    ps = _PS_FOREGROUND.replace("__OUT__", _wsl_win_path(out))
+    try:
+        r = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+            capture_output=True, text=True, timeout=20,
+        )
+    except Exception:
+        return None
+    if r.returncode != 0 or not out.exists():
+        return None
+    for line in reversed(r.stdout.splitlines()):
+        line = line.strip()
+        if not line or line.startswith("ERR"):
+            continue
+        coords, _, title = line.partition("\t")
+        try:
+            l, t, w, h = (int(x) for x in coords.split(","))
+            return (l, t, w, h), title.strip()
+        except ValueError:
+            continue
+    return None
+
+
 # ── pixel change ──────────────────────────────────────────────────────────────
 
 def _load_grey(path: Path) -> bytes | None:
@@ -269,8 +337,10 @@ def _crop_signature(crop) -> bytes:
 def run_ocr(path: Path, max_chars: int = 600) -> str:
     if shutil.which("tesseract"):
         try:
+            # psm 3 (auto page segmentation) reads real page/document content on
+            # full-window captures; psm 11 (sparse) returned mostly UI chrome.
             r = subprocess.run(
-                ["tesseract", str(path), "stdout", "--psm", "11", "--dpi", "150", "-l", "eng"],
+                ["tesseract", str(path), "stdout", "--psm", "3", "-l", "eng"],
                 capture_output=True, text=True, timeout=15,
             )
             t = r.stdout.strip()
@@ -347,6 +417,23 @@ class VisionObserver(threading.Thread):
         self.poll_interval  = poll_interval
         self.min_write_secs = min_write_secs
 
+        # foreground-window mode (default): capture+OCR only the active window —
+        # one PowerShell call, native-res, relevant. Falls back to the region /
+        # whole-screen pipeline below when it can't (no powershell, capture err).
+        self.foreground       = True
+        self._prev_fg_bytes:  bytes | None = None
+        self._fg_ok           = True
+        # LAWRENCE's own surfaces — never feed them back to the model
+        # (self-referential noise). Precise match: the popup's title is exactly
+        # "LAWRENCE" and the REPL terminal is "LAWRENCE (Ubuntu)", but the user's
+        # editor ("plan.md - LAWRENCE (Workspace)…") must NOT be skipped — so we
+        # match an exact title or a "lawrence (" / "lawrence -" prefix, never a
+        # bare substring. Override via LK_VISION_SKIP_TITLES (comma-separated).
+        env_skip = os.environ.get("LK_VISION_SKIP_TITLES", "")
+        self._self_titles     = tuple(
+            s.strip().lower() for s in env_skip.split(",") if s.strip()
+        ) or ("lawrence",)
+
         # region pipeline (per-window OCR). Disabled automatically if a frame
         # can't be segmented (no Pillow / no window source) — falls back to
         # whole-screen OCR. Tracker gives boxes stable ids + EMA smoothing.
@@ -381,8 +468,18 @@ class VisionObserver(threading.Thread):
             self._stop.wait(self.poll_interval)   # live-patchable interval
 
     def _tick(self) -> None:
-        # ── cheap gate: low-res capture decides whether anything is worth a full read
         self._idx += 1
+        ts = datetime.now(timezone.utc).isoformat()
+
+        # ── primary path: foreground window only (one PS call, gate + capture) ──
+        if self.foreground and self._fg_ok:
+            if self._tick_foreground(ts):
+                return
+            self._fg_ok = False        # capture failed — fall back, retry later
+        elif self.foreground and self._idx % 30 == 0:
+            self._fg_ok = True
+
+        # ── fallback: whole-screen low-res gate → region / whole-screen OCR ──
         low = self.tmp_dir / f"vis-{self._idx % 8}.png"
         if not capture_frame(low, *LOW_RES):
             return
@@ -392,8 +489,6 @@ class VisionObserver(threading.Thread):
         if score < _gate.gate_config.vision_pixel_min and score < 1.0:
             return   # nothing meaningful changed
 
-        ts = datetime.now(timezone.utc).isoformat()
-        # ── useful change → full read. Try per-region pipeline, else whole-screen.
         if self.regions and self._regions_ok:
             if self._tick_regions(ts, score):
                 return
@@ -401,6 +496,43 @@ class VisionObserver(threading.Thread):
         elif self.regions and self._idx % 30 == 0:
             self._regions_ok = True
         self._tick_whole(ts, score, low)
+
+    def _is_self_window(self, title: str) -> bool:
+        """True only for LAWRENCE's own popup/terminal, not a user window that
+        merely mentions LAWRENCE (e.g. editing this repo)."""
+        t = title.strip().lower()
+        for m in self._self_titles:
+            if t == m or t.startswith(f"{m} (") or t.startswith(f"{m} -") or t.startswith(f"{m} —"):
+                return True
+        return False
+
+    def _tick_foreground(self, ts: str) -> bool:
+        """Capture + OCR only the active window. Returns True when handled
+        (including deliberate skips: our own window, or no pixel change), False
+        only when the capture itself isn't available so the caller falls back."""
+        fg = self.tmp_dir / f"vis-fg-{self._idx % 4}.png"
+        cap = capture_foreground(fg)
+        if not cap:
+            return False
+        (_l, _t, _w, _h), title = cap
+        if not title or self._is_self_window(title):
+            return True                # our own surface (or untitled) — skip, handled
+
+        curr_bytes = _load_grey(fg)
+        score = pixel_change_score(self._prev_fg_bytes, curr_bytes)
+        self._prev_fg_bytes = curr_bytes
+        if score < _gate.gate_config.vision_pixel_min and score < 1.0:
+            return True                # nothing changed in the active window — handled
+
+        ocr = run_ocr(fg, max_chars=800)
+        if ocr and not ocr.startswith("[ocr-unavailable"):
+            block = f"[{title[:80]}]\n{ocr}"
+        else:
+            block = ocr
+        self.pending_hi = fg           # native-res active window available to the model
+        diff = heuristic_diff(self._prev_ocr, block, score)
+        self._emit(ts, score, block, diff, fg)
+        return True
 
     def _emit(self, ts: str, score: float, ocr: str, diff: str, hi: Path | None) -> None:
         """Shared: update /obs snapshot, gate, distill, write to context."""

@@ -1,3 +1,5 @@
+> **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
+
 # n8n Community Edition Workflow Showcase
 
 Primary files: `modules/connectors/n8n/workflows/*.json`

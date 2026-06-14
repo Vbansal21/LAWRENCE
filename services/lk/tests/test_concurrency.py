@@ -79,6 +79,25 @@ print(f"empty-tail-while-data races: {empty_tail_with_data[0]}")
 print(f"final sizes L1={ctx._l1_size} L2={ctx._l2_size} L3={ctx._l3_size}")
 print(f"JSON integrity L1={ok_l1} L2={ok_l2} L3={ok_l3}")
 shutil.rmtree(tmp, ignore_errors=True)
-ok = (not errors) and empty_tail_with_data[0]==0 and ok_l1 and ok_l2 and ok_l3 and ccalls["l1"]>0
+
+# ── priority gate: turn preempts compact; proactive drops instead of queueing ──
+from lk.model import _PriorityGate, PRI_TURN, PRI_COMPACT
+gate = _PriorityGate()
+gate_order = []
+gate.acquire(PRI_TURN)                       # hold the single slot
+gate_ok = gate.try_acquire() is False        # droppable caller would skip
+def _gate_worker(pri, tag):
+    gate.acquire(pri); gate_order.append(tag); time.sleep(0.01); gate.release()
+gts = [threading.Thread(target=_gate_worker, args=(PRI_COMPACT, "compact")),
+       threading.Thread(target=_gate_worker, args=(PRI_TURN, "turn"))]
+gts[0].start(); time.sleep(0.05)             # compact queues first…
+gts[1].start(); time.sleep(0.05)             # …then a turn arrives
+gate.release()                               # turn must win the freed slot
+for t in gts: t.join(3)
+gate_ok = gate_ok and gate_order == ["turn", "compact"] and gate.try_acquire()
+gate.release()
+print(f"priority gate: {'PASS' if gate_ok else 'FAIL'} (order={gate_order})")
+
+ok = (not errors) and empty_tail_with_data[0]==0 and ok_l1 and ok_l2 and ok_l3 and ccalls["l1"]>0 and gate_ok
 print("\nRESULT:", "PASS" if ok else "FAIL")
 sys.exit(0 if ok else 1)

@@ -53,15 +53,12 @@ RESPONSE = (
     '  "controls": object (omit entirely if no action needed) with optional keys:\n'
     '    "vision": "hi" (capture hi-res screenshot now), "on", or "off"\n'
     '    "audio": "on" or "off"\n'
-<<<<<<< HEAD
-=======
     '  "tasks": array (OMIT if none) — TODO items you infer should be tracked, curated on your '
     "own initiative. Each item is either a short string (a NEW actionable task) or "
     '{"op":"done","text":"<the task>"} to mark one complete. Add a task only for a concrete '
     "follow-up action; do not restate the question as a task.\n"
     '  "remember": array of strings (OMIT if none) — durable facts, preferences, or decisions '
     "worth remembering long-term that you picked up without being asked. ≤120 chars each.\n"
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     "No markdown fences around the outer JSON. No preamble. Output ONLY the JSON object."
 )
 

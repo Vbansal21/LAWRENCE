@@ -9,21 +9,32 @@
     "deps:system": "bash scripts/install-system-deps-ubuntu.sh",
     "bridge": "python3 scripts/ui_bridge.py",
     "popup": "bash scripts/desktopctl.sh start",
-<<<<<<< HEAD
-=======
     "popup:show": "bash scripts/desktopctl.sh show",
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
+    "popup:toggle": "bash scripts/desktopctl.sh toggle",
     "popup:stop": "bash scripts/desktopctl.sh stop",
     "popup:restart": "bash scripts/desktopctl.sh restart",
     "popup:status": "bash scripts/desktopctl.sh status",
+    "popup:doctor": "bash scripts/desktopctl.sh doctor",
     "popup:logs": "bash scripts/desktopctl.sh logs",
     "popup:hotkey": "bash scripts/desktopctl.sh hotkey",
+    "services:start": "bash scripts/desktopctl.sh services-start",
+    "services:stop": "bash scripts/desktopctl.sh services-stop",
+    "services:restart": "bash scripts/desktopctl.sh services-restart",
+    "host:config": "bash scripts/desktopctl.sh host-config",
+    "host:config:write": "bash scripts/desktopctl.sh host-config --write",
+    "host:install-plan": "bash scripts/desktopctl.sh host-install-plan",
+    "host:install-plan:write": "bash scripts/desktopctl.sh host-install-plan --write",
+    "host:windows:script": "node -e \"console.log('Run from Windows PowerShell: apps/desktop/host/windows/Build-HostUi.ps1')\"",
+    "host:windows:start": "node -e \"console.log('Run from Windows PowerShell: apps/desktop/host/windows/Start-HostUi.ps1')\"",
+    "host:windows:hotkey": "node -e \"console.log('Run from Windows PowerShell: apps/desktop/host/windows/Register-Hotkey.ps1')\"",
     "dev": "bash scripts/dev-tauri.sh",
     "dev:raw": "tauri dev",
     "dev:web": "bash scripts/web-preview.sh",
     "build": "bash scripts/build-tauri.sh",
     "build:raw": "tauri build",
-    "stress": "bash scripts/stress-ui.sh"
+    "stress": "bash scripts/stress-ui.sh",
+    "test:features": "bash scripts/stress-ui.sh",
+    "test:runtime": "bash scripts/test-runtime-contract.sh"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.0.0",

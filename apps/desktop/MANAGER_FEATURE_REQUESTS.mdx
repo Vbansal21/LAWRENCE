@@ -364,3 +364,85 @@ without crowding the feed.
 
 **Expected Result:** Config and evidence panels feel magnetically attached to
 the launcher while remaining independently resizable.
+
+## FR-011: Native Host UI With WSL Service Manager
+
+**What:** Split the desktop system into two deliberate parts:
+
+- a WSL-side LAWRENCE manager/wizard that installs, configures, starts, stops,
+  restarts, updates, and diagnoses the kernel, llama.cpp server, retrieval
+  stores, observers, and bridge/API services;
+- a host-native UI app installed outside WSL, using the host OS windowing,
+  global hotkey, tray, notifications, audio/video permissions, and lifecycle.
+
+**Why:** Running the visible Tauri popup inside WSLg makes global hotkeys,
+focus, transparency, resize/move behavior, audio/video permissions, rendering
+smoothness, and host notifications depend on the WSL compositor boundary. WSL
+is the right place for Linux-first kernel/server orchestration, but the visible
+assistant surface should be native to the user-facing OS.
+
+**Where:** `apps/desktop` packaging, desktop controller scripts, a future
+manager/wizard command under the CLI manager, host installer artifacts, and the
+bridge/API contract between the host UI and WSL services.
+
+**How:** Define a stable local service contract first:
+
+```json
+{
+  "manager": "wsl",
+  "ui": "host-native",
+  "bridgeHttp": "http://127.0.0.1:8765",
+  "bridgeEvents": "http://127.0.0.1:8766/events",
+  "modelServer": "http://127.0.0.1:8190",
+  "commands": ["status", "start", "stop", "restart", "doctor", "install-ui", "update-ui"],
+  "auth": "local-token-or-named-pipe",
+  "host": "windows|linux|macos"
+}
+```
+
+The WSL manager should:
+
+1. own kernel/model/retrieval service lifecycle and health;
+2. expose one canonical bridge endpoint plus one event stream, clearly labeled;
+3. detect unused adjacent services such as Ollama without killing them unless
+   explicitly requested;
+4. install or update the host-native UI artifact in the correct host location;
+5. hand the host UI a small config file containing bridge URL, event URL,
+   auth token, hotkey, and startup policy;
+6. provide `show`, `hide`, `restart-ui`, and `doctor-ui` commands through a
+   host-reliable IPC path rather than restarting the app to show it.
+
+The host-native UI should:
+
+1. own global hotkey, tray, notifications, screen/audio permissions, and
+   low-latency window rendering;
+2. connect to the WSL bridge using the manager-provided config;
+3. never start llama.cpp or mutate kernel state directly except through the
+   manager/bridge contract;
+4. degrade cleanly when WSL services are stopped, showing status and start
+   actions instead of a blank webview.
+
+**Current Host Decision:** First target Windows on ARM64 with native Tauri,
+installed outside WSL. Use loopback HTTP/SSE with a local token for the UI data
+plane because turns, jobs, context, telemetry, history, and response streaming
+are naturally request/event data. Use a Windows host helper or named-pipe-backed
+helper for lifecycle/control because show/hide, install/update, permissions,
+startup, notifications, and service supervision need host-native authority and
+will get more complex over time.
+
+**Current UI/WSL Implementation:** The desktop controller now exposes
+service-only commands (`npm run services:start|stop|restart`) so WSL can run the
+bridge/services without launching the WSLg popup. The Windows ARM64 host path is
+scripted through `apps/desktop/host/windows/Build-HostUi.ps1` and
+`Start-HostUi.ps1`; the build uses `%LOCALAPPDATA%\LAWRENCE\cache` for npm/Rust
+cache reuse, installs the native executable/config/helper scripts under
+`%LOCALAPPDATA%\LAWRENCE`, and the Tauri app reads `host-ui.json` when
+environment variables are not set.
+
+**Intent:** Keep Linux service orchestration strong while making the assistant
+popup feel like a native OS-level launcher instead of a WSLg window.
+
+**Expected Result:** The WSL component can install/configure/start/stop all
+LAWRENCE services, while the main UI runs natively on the host with reliable
+hotkey, tray, notifications, smooth rendering, and stable communication to the
+WSL bridge.

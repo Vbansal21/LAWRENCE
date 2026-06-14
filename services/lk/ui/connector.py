@@ -124,13 +124,14 @@ class UIConnector:
 
     def push_context_event(self, kind: str, compact: str) -> None:
         self._push({"type": "context", "kind": kind, "text": compact})
-<<<<<<< HEAD
-=======
 
     def push_tasks(self, snapshot: dict[str, Any]) -> None:
         """Broadcast the current task/remember state to all UI clients."""
         self._push({"type": "tasks", **snapshot})
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
+
+    def push_delta(self, text: str) -> None:
+        """Incremental answer_text chunk for the in-flight turn (live streaming)."""
+        self._push({"type": "delta", "text": text})
 
     # ── UI → kernel ───────────────────────────────────────────────────────────
 

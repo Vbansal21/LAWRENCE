@@ -13,9 +13,6 @@ const settingsToggle = document.querySelector("#settings-toggle");
 const optionDrawer = document.querySelector("#option-drawer");
 const drawerToggle = document.querySelector("#drawer-toggle");
 const deepSearchToggle = document.querySelector("#deep-search-toggle");
-<<<<<<< HEAD
-const deepSearchDetail = document.querySelector("#deep-search-detail");
-=======
 const voiceListenToggle = document.querySelector("#voice-listen-toggle");
 const SESSION_KEY = "lawrence-ui-session";
 const REMINDERS_KEY = "lawrence-ui-reminders";
@@ -36,7 +33,6 @@ const configSelectors = [
   "#tool-call-limit", "#web-depth", "#citation-mode", "#grammar-schema",
   "#stop-sequences"
 ];
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 const rangeOutputs = [
   ["#temperature", "#temperature-value", 2],
@@ -53,8 +49,6 @@ const state = {
   health: null,
   eventSource: null,
   liveEvents: [],
-<<<<<<< HEAD
-=======
   followedJobs: new Map(),
   seenRemoteJobs: new Set(),
   seenRemoteAnswers: new Set(),
@@ -65,7 +59,6 @@ const state = {
   tasks: { tasks: [], remember: [], counts: { open: 0, done: 0, remember: 0 } },
   history: { items: [], selected: null, text: "", format: "mdx" },
   reminders: [],
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   metrics: {
     queued: 0,
     visual: "idle",
@@ -75,8 +68,6 @@ const state = {
 };
 
 const tauri = window.__TAURI__;
-<<<<<<< HEAD
-=======
 const CONTEXT_REFRESH = {
   screen: {
     kind: "screen",
@@ -104,7 +95,6 @@ const CONTEXT_REFRESH = {
     transcription: "auto"
   }
 };
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 function icon(name) {
   const paths = {
@@ -114,22 +104,6 @@ function icon(name) {
   return `<svg class="avatar-icon" viewBox="0 0 24 24">${paths[name]}</svg>`;
 }
 
-<<<<<<< HEAD
-function render() {
-  state.messages = state.messages.slice(-80);
-  feed.innerHTML = state.messages.map((message) => {
-    const meta = (message.meta || []).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
-    const cursor = message.streaming ? '<span class="cursor"></span>' : "";
-    return `
-      <article class="message ${message.role}">
-        <div class="avatar" aria-hidden="true">${icon(message.role === "user" ? "user" : "assistant")}</div>
-        <div class="message-body">
-          <div class="message-head">
-            <strong>${message.role === "user" ? "You" : "LAWRENCE"}</strong>
-            <time>${message.time || currentTime()}</time>
-          </div>
-          <div class="mdx">${renderMdx(message.text)}${cursor}</div>
-=======
 function render(options = {}) {
   const persist = options.persist !== false;
   state.messages = state.messages.slice(-80);
@@ -151,7 +125,6 @@ function render(options = {}) {
           </div>
           <div class="mdx">${renderMdx(message.text)}${cursor}</div>
           ${sources}
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
           ${meta ? `<div class="meta">${meta}</div>` : ""}
         </div>
       </article>
@@ -160,12 +133,6 @@ function render(options = {}) {
   feed.scrollTop = feed.scrollHeight;
   renderAttachments();
   renderTelemetry();
-<<<<<<< HEAD
-}
-
-function renderAttachments() {
-  const context = state.kernelContext.map((item, index) => `
-=======
   if (persist) saveSessionState();
 }
 
@@ -183,7 +150,6 @@ function renderAttachments() {
     .map((item, index) => ({ item, index }))
     .filter(({ item }) => !["visual", "audio"].includes(item.forceKind))
     .map(({ item, index }) => `
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     <button type="button" class="attachment context" data-type="context" data-index="${index}" title="${escapeHtml(item.action)}">
       <span class="thumb ${escapeAttr(item.kind || "context")}" ${item.thumbnail ? `style="background-image:url('${escapeAttr(item.thumbnail)}')"` : ""}></span>
       <span class="attachment-copy">
@@ -201,11 +167,6 @@ function renderAttachments() {
       </span>
     </button>
   `).join("");
-<<<<<<< HEAD
-  attachmentRow.innerHTML = context + files;
-  attachmentRow.hidden = state.attachments.length === 0 && state.kernelContext.length === 0;
-  renderTelemetry();
-=======
   attachmentRow.innerHTML = live + context + files;
   attachmentRow.hidden = state.attachments.length === 0 && state.kernelContext.length === 0 && !live;
 }
@@ -335,7 +296,6 @@ async function openExternalUrl(url) {
     }
   }
   window.open(url, "_blank", "noopener,noreferrer");
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 }
 
 function renderTelemetry() {
@@ -383,8 +343,6 @@ function setPressed(button) {
   button.classList.toggle("active", active);
 }
 
-<<<<<<< HEAD
-=======
 function applyPressed(selector, active) {
   const button = document.querySelector(selector);
   if (!button) return;
@@ -392,7 +350,6 @@ function applyPressed(selector, active) {
   button.classList.toggle("active", active);
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 function currentTime() {
   return new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }).format(new Date());
 }
@@ -413,21 +370,15 @@ function escapeAttr(value) {
 
 function renderInline(value) {
   let html = escapeHtml(value);
-<<<<<<< HEAD
-=======
   html = html.replace(/!\[([^\]]*)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label, url) => (
     `<img class="mdx-image" src="${escapeAttr(url)}" alt="${escapeAttr(label)}" loading="lazy" />`
   ));
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   html = html.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, (_match, label, url) => (
     `<a href="${escapeAttr(url)}" target="_blank" rel="noreferrer">${label}</a>`
   ));
   html = html.replace(/`([^`]+)`/g, "<code>$1</code>");
   html = html.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-<<<<<<< HEAD
-=======
   html = html.replace(/~~([^~]+)~~/g, "<del>$1</del>");
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   html = html.replace(/\*([^*]+)\*/g, "<em>$1</em>");
   return html;
 }
@@ -485,8 +436,6 @@ function renderMdx(markup) {
       continue;
     }
 
-<<<<<<< HEAD
-=======
     if (isTableStart(lines, i)) {
       const tableLines = [];
       while (i < lines.length && lines[i].trim().startsWith("|")) {
@@ -497,7 +446,6 @@ function renderMdx(markup) {
       continue;
     }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     if (trimmed.startsWith(">")) {
       const quote = [];
       while (i < lines.length && lines[i].trim().startsWith(">")) {
@@ -531,11 +479,7 @@ function renderMdx(markup) {
     const paragraph = [];
     while (i < lines.length) {
       const current = lines[i].trim();
-<<<<<<< HEAD
-      if (!current || current.startsWith("```") || /^(#{1,4})\s+/.test(current) || /^[-*]\s+/.test(current) || /^\d+\.\s+/.test(current) || current.startsWith(">")) {
-=======
       if (!current || current.startsWith("```") || /^(#{1,4})\s+/.test(current) || /^[-*]\s+/.test(current) || /^\d+\.\s+/.test(current) || current.startsWith(">") || isTableStart(lines, i)) {
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         break;
       }
       paragraph.push(lines[i]);
@@ -547,24 +491,6 @@ function renderMdx(markup) {
   return html.join("");
 }
 
-<<<<<<< HEAD
-function configSnapshot() {
-  return {
-    backend: document.querySelector("#backend").value,
-    kernelUrl: document.querySelector("#kernel-url").value,
-    model: document.querySelector("#model-name").value,
-    audio: pressed("#audio-toggle"),
-    video: pressed("#video-toggle"),
-    retrieval: pressed("#retrieval-toggle"),
-    proactive: pressed("#proactive-toggle"),
-    visualContext: pressed("#video-toggle"),
-    audioContext: pressed("#audio-toggle"),
-    deepSearch: pressed("#deep-search-toggle"),
-    responseFormat: "mdx",
-    observers: {
-      audio: pressed("#audio-toggle"),
-      vision: pressed("#video-toggle")
-=======
 function isTableStart(lines, index) {
   const head = lines[index]?.trim() || "";
   const sep = lines[index + 1]?.trim() || "";
@@ -624,7 +550,6 @@ function configSnapshot() {
       audio: audioEnabled,
       voiceListen,
       vision: visualEnabled
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     },
     temperature: Number(document.querySelector("#temperature").value),
     maxTokens: Number(document.querySelector("#max-tokens").value),
@@ -675,8 +600,6 @@ function optionalNumber(selector) {
   return Number.isFinite(value) ? value : null;
 }
 
-<<<<<<< HEAD
-=======
 function selectValue(selector, fallback) {
   const el = document.querySelector(selector);
   return el ? el.value : fallback;
@@ -687,7 +610,6 @@ function inputValue(selector) {
   return el ? el.value.trim() : "";
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 function stopSequences() {
   return document.querySelector("#stop-sequences").value
     .split(",")
@@ -695,8 +617,6 @@ function stopSequences() {
     .filter(Boolean);
 }
 
-<<<<<<< HEAD
-=======
 function readConfigPrefs() {
   try {
     return JSON.parse(window.localStorage.getItem(CONFIG_KEY) || "{}");
@@ -759,7 +679,6 @@ function syncConfigOutputs() {
   syncWebDepthButton();
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 async function sendTurn(text) {
   const config = configSnapshot();
   const turn = {
@@ -772,10 +691,6 @@ async function sendTurn(text) {
   if (config.backend === "Kernel bridge") {
     try {
       streamState.textContent = "Queued";
-<<<<<<< HEAD
-      const queued = await postBridge("/turn/async", { turn });
-      const result = await waitForBridgeJob(queued.jobId, config);
-=======
       const queued = await postBridge("/turn/async", { turn, source: "typed" });
       rememberBridgeJob(queued.jobId, { source: "typed", text });
       const result = await waitForBridgeJob(queued.jobId, config);
@@ -787,43 +702,25 @@ async function sendTurn(text) {
       }
       state.seenRemoteJobs.add(queued.jobId);
       state.followedJobs.delete(queued.jobId);
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
       return {
         text: result.answer || "Kernel returned an empty answer.",
+        sources: result.sources || result.citations || result.assets || [],
         meta: ["kernel bridge", ...(result.events || []).slice(0, 2)]
       };
     } catch (error) {
-<<<<<<< HEAD
-      if (tauri?.core?.invoke) {
-        await invokeTauriTurn(turn);
-      }
-=======
       const native = await invokeTauriTurn(turn);
       if (native) return native;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
       return localDraft(text, config, `bridge unavailable: ${error.message}`);
     }
   }
 
-<<<<<<< HEAD
-  if (tauri?.core?.invoke) {
-    await invokeTauriTurn(turn);
-  }
-=======
   const native = await invokeTauriTurn(turn);
   if (native) return native;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
   return localDraft(text, config, "local draft");
 }
 
 async function invokeTauriTurn(turn) {
-<<<<<<< HEAD
-  try {
-    await tauri.core.invoke("send_turn", { turn });
-  } catch {
-    // Local fallback still renders when native commands are unavailable.
-=======
   if (!tauri?.core?.invoke) return null;
   try {
     // Rust send_turn posts to {kernelUrl}/turn and returns {answer, controls, events}.
@@ -831,6 +728,7 @@ async function invokeTauriTurn(turn) {
     if (result && typeof result === "object" && (result.answer || result.events)) {
       return {
         text: result.answer || "Kernel returned an empty answer.",
+        sources: result.sources || result.citations || result.assets || [],
         meta: ["native bridge", ...((result.events || []).slice(0, 2))]
       };
     }
@@ -838,7 +736,6 @@ async function invokeTauriTurn(turn) {
   } catch {
     // Local fallback still renders when native commands are unavailable.
     return null;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   }
 }
 
@@ -857,26 +754,6 @@ function localDraft(text, config, status) {
   };
 }
 
-<<<<<<< HEAD
-async function postBridge(path, payload) {
-  const base = bridgeBaseUrl();
-  if (!base || typeof window.fetch !== "function") {
-    throw new Error("fetch unavailable");
-  }
-  const response = await window.fetch(`${base}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload)
-  });
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || `HTTP ${response.status}`);
-  }
-  return data;
-}
-
-async function getBridge(path) {
-=======
 // Native-first transport. The WebKitGTK webview under WSLg can silently block
 // fetch() to http://127.0.0.1 (mixed content / CSP), so when running inside
 // Tauri we proxy every call through Rust (ureq). fetch() is only used in the
@@ -896,21 +773,16 @@ async function getBridge(path) {
 }
 
 async function fetchJson(method, path, payload) {
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   const base = bridgeBaseUrl();
   if (!base || typeof window.fetch !== "function") {
     throw new Error("fetch unavailable");
   }
-<<<<<<< HEAD
-  const response = await window.fetch(`${base}${path}`);
-=======
   const opts = { method };
   if (payload != null) {
     opts.headers = { "Content-Type": "application/json" };
     opts.body = JSON.stringify(payload);
   }
   const response = await window.fetch(`${base}${path}`, opts);
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(data.error || `HTTP ${response.status}`);
@@ -920,12 +792,6 @@ async function fetchJson(method, path, payload) {
 
 async function waitForBridgeJob(jobId, config) {
   if (!jobId) throw new Error("bridge did not return a job id");
-<<<<<<< HEAD
-  const timeoutSeconds = config.decoding.timeoutEnabled === false ? 86_400 : (config.decoding.timeout || 300);
-  const timeoutMs = Math.max(10_000, timeoutSeconds * 1000 + 5_000);
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-=======
   const timeoutSeconds = config.decoding.timeoutEnabled === false ? 0 : (config.decoding.timeout || 300);
   const hardTimeoutMs = config.decoding.timeoutEnabled === false
     ? Number.POSITIVE_INFINITY
@@ -937,14 +803,10 @@ async function waitForBridgeJob(jobId, config) {
   let polls = 0;
   while (polls < hardPolls) {
     polls += 1;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     const job = await getBridge(`/jobs/${encodeURIComponent(jobId)}`);
     if (job.state === "done") return job.result || {};
     if (job.state === "error") throw new Error(job.error || "bridge job failed");
     streamState.textContent = job.state === "running" ? "Thinking" : "Queued";
-<<<<<<< HEAD
-    await delay(400);
-=======
     const elapsed = Date.now() - started;
     if (Number.isFinite(hardTimeoutMs) && elapsed >= hardTimeoutMs) break;
     if (elapsed >= softTimeoutMs || polls >= softPolls) {
@@ -955,13 +817,10 @@ async function waitForBridgeJob(jobId, config) {
       };
     }
     await delay(JOB_POLL_MS);
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   }
   throw new Error("bridge job timed out");
 }
 
-<<<<<<< HEAD
-=======
 function rememberBridgeJob(jobId, detail = {}) {
   if (!jobId) return;
   state.followedJobs.set(jobId, {
@@ -977,17 +836,12 @@ function pendingJobMdx(jobId, job = {}) {
   return `## Still Running\n\nThe turn is still running in the background as \`${jobId}\`.\n\n- State: ${job.state || "running"}${elapsedLine}\n- The popup is free again; the final MDX response will attach here when the bridge marks the job done.`;
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function bridgeBaseUrl() {
-<<<<<<< HEAD
-  const raw = document.querySelector("#kernel-url").value.trim();
-=======
   const raw = document.querySelector("#kernel-url")?.value?.trim?.() || "http://127.0.0.1:8765";
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   if (!raw) return "";
   return raw
     .replace(/^ws:/i, "http:")
@@ -995,8 +849,6 @@ function bridgeBaseUrl() {
     .replace(/\/+$/, "");
 }
 
-<<<<<<< HEAD
-=======
 function saveSessionState() {
   try {
     window.localStorage.setItem(SESSION_KEY, JSON.stringify({
@@ -1046,20 +898,11 @@ function restoreSessionState() {
   }
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 async function refreshHealth() {
   try {
     const health = await getBridge("/health");
     state.health = health;
     if (health.eventsUrl) connectEvents(health.eventsUrl);
-<<<<<<< HEAD
-  } catch {
-    state.health = null;
-  }
-  renderTelemetry();
-}
-
-=======
     if (health.voice?.listening) applyPressed("#voice-listen-toggle", true);
     // SSE is best-effort under WSLg; poll tasks here so the panel/badge stay live.
     refreshTasks();
@@ -1136,7 +979,6 @@ function removePendingJobMessage(jobId) {
   if (state.messages.length !== before) render();
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 function connectEvents(url) {
   if (!window.EventSource || state.eventSource?.url === url) return;
   state.eventSource?.close?.();
@@ -1147,11 +989,6 @@ function connectEvents(url) {
       state.liveEvents.push(payload);
       state.liveEvents = state.liveEvents.slice(-10);
       if (payload.type === "status") streamState.textContent = payload.status || streamState.textContent;
-<<<<<<< HEAD
-      if (payload.type === "context" && payload.kind === "audio") state.metrics.transcript = payload.text || "audio update";
-      if (payload.type === "context" && payload.kind === "vision") state.metrics.visual = payload.text || "vision update";
-      if (payload.type === "context" && payload.kind === "turn") state.metrics.transcript = payload.text || "turn update";
-=======
       if (payload.type === "context" && payload.kind === "audio") {
         const heard = extractAudioTranscript(payload.text || "");
         state.voiceTranscript = heard || state.voiceTranscript;
@@ -1167,8 +1004,9 @@ function connectEvents(url) {
         addVoiceUserMessage(heard, ["spoken audio"], `event:${heard.toLowerCase()}`);
       }
       if (payload.type === "tasks") applyTasks(payload);
+      if (payload.type === "delta") onDelta(payload.text);
+      if (payload.type === "finding") onFinding(payload);
       if (payload.type === "response") onRemoteResponse(payload);
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
       renderTelemetry();
     } catch {
       // Ignore malformed SSE frames; the bridge health poll remains authoritative.
@@ -1181,23 +1019,54 @@ function connectEvents(url) {
   state.eventSource = source;
 }
 
-<<<<<<< HEAD
-async function streamAssistant(reply) {
-  const text = typeof reply === "string" ? reply : reply.text;
-  const finalMeta = typeof reply === "string" ? ["local draft"] : reply.meta;
-  state.streaming = true;
-  streamState.textContent = "Streaming";
-  const draft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"] };
-  state.messages.push(draft);
-  render();
+// ── live token streaming (SSE "delta" events from the kernel) ────────────────
+// The kernel streams the answer_text value as it decodes; we accumulate it in a
+// transient draft bubble. The authoritative final answer always arrives through
+// streamAssistant (job result or SSE "response"), which absorbs the draft.
 
-  const chunkSize = text.length > 600 ? 24 : 4;
-  for (let i = 0; i < text.length; i += chunkSize) {
-    const chunk = text.slice(i, i + chunkSize);
-    draft.text += chunk;
-    render();
-    await new Promise((resolve) => setTimeout(resolve, chunk.endsWith(" ") ? 10 : 18));
-=======
+function onDelta(text) {
+  if (!text) return;
+  if (!state.liveDraft) {
+    state.liveDraft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"] };
+    state.messages.push(state.liveDraft);
+    render({ persist: false });
+  }
+  state.liveDraft.text += text;
+  streamState.textContent = "Streaming";
+  const draftBody = feed.querySelector(".message:last-child .mdx");
+  if (draftBody) {
+    draftBody.innerHTML = `${renderMdx(state.liveDraft.text)}<span class="cursor"></span>`;
+    feed.scrollTop = feed.scrollHeight;
+  } else {
+    render({ persist: false });
+  }
+}
+
+function finishLiveDraft() {
+  if (!state.liveDraft) return false;
+  state.messages = state.messages.filter((message) => message !== state.liveDraft);
+  state.liveDraft = null;
+  return true;
+}
+
+// ── proactive findings (SSE "finding" — surfaced unprompted by the kernel) ───
+function onFinding(payload) {
+  const headline = String(payload.headline || "").trim();
+  const insight = String(payload.insight || "").trim();
+  if (!insight) return;
+  const cites = (payload.citations || [])
+    .map((c) => `- [${c.num}] [${(c.title || c.url || "").replace(/[\[\]]/g, "")}](${c.url})`)
+    .join("\n");
+  state.messages.push({
+    role: "assistant",
+    text: `**🔎 ${headline || "LAWRENCE noticed something"}**\n\n${insight}${cites ? `\n\n${cites}` : ""}`,
+    time: currentTime(),
+    meta: ["proactive finding"],
+  });
+  state.metrics.transcript = `finding: ${headline.slice(0, 60)}`;
+  render();
+}
+
 function extractAudioTranscript(text) {
   const raw = String(text || "").trim();
   const quoted = /\[AUDIO\s+[^\]]+\]\s+"([^"]+)"/i.exec(raw);
@@ -1321,26 +1190,51 @@ async function streamAssistant(reply) {
   const normalized = normalizeAssistantReply(reply);
   const text = normalized.text;
   const finalMeta = normalized.meta;
+  // If real token deltas already streamed this answer live, absorb the draft
+  // and render the final text instantly — no typewriter replay.
+  const hadLiveStream = finishLiveDraft();
   state.streaming = true;
   streamState.textContent = "Streaming";
   const draft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"], sources: normalized.sources };
   state.messages.push(draft);
   render({ persist: false });
+  const draftEl = feed.querySelector(".message:last-child");
+  const draftBody = feed.querySelector(".message:last-child .mdx");
 
-  const chunkSize = text.length > 1200 ? 96 : text.length > 420 ? 48 : 12;
+  const chunkSize = hadLiveStream ? Math.max(text.length, 1)
+    : text.length > 1200 ? 128 : text.length > 420 ? 64 : 16;
   for (let i = 0; i < text.length; i += chunkSize) {
     const chunk = text.slice(i, i + chunkSize);
     draft.text += chunk;
-    render({ persist: false });
+    if (draftBody) {
+      draftBody.innerHTML = `${renderMdx(draft.text)}<span class="cursor"></span>`;
+      feed.scrollTop = feed.scrollHeight;
+    } else {
+      render({ persist: false });
+    }
     await new Promise((resolve) => requestAnimationFrame(resolve));
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   }
 
   draft.streaming = false;
   draft.meta = finalMeta || ["ready"];
   state.streaming = false;
   streamState.textContent = "Idle";
-  render();
+  if (draftBody && draftEl) {
+    draftBody.innerHTML = renderMdx(draft.text);
+    const metaHtml = (draft.meta || []).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
+    let metaEl = draftEl.querySelector(".meta");
+    if (metaHtml && !metaEl) {
+      metaEl = document.createElement("div");
+      metaEl.className = "meta";
+      draftEl.querySelector(".message-body")?.append(metaEl);
+    }
+    if (metaEl) metaEl.innerHTML = metaHtml;
+    renderAttachments();
+    renderTelemetry();
+    saveSessionState();
+  } else {
+    render();
+  }
 }
 
 form.addEventListener("submit", async (event) => {
@@ -1361,12 +1255,6 @@ form.addEventListener("submit", async (event) => {
   promptInput.style.height = "";
   render();
 
-<<<<<<< HEAD
-  const response = await sendTurn(text);
-  state.attachments = [];
-  state.kernelContext = [];
-  await streamAssistant(response);
-=======
   state.pendingTurns += 1;
   try {
     const response = await sendTurn(text);
@@ -1376,7 +1264,6 @@ form.addEventListener("submit", async (event) => {
   } finally {
     state.pendingTurns = Math.max(0, state.pendingTurns - 1);
   }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 });
 
 promptInput.addEventListener("keydown", (event) => {
@@ -1386,22 +1273,6 @@ promptInput.addEventListener("keydown", (event) => {
   }
 });
 
-<<<<<<< HEAD
-document.querySelector("#screen-now").addEventListener("click", () => requestKernelContext({
-  kind: "screen",
-  label: "screenshot",
-  action: "capture_screenshot",
-  kernelCommand: "/screenshot",
-  route: "kernel_capture"
-}));
-document.querySelector("#mic-now").addEventListener("click", () => requestKernelContext({
-  kind: "audio",
-  label: "mic sample",
-  action: "record_audio_window",
-  kernelCommand: "/record",
-  route: "kernel_capture"
-}));
-=======
 document.querySelector("#refresh-context").addEventListener("click", ensureSelectedContext);
 
 function closeOptionDrawer() {
@@ -1451,14 +1322,11 @@ function closeHistoryPanel(refocus = false) {
   if (refocus) promptInput.focus();
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 drawerToggle.addEventListener("click", () => {
   const open = optionDrawer.hidden;
   optionDrawer.hidden = !open;
   drawerToggle.setAttribute("aria-expanded", String(open));
   drawerToggle.classList.toggle("active", open);
-<<<<<<< HEAD
-=======
   if (open) {
     closeSettingsTray();
     closeTasksPanel();
@@ -1466,7 +1334,6 @@ drawerToggle.addEventListener("click", () => {
     closeHistoryPanel();
     advancedPanel.hidden = true;
   }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   if (!open) promptInput.focus();
 });
 document.querySelector("#attach-file").addEventListener("click", () => fileInput.click());
@@ -1481,19 +1348,6 @@ urlInput.addEventListener("keydown", (event) => {
   addUrlAttachment();
 });
 
-<<<<<<< HEAD
-for (const id of ["#audio-toggle", "#video-toggle", "#retrieval-toggle", "#proactive-toggle", "#deep-search-toggle", "#deep-search-detail"]) {
-  document.querySelector(id).addEventListener("click", (event) => {
-    setPressed(event.currentTarget);
-    if (id === "#audio-toggle") setKernelObserver("audio", pressed(id));
-    if (id === "#video-toggle") setKernelObserver("vision", pressed(id));
-    if (id === "#deep-search-toggle") syncDeepSearch(true);
-    if (id === "#deep-search-detail") syncDeepSearch(false);
-  });
-}
-
-settingsToggle.addEventListener("click", (event) => {
-=======
 document.addEventListener("click", (event) => {
   const link = event.target.closest("a[href^='http']");
   if (!link) return;
@@ -1538,7 +1392,6 @@ document.querySelector("#video-toggle").addEventListener("click", () => toggleKe
 
 settingsToggle.addEventListener("click", (event) => {
   if (openSidecarPanel(event.shiftKey ? "advanced" : "settings")) return;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   if (event.shiftKey) {
     openAdvanced();
     return;
@@ -1551,8 +1404,6 @@ settingsToggle.addEventListener("click", (event) => {
   settings.hidden = !open;
   settingsToggle.setAttribute("aria-expanded", String(open));
   settingsToggle.classList.toggle("active", open);
-<<<<<<< HEAD
-=======
   if (open) {
     closeOptionDrawer();
     closeTasksPanel();
@@ -1562,27 +1413,20 @@ settingsToggle.addEventListener("click", (event) => {
   } else {
     promptInput.focus();
   }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 });
 settingsToggle.addEventListener("dblclick", openAdvanced);
 
 document.querySelector("#advanced-open").addEventListener("click", openAdvanced);
 document.querySelector("#advanced-open-settings").addEventListener("click", openAdvanced);
 document.querySelector("#advanced-close").addEventListener("click", closeAdvanced);
-<<<<<<< HEAD
-=======
 document.querySelector("#settings-close").addEventListener("click", () => closeSettingsTray(true));
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 fileInput.addEventListener("change", () => addFiles(fileInput.files));
 
 attachmentRow.addEventListener("click", (event) => {
   const button = event.target.closest(".attachment");
   if (!button) return;
-<<<<<<< HEAD
-=======
   if (button.dataset.type === "live") return;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   if (button.dataset.type === "context") {
     state.kernelContext.splice(Number(button.dataset.index), 1);
   } else {
@@ -1636,11 +1480,6 @@ function addUrlAttachment() {
   }
 }
 
-<<<<<<< HEAD
-async function requestKernelContext(request) {
-  const enriched = { ...request, requestedAt: new Date().toISOString() };
-  enriched.thumbnail = fallbackThumb(request.kind);
-=======
 async function toggleKernelContext(kind, buttonSelector, observer) {
   const button = document.querySelector(buttonSelector);
   setPressed(button);
@@ -1686,7 +1525,6 @@ async function requestKernelContext(request, options = {}) {
   if (options.replaceForceKind) {
     state.kernelContext = state.kernelContext.filter((item) => item.forceKind !== options.replaceForceKind);
   }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   state.metrics.queued += 1;
   if (request.kind === "screen") state.metrics.visual = "capture queued";
   if (request.kind === "audio") state.metrics.audio = "record queued";
@@ -1715,11 +1553,7 @@ async function requestKernelContext(request, options = {}) {
 }
 
 function fallbackThumb(kind) {
-<<<<<<< HEAD
-  const label = kind === "audio" || kind === "audio file" ? "AUD" : kind === "screen" || kind === "image" || kind === "video" ? "VIS" : "DOC";
-=======
   const label = kind === "audio" || kind === "audio file" ? "AUD" : kind === "transcript" ? "TXT" : kind === "screen" || kind === "image" || kind === "video" ? "VIS" : "DOC";
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   const color = label === "AUD" ? "#d6ad55" : label === "VIS" ? "#76d083" : "#a8b2aa";
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="72" height="44" viewBox="0 0 72 44"><rect width="72" height="44" rx="12" fill="#141916"/><rect x="1" y="1" width="70" height="42" rx="11" fill="none" stroke="${color}" stroke-opacity=".45"/><text x="36" y="27" text-anchor="middle" font-family="system-ui, sans-serif" font-size="12" font-weight="700" fill="${color}">${label}</text></svg>`;
   return `data:image/svg+xml,${encodeURIComponent(svg)}`;
@@ -1737,21 +1571,6 @@ async function setKernelObserver(observer, enabled) {
   }
 }
 
-<<<<<<< HEAD
-function syncDeepSearch(fromMain) {
-  const source = fromMain ? deepSearchToggle : deepSearchDetail;
-  const target = fromMain ? deepSearchDetail : deepSearchToggle;
-  const active = source.getAttribute("aria-pressed") === "true";
-  target.setAttribute("aria-pressed", String(active));
-  target.classList.toggle("active", active);
-  if (active && !pressed("#retrieval-toggle")) {
-    const retrieval = document.querySelector("#retrieval-toggle");
-    retrieval.setAttribute("aria-pressed", "true");
-    retrieval.classList.add("active");
-  }
-}
-
-=======
 async function setVoiceListen(enabled) {
   try {
     await postBridge("/voice/listen", { enabled, config: configSnapshot() });
@@ -1774,7 +1593,6 @@ function syncWebDepthButton() {
   deepSearchToggle.title = active ? "Deep web research active; click for shallow search" : "Shallow web search active; click for deep research";
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 function classifyFile(file) {
   const name = file.name || "attachment";
   const extension = (name.split(".").pop() || "").toLowerCase();
@@ -1859,8 +1677,6 @@ for (const [inputSelector, outputSelector, digits] of rangeOutputs) {
   const output = document.querySelector(outputSelector);
   input.addEventListener("input", () => {
     output.value = Number(input.value).toFixed(digits);
-<<<<<<< HEAD
-=======
     writeConfigPrefs();
   });
 }
@@ -1876,17 +1692,12 @@ for (const selector of configSelectors) {
       document.querySelector("#timeout").disabled = !el.checked;
     }
     writeConfigPrefs();
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   });
 }
 
 function readUiPrefs() {
   try {
-<<<<<<< HEAD
-    return JSON.parse(localStorage.getItem("lawrence-ui-prefs") || "{}");
-=======
     return JSON.parse(window.localStorage.getItem("lawrence-ui-prefs") || "{}");
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   } catch {
     return {};
   }
@@ -1894,16 +1705,10 @@ function readUiPrefs() {
 
 function writeUiPrefs() {
   try {
-<<<<<<< HEAD
-    localStorage.setItem("lawrence-ui-prefs", JSON.stringify({
-      zoom: document.querySelector("#content-zoom").value,
-      font: document.querySelector("#font-size").value
-=======
     window.localStorage.setItem("lawrence-ui-prefs", JSON.stringify({
       zoom: document.querySelector("#content-zoom").value,
       font: document.querySelector("#font-size").value,
       surface: document.querySelector("#surface-opacity").value
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     }));
   } catch {
     // Preferences are optional; the controls still work for this session.
@@ -1913,24 +1718,13 @@ function writeUiPrefs() {
 function applyUiPrefs() {
   const zoom = Number(document.querySelector("#content-zoom").value || 100);
   const font = Number(document.querySelector("#font-size").value || 13);
-<<<<<<< HEAD
-  document.documentElement.style.setProperty("--ui-zoom", String(zoom / 100));
-  document.documentElement.style.setProperty("--message-font", `${font}px`);
-  document.querySelector("#content-zoom-value").value = `${zoom}%`;
-  document.querySelector("#font-size-value").value = String(font);
-=======
   const surface = Number(document.querySelector("#surface-opacity").value || 88);
   const scale = Math.max(0.85, Math.min(1.25, zoom / 100));
   const launcher = document.querySelector(".launcher");
   document.documentElement.style.setProperty("--ui-zoom", String(scale));
   document.documentElement.style.setProperty("--surface-alpha", String(Math.max(0.64, Math.min(0.96, surface / 100))));
   document.documentElement.style.setProperty("--message-font", `${font}px`);
-  if (launcher && !PANEL_MODE) {
-    launcher.style.transform = `scale(${scale})`;
-    launcher.style.transformOrigin = "top left";
-    launcher.style.width = `${100 / scale}%`;
-    launcher.style.height = `${100 / scale}vh`;
-  } else if (launcher) {
+  if (launcher) {
     launcher.style.transform = "";
     launcher.style.width = "";
     launcher.style.height = "";
@@ -1938,7 +1732,6 @@ function applyUiPrefs() {
   document.querySelector("#content-zoom-value").value = `${zoom}%`;
   document.querySelector("#font-size-value").value = String(font);
   document.querySelector("#surface-opacity-value").value = `${surface}%`;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   writeUiPrefs();
 }
 
@@ -1946,41 +1739,29 @@ function initUiPrefs() {
   const prefs = readUiPrefs();
   if (prefs.zoom) document.querySelector("#content-zoom").value = prefs.zoom;
   if (prefs.font) document.querySelector("#font-size").value = prefs.font;
-<<<<<<< HEAD
-=======
   if (prefs.surface) document.querySelector("#surface-opacity").value = prefs.surface;
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   applyUiPrefs();
 }
 
 document.querySelector("#content-zoom").addEventListener("input", applyUiPrefs);
 document.querySelector("#font-size").addEventListener("input", applyUiPrefs);
-<<<<<<< HEAD
-=======
 document.querySelector("#surface-opacity").addEventListener("input", applyUiPrefs);
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 document.querySelector("#timeout-enabled").addEventListener("change", (event) => {
   document.querySelector("#timeout").disabled = !event.currentTarget.checked;
 });
 
-<<<<<<< HEAD
-=======
 window.addEventListener("storage", (event) => {
   if (event.key === CONFIG_KEY) applyConfigPrefs();
   if (event.key === "lawrence-ui-prefs") applyUiPrefs();
 });
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 promptInput.addEventListener("input", () => {
   promptInput.style.height = "";
   promptInput.style.height = `${Math.min(promptInput.scrollHeight, 96)}px`;
 });
 
 document.addEventListener("keydown", async (event) => {
-<<<<<<< HEAD
-  if (event.key !== "Escape") return;
-=======
   if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === "l") {
     event.preventDefault();
     await ensureWindowActive();
@@ -2006,29 +1787,16 @@ document.addEventListener("keydown", async (event) => {
     closeHistoryPanel(true);
     return;
   }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   if (!advancedPanel.hidden) {
     closeAdvanced();
     return;
   }
   if (!settings.hidden) {
-<<<<<<< HEAD
-    settings.hidden = true;
-    settingsToggle.setAttribute("aria-expanded", "false");
-    settingsToggle.classList.remove("active");
-    return;
-  }
-  if (!optionDrawer.hidden) {
-    optionDrawer.hidden = true;
-    drawerToggle.setAttribute("aria-expanded", "false");
-    drawerToggle.classList.remove("active");
-=======
     closeSettingsTray(true);
     return;
   }
   if (!optionDrawer.hidden) {
     closeOptionDrawer();
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     promptInput.focus();
     return;
   }
@@ -2040,12 +1808,6 @@ document.addEventListener("keydown", async (event) => {
 });
 
 function openAdvanced() {
-<<<<<<< HEAD
-  advancedPanel.hidden = false;
-  settings.hidden = true;
-  settingsToggle.setAttribute("aria-expanded", "true");
-  settingsToggle.classList.add("active");
-=======
   if (openSidecarPanel("advanced")) return;
   closeTasksPanel();
   closeRemindersPanel();
@@ -2053,26 +1815,20 @@ function openAdvanced() {
   closeOptionDrawer();
   advancedPanel.hidden = false;
   closeSettingsTray();
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   document.querySelector("#top-p").focus();
 }
 
 function closeAdvanced() {
-<<<<<<< HEAD
-=======
   if (PANEL_MODE === "advanced") {
     closeCurrentPanel();
     return;
   }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
   advancedPanel.hidden = true;
   settingsToggle.setAttribute("aria-expanded", "false");
   settingsToggle.classList.remove("active");
   promptInput.focus();
 }
 
-<<<<<<< HEAD
-=======
 function openSidecarPanel(panel) {
   if (PANEL_MODE || !tauri?.core?.invoke) return false;
   closeOptionDrawer();
@@ -2101,7 +1857,6 @@ async function closeCurrentPanel() {
   return true;
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 function focusPrompt() {
   setTimeout(() => {
     promptInput.focus();
@@ -2130,19 +1885,6 @@ async function dismissWindow() {
   await win?.hide?.();
 }
 
-<<<<<<< HEAD
-initUiPrefs();
-render();
-focusPrompt();
-refreshHealth();
-setInterval(refreshHealth, 3_000);
-window.addEventListener("focus", focusPrompt);
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden) focusPrompt();
-});
-const launcherShown = tauri?.event?.listen?.("launcher-shown", focusPrompt);
-launcherShown?.catch?.(() => {});
-=======
 // ── tasks & memory ────────────────────────────────────────────────────────
 async function refreshTasks() {
   try {
@@ -2536,4 +2278,3 @@ if (PANEL_MODE) {
   const launcherShown = tauri?.event?.listen?.("launcher-shown", focusPrompt);
   launcherShown?.catch?.(() => {});
 }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)

@@ -18,19 +18,27 @@ Cargo.lock
 .vscode/
 .idea/
 .DS_Store
+.codex
+.claude
+.agents
+LAWRENCE.code-workspace
 
 # Runtime
 .runtime/
-logs/
+./logs/
 *.log
 .pid
 .env
 infra/n8n/.env
 
 # Local data / large artifacts
-memory/vault/
-models/
+models/local/*
 third_party/
 .local/
 .history/
 .sixth/
+memory/*.*
+memory/journal/*.*
+memory/logs/*.*
+memory/vault/*.*
+!memory/vault/.gitkeep

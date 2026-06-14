@@ -27,10 +27,13 @@ from typing import Any
 from ..ctx      import ContextStore
 from ..ctx      import distill as D
 from ..logger   import write_turn
-from ..model    import call_model, audio_block, image_block, text_block
+from ..model    import (
+    PRI_COMPACT, PRI_PROACTIVE,
+    audio_block, call_model, image_block, note_fallback_parse, text_block,
+)
 from ..retrieval import RetrievalPipeline, format_snippets, format_for_model, format_citations
 from ..ui       import UIConnector
-from .          import prompts
+from .          import prompts, schemas
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 # Journal files live under memory/journal/ — assembled by lk.admin (MDX writer).
@@ -82,6 +85,87 @@ def _fallback_response(text: str) -> dict[str, Any]:
     }
 
 
+class AnswerTextStreamer:
+    """Streams the *value* of "answer_text" out of an incrementally-decoded
+    JSON envelope (the RESPONSE schema puts answer_text first, and grammar
+    enforcement preserves property order — see kernel/schemas.py).
+
+    feed() receives raw model deltas (JSON fragments); emit receives clean,
+    unescaped answer text. Escape sequences and the key itself may straddle
+    chunk boundaries — the internal buffer handles both. If the output never
+    turns out to be JSON (schema fallback), nothing is emitted and the caller's
+    final non-streamed rendering is unaffected.
+    """
+
+    _KEY = '"answer_text"'
+    _ESC = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "\\": "\\", "/": "/",
+            "b": "\b", "f": "\f"}
+
+    def __init__(self, emit: Callable[[str], None]) -> None:
+        self._emit  = emit
+        self._buf   = ""
+        self._state = 0   # 0 seek key · 1 seek opening quote · 2 in string · 3 done
+        self.emitted = False
+
+    def feed(self, chunk: str) -> None:
+        if self._state == 3 or not chunk:
+            return
+        self._buf += chunk
+        if self._state == 0:
+            i = self._buf.find(self._KEY)
+            if i < 0:
+                self._buf = self._buf[-(len(self._KEY) - 1):] if self._buf else ""
+                return
+            self._buf = self._buf[i + len(self._KEY):]
+            self._state = 1
+        if self._state == 1:
+            j = 0
+            while j < len(self._buf) and self._buf[j] in " \t\r\n:":
+                j += 1
+            if j >= len(self._buf):
+                self._buf = ""
+                return
+            if self._buf[j] != '"':
+                self._state = 3          # malformed — stop streaming, stay safe
+                return
+            self._buf = self._buf[j + 1:]
+            self._state = 2
+        if self._state == 2:
+            out: list[str] = []
+            i, n = 0, len(self._buf)
+            while i < n:
+                c = self._buf[i]
+                if c == "\\":
+                    if i + 1 >= n:
+                        break                         # escape straddles chunks — wait
+                    e = self._buf[i + 1]
+                    if e == "u":
+                        if i + 6 > n:
+                            break
+                        try:
+                            out.append(chr(int(self._buf[i + 2:i + 6], 16)))
+                        except ValueError:
+                            pass
+                        i += 6
+                        continue
+                    out.append(self._ESC.get(e, e))
+                    i += 2
+                    continue
+                if c == '"':                          # unescaped close — value done
+                    if out:
+                        self._emit("".join(out))
+                        self.emitted = True
+                    self._state = 3
+                    self._buf = ""
+                    return
+                out.append(c)
+                i += 1
+            if out:
+                self._emit("".join(out))
+                self.emitted = True
+            self._buf = self._buf[i:]
+
+
 # ── message builder ───────────────────────────────────────────────────────────
 
 def _build_messages(
@@ -113,16 +197,6 @@ class TurnConfig:
     allow_images:      bool        = True   # False for text-only / non-vision models
     allow_audio:       bool        = True   # False for models without audio input
     # Advanced sampling — None = use backend default (omitted from payload)
-<<<<<<< HEAD
-    top_p:             float | None = None
-    min_p:             float | None = None
-    top_k:             int   | None = None
-    repeat_penalty:    float | None = None
-    presence_penalty:  float | None = None
-    frequency_penalty: float | None = None
-    seed:              int   | None = None
-    stop_sequences:    list[str] | None = None
-=======
     top_p:              float | None = None
     min_p:              float | None = None
     top_k:              int   | None = None
@@ -140,7 +214,6 @@ class TurnConfig:
     dry_allowed_length: int   | None = None
     seed:               int   | None = None
     stop_sequences:     list[str] | None = None
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 
 # ── main turn ─────────────────────────────────────────────────────────────────
@@ -157,6 +230,7 @@ def run_turn(
     capture_fn: Callable[[], Path | None] | None = None,
     live_fn:    Callable[[str], None]     | None = None,
     tasks_fn:   Callable[[dict], None]    | None = None,
+    stream_fn:  Callable[[str], None]     | None = None,
 ) -> tuple[str, dict]:
     turn_id  = f"t-{next(_turn_ctr):04d}"
     ts_start = time.monotonic()
@@ -182,6 +256,7 @@ def run_turn(
             raw = call_model(
                 _build_messages(prompts.ANALYSIS, body, images, audios),
                 max_tokens=768, temperature=0.1, timeout=cfg.timeout,
+                schema=schemas.ANALYSIS, role="analysis",
             )
             parsed = _extract_json(raw.get("text", ""))
             if parsed and "needs_retrieval" in parsed:
@@ -220,27 +295,30 @@ def run_turn(
 
     _sampling = dict(
         top_p=cfg.top_p, min_p=cfg.min_p, top_k=cfg.top_k,
-<<<<<<< HEAD
-        repeat_penalty=cfg.repeat_penalty,
-        presence_penalty=cfg.presence_penalty, frequency_penalty=cfg.frequency_penalty,
-=======
         typical_p=cfg.typical_p, tfs_z=cfg.tfs_z,
         repeat_penalty=cfg.repeat_penalty, repeat_last_n=cfg.repeat_last_n,
         presence_penalty=cfg.presence_penalty, frequency_penalty=cfg.frequency_penalty,
         mirostat=cfg.mirostat, mirostat_tau=cfg.mirostat_tau, mirostat_eta=cfg.mirostat_eta,
         dry_multiplier=cfg.dry_multiplier, dry_base=cfg.dry_base,
         dry_allowed_length=cfg.dry_allowed_length,
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         seed=cfg.seed, stop=cfg.stop_sequences or None,
     )
+    # Live answer streaming: deltas are raw JSON fragments; the streamer
+    # extracts only the answer_text value (schemas.RESPONSE puts it first).
+    answer_stream = AnswerTextStreamer(stream_fn) if stream_fn else None
     try:
         raw_resp = call_model(
             _build_messages(prompts.RESPONSE, "\n\n".join(parts), images, audios),
             max_tokens=cfg.max_tokens, temperature=cfg.temperature, timeout=cfg.timeout,
+            schema=schemas.RESPONSE, role="response",
+            stream_fn=answer_stream.feed if answer_stream else None,
             **_sampling,
         )
         resp_text = raw_resp.get("text", "")
-        response  = _extract_json(resp_text) or _fallback_response(resp_text)
+        response  = _extract_json(resp_text)
+        if response is None:
+            note_fallback_parse()
+            response = _fallback_response(resp_text)
     except Exception as e:
         response = _fallback_response(str(e))
 
@@ -260,10 +338,12 @@ def run_turn(
                 parts2.append(f"[SITUATION] {analysis['situation']}")
             parts2.append(f"USER QUESTION: {user_text}")
             try:
+                # No streaming on the expansion pass — its answer replaces the
+                # first one; streaming both would duplicate text in the UI.
                 raw2 = call_model(
                     _build_messages(prompts.RESPONSE, "\n\n".join(parts2), images, audios),
                     max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-                    timeout=cfg.timeout, **_sampling,
+                    timeout=cfg.timeout, schema=schemas.RESPONSE, role="response", **_sampling,
                 )
                 t2 = raw2.get("text", "")
                 response = _extract_json(t2) or response
@@ -348,9 +428,12 @@ def run_proactive(
     if tail == "(no context yet)":
         return
     try:
+        # PRI_PROACTIVE is droppable: if the local inference slot is busy the
+        # call returns empty text ("skipped") and we simply bail out below.
         raw = call_model(
             _build_messages(prompts.PROACTIVE, tail, [], []),
             max_tokens=512, temperature=0.1,   # headroom for the thinking block
+            schema=schemas.PROACTIVE, priority=PRI_PROACTIVE, role="proactive",
         )
         parsed = _extract_json(raw.get("text", ""))
     except Exception:
@@ -375,6 +458,7 @@ def run_proactive(
         raw2 = call_model(
             _build_messages(prompts.PROACTIVE_BRIEF, body, [], []),
             max_tokens=1024, temperature=0.2,
+            schema=schemas.PROACTIVE_BRIEF, priority=PRI_PROACTIVE, role="proactive",
         )
         brief = _extract_json(raw2.get("text", ""))
     except Exception:
@@ -422,6 +506,7 @@ def run_compaction(events_text: str, level: str) -> str:
         raw = call_model(
             _build_messages(prompt, events_text, [], []),
             max_tokens=max_tok, temperature=0.1,
+            priority=PRI_COMPACT, role="compact",
         )
         return raw.get("text", "").strip()
     except Exception:
@@ -450,7 +535,7 @@ def write_journal_entry(ctx: ContextStore) -> str:
         # ceiling isn't wasteful — it just guarantees room to reach the answer.
         raw = call_model(
             _build_messages(prompts.JOURNAL, tail, [], []),
-            max_tokens=2048, temperature=0.3,
+            max_tokens=2048, temperature=0.3, role="journal",
         )
         entry = raw.get("text", "").strip()
     except Exception:

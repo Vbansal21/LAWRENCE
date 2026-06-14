@@ -1,112 +1,89 @@
-<<<<<<< HEAD
-use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicBool, Ordering};
-use tauri::{Emitter, Manager, WebviewWindow};
-=======
-use std::{process::Command, sync::atomic::{AtomicBool, Ordering}};
+use std::{
+    fs,
+    path::PathBuf,
+    process::Command,
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
+};
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     AppHandle, Emitter, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
 static LAUNCHER_VISIBLE: AtomicBool = AtomicBool::new(false);
+static LAST_TOGGLE_MS: AtomicU64 = AtomicU64::new(0);
 
-<<<<<<< HEAD
-#[derive(Debug, Deserialize, Serialize)]
-struct TurnRequest {
-    text: String,
-    attachments: Vec<Attachment>,
-    kernel_context: Vec<KernelContextRequest>,
-    config: TurnConfig,
+/// True when this toggle arrived <400ms after the previous one — the in-app
+/// X11 hotkey and the Windows-host hotkey can both fire for one keypress, and
+/// a double toggle is a visible no-op.
+fn toggle_debounced() -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0);
+    let last = LAST_TOGGLE_MS.swap(now, Ordering::SeqCst);
+    now.saturating_sub(last) < 400
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Attachment {
-    kind: String,
-    name: String,
-    size: u64,
-    mime: String,
-    extension: String,
-    path: String,
-    source: String,
-    route: String,
-    converter: String,
+fn host_config() -> Option<serde_json::Value> {
+    for path in host_config_paths() {
+        let Ok(raw) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
+            continue;
+        };
+        return Some(value);
+    }
+    None
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct KernelContextRequest {
-    kind: String,
-    label: String,
-    action: String,
-    kernel_command: String,
-    route: String,
-    requested_at: Option<String>,
+fn host_config_paths() -> Vec<PathBuf> {
+    let mut paths = Vec::new();
+    if let Some(path) = std::env::var_os("LAWRENCE_HOST_UI_CONFIG") {
+        paths.push(PathBuf::from(path));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            paths.push(dir.join("config").join("host-ui.json"));
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        paths.push(
+            PathBuf::from(local)
+                .join("LAWRENCE")
+                .join("config")
+                .join("host-ui.json"),
+        );
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        paths.push(
+            PathBuf::from(home)
+                .join(".config")
+                .join("lawrence")
+                .join("host-ui.json"),
+        );
+    }
+    paths
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct TurnConfig {
-    backend: String,
-    kernel_url: String,
-    model: String,
-    audio: bool,
-    video: bool,
-    visual_context: bool,
-    audio_context: bool,
-    deep_search: bool,
-    observers: ObserverConfig,
-    retrieval: bool,
-    proactive: bool,
-    temperature: f32,
-    max_tokens: u32,
-    context_budget: u32,
-    mode: String,
-    decoding: DecodingConfig,
+fn config_str(config: &serde_json::Value, path: &[&str]) -> Option<String> {
+    let mut value = config;
+    for key in path {
+        value = value.get(*key)?;
+    }
+    value.as_str().map(str::to_string)
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct ObserverConfig {
-    audio: bool,
-    vision: bool,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct DecodingConfig {
-    top_p: f32,
-    min_p: f32,
-    typical_p: f32,
-    top_k: u32,
-    repeat_penalty: f32,
-    presence_penalty: f32,
-    frequency_penalty: f32,
-    seed: Option<i64>,
-    timeout: u32,
-    stop_sequences: Vec<String>,
-}
-
-=======
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 fn bridge_url() -> String {
-    std::env::var("LAWRENCE_BRIDGE_URL").unwrap_or_else(|_| "http://127.0.0.1:8765".to_string())
+    std::env::var("LAWRENCE_BRIDGE_URL")
+        .ok()
+        .or_else(|| host_config().and_then(|config| config_str(&config, &["bridge", "httpUrl"])))
+        .unwrap_or_else(|| "http://127.0.0.1:8765".to_string())
 }
 
 #[tauri::command]
-<<<<<<< HEAD
-fn send_turn(turn: TurnRequest) -> Result<serde_json::Value, String> {
-    let base = turn.config.kernel_url.trim_end_matches('/').to_string();
-    let url = format!("{base}/turn");
-    let body = serde_json::to_value(&turn).map_err(|e| format!("serialise: {e}"))?;
-    ureq::post(&url)
-        .set("Content-Type", "application/json")
-        .send_json(body)
-=======
 fn send_turn(turn: serde_json::Value) -> Result<serde_json::Value, String> {
     let base = turn
         .get("config")
@@ -118,27 +95,17 @@ fn send_turn(turn: serde_json::Value) -> Result<serde_json::Value, String> {
     ureq::post(&url)
         .set("Content-Type", "application/json")
         .send_json(turn)
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         .map_err(|e| format!("bridge unreachable: {e}"))?
         .into_json::<serde_json::Value>()
         .map_err(|e| format!("bridge response parse: {e}"))
 }
 
 #[tauri::command]
-<<<<<<< HEAD
-fn request_kernel_context(request: KernelContextRequest) -> Result<serde_json::Value, String> {
-    let url = format!("{}/context", bridge_url().trim_end_matches('/'));
-    let body = serde_json::to_value(&request).map_err(|e| format!("serialise: {e}"))?;
-    ureq::post(&url)
-        .set("Content-Type", "application/json")
-        .send_json(body)
-=======
 fn request_kernel_context(request: serde_json::Value) -> Result<serde_json::Value, String> {
     let url = format!("{}/context", bridge_url().trim_end_matches('/'));
     ureq::post(&url)
         .set("Content-Type", "application/json")
         .send_json(request)
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         .map_err(|e| format!("bridge unreachable: {e}"))?
         .into_json::<serde_json::Value>()
         .map_err(|e| format!("bridge response parse: {e}"))
@@ -156,8 +123,6 @@ fn set_kernel_observer(observer: String, enabled: bool) -> Result<serde_json::Va
         .map_err(|e| format!("bridge response parse: {e}"))
 }
 
-<<<<<<< HEAD
-=======
 // Generic HTTP proxy to the Python bridge. The WebKitGTK webview under WSLg can
 // block fetch()/EventSource to http://127.0.0.1 (mixed-content / CSP), so the UI
 // routes ALL bridge calls through these native commands instead — ureq has no
@@ -229,17 +194,22 @@ fn open_url(url: String) -> Result<(), String> {
     Err("no URL opener found".to_string())
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 fn launcher_hotkey() -> String {
-    std::env::var("LAWRENCE_HOTKEY").unwrap_or_else(|_| "Ctrl+Shift+L".to_string())
+    std::env::var("LAWRENCE_HOTKEY")
+        .ok()
+        .or_else(|| host_config().and_then(|config| config_str(&config, &["ui", "hotkey"])))
+        .unwrap_or_else(|| "Ctrl+Shift+L".to_string())
 }
 
-<<<<<<< HEAD
-=======
 fn launcher_hotkey_candidates() -> Vec<String> {
     let primary = launcher_hotkey();
     let mut out = Vec::new();
-    for combo in [primary.as_str(), "Control+Shift+L", "Ctrl+Shift+L", "CommandOrControl+Shift+L"] {
+    for combo in [
+        primary.as_str(),
+        "Control+Shift+L",
+        "Ctrl+Shift+L",
+        "CommandOrControl+Shift+L",
+    ] {
         if !out.iter().any(|item| item == combo) {
             out.push(combo.to_string());
         }
@@ -247,51 +217,108 @@ fn launcher_hotkey_candidates() -> Vec<String> {
     out
 }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 fn hide_on_blur() -> bool {
-    std::env::var("LAWRENCE_HIDE_ON_BLUR")
-        .map(|value| !matches!(value.as_str(), "0" | "false" | "False" | "no" | "off"))
+    if let Ok(value) = std::env::var("LAWRENCE_HIDE_ON_BLUR") {
+        return !matches!(value.as_str(), "0" | "false" | "False" | "no" | "off");
+    }
+    host_config()
+        .and_then(|config| {
+            config
+                .get("ui")
+                .and_then(|ui| ui.get("hideOnBlur"))
+                .and_then(|value| value.as_bool())
+        })
         .unwrap_or(false)
 }
 
 fn show_launcher(window: &WebviewWindow) {
     let _ = window.unminimize();
     let _ = window.show();
-<<<<<<< HEAD
-    let _ = window.center();
-=======
-    // Re-assert stacking without recentering, so a user-moved window stays put.
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
+    // Re-assert stacking without recentering, so a user-moved window stays put…
     let _ = window.set_visible_on_all_workspaces(true);
     let _ = window.set_always_on_top(false);
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
+    // …unless the window ended up off every monitor (WSLg restores can park it
+    // at coordinates the user can't see) — then recenter so "show" is visible.
+    if let (Ok(pos), Ok(size)) = (window.outer_position(), window.outer_size()) {
+        let on_screen = window
+            .current_monitor()
+            .ok()
+            .flatten()
+            .map(|m| {
+                let mp = m.position();
+                let ms = m.size();
+                pos.x + (size.width as i32) > mp.x
+                    && pos.x < mp.x + ms.width as i32
+                    && pos.y + (size.height as i32) > mp.y
+                    && pos.y < mp.y + ms.height as i32
+            })
+            .unwrap_or(true);
+        if !on_screen {
+            let _ = window.center();
+        }
+    }
     let _ = window.emit("launcher-shown", ());
     LAUNCHER_VISIBLE.store(true, Ordering::SeqCst);
 }
 
 fn dismiss_launcher(window: &WebviewWindow) {
-<<<<<<< HEAD
+    // hide() (unmap), not minimize(): minimized Xwayland windows under WSLg
+    // often refuse to unminimize, which made "show" a silent no-op.
     let _ = window.hide();
-=======
-    let _ = window.minimize();
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     LAUNCHER_VISIBLE.store(false, Ordering::SeqCst);
 }
 
 fn toggle_launcher(app: &tauri::AppHandle) {
+    if toggle_debounced() {
+        return;
+    }
     let Some(window) = app.get_webview_window("main") else {
         return;
     };
-<<<<<<< HEAD
-    if LAUNCHER_VISIBLE.load(Ordering::SeqCst) && window.is_focused().unwrap_or(false) {
-        eprintln!("LAWRENCE hotkey: dismiss");
+    let visible = LAUNCHER_VISIBLE.load(Ordering::SeqCst) && window.is_visible().unwrap_or(true);
+    if visible {
+        eprintln!("LAWRENCE hotkey: hide");
+        close_panels(app);
         dismiss_launcher(&window);
     } else {
         eprintln!("LAWRENCE hotkey: show");
-=======
-    eprintln!("LAWRENCE hotkey: show");
-    show_launcher(&window);
+        show_launcher(&window);
+    }
+}
+
+/// Loopback control socket (127.0.0.1:$LAWRENCE_CONTROL_PORT, default 8767).
+/// One line per connection: "show" | "hide" | "toggle". Lets desktopctl and the
+/// Windows-host hotkey reach the RUNNING app instead of restarting it — under
+/// WSLg the in-app X11 hotkey only fires while a WSLg window has focus, so the
+/// real global summon comes from the Windows side through this socket.
+fn spawn_control_listener(app: AppHandle) {
+    std::thread::spawn(move || {
+        use std::io::{BufRead, BufReader};
+        let port: u16 = std::env::var("LAWRENCE_CONTROL_PORT")
+            .ok()
+            .and_then(|p| p.parse().ok())
+            .unwrap_or(8767);
+        let listener = match std::net::TcpListener::bind(("127.0.0.1", port)) {
+            Ok(l) => l,
+            Err(err) => {
+                eprintln!("control listener: 127.0.0.1:{port} unavailable ({err})");
+                return;
+            }
+        };
+        eprintln!("control listener: 127.0.0.1:{port} (show|hide|toggle)");
+        for stream in listener.incoming() {
+            let Ok(stream) = stream else { continue };
+            let mut line = String::new();
+            let _ = BufReader::new(stream).read_line(&mut line);
+            match line.trim().to_ascii_lowercase().as_str() {
+                "show" => show_from_app(&app),
+                "hide" | "dismiss" => dismiss_from_app(&app),
+                _ => toggle_launcher(&app),
+            }
+        }
+    });
 }
 
 fn show_from_app(app: &tauri::AppHandle) {
@@ -433,19 +460,11 @@ fn toggle_window(window: WebviewWindow) {
         close_panels(window.app_handle());
         dismiss_launcher(&window);
     } else {
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         show_launcher(&window);
     }
 }
 
 #[tauri::command]
-<<<<<<< HEAD
-fn dismiss_window(window: WebviewWindow) {
-    dismiss_launcher(&window);
-}
-
-fn main() {
-=======
 fn show_window(window: WebviewWindow) {
     show_launcher(&window);
 }
@@ -467,7 +486,6 @@ fn main() {
         }
     }
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     tauri::Builder::default()
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -479,14 +497,7 @@ fn main() {
                 .build(),
         )
         .setup(|app| {
-<<<<<<< HEAD
-            let hotkey = launcher_hotkey();
-            if let Err(error) = app.global_shortcut().register(hotkey.as_str()) {
-                eprintln!("failed to register LAWRENCE_HOTKEY={hotkey}: {error}");
-            }
-            if let Some(window) = app.get_webview_window("main") {
-                show_launcher(&window);
-=======
+            spawn_control_listener(app.handle().clone());
             // Register the common accelerator spellings instead of stopping at
             // the first accepted one. Some Linux/WSLg stacks accept one spelling
             // but deliver another.
@@ -518,7 +529,6 @@ fn main() {
                 {
                     window.open_devtools();
                 }
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
             }
             Ok(())
         })
@@ -532,9 +542,6 @@ fn main() {
             send_turn,
             request_kernel_context,
             set_kernel_observer,
-<<<<<<< HEAD
-            dismiss_window
-=======
             bridge_get,
             bridge_post,
             open_url,
@@ -543,7 +550,6 @@ fn main() {
             close_panel,
             toggle_window,
             show_window
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         ])
         .run(tauri::generate_context!())
         .expect("failed to run LAWRENCE desktop");

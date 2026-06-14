@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import array
 import math
+import os
 import shutil
 import subprocess
 import threading
@@ -28,12 +29,45 @@ from ..ctx import distill as D
 WINDOW_SECONDS       = 4.0
 POLL_INTERVAL        = 4.0
 SAMPLE_RATE          = 16_000
-SILENCE_DB           = -42.0
+# WSLg's RDP virtual mic captures at a low level; -42 dB rejected real speech.
+# -55 lets quiet speech through to whisper (which has its own VAD), tunable via
+# LK_AUDIO_SILENCE_DB. Gain normalization (below) then boosts it for whisper.
+SILENCE_DB           = float(os.environ.get("LK_AUDIO_SILENCE_DB", "-55"))
+NORMALIZE_PEAK_DB    = -3.0   # boost quiet captures to this peak before transcribe
 MAX_WAV_KEEP         = 5
 MAX_RECENT_KEEP      = 12   # recent transcripts kept for dedup gate
 
 
 # ── recording ─────────────────────────────────────────────────────────────────
+
+def _parec(out: Path, secs: float) -> bool:
+    """Native PulseAudio capture via parec — the recorder that works on WSLg
+    without sudo (conda-forge pulseaudio-client). Reads exactly secs of raw
+    s16le mono PCM and wraps it in a wav header ourselves."""
+    if not shutil.which("parec"):
+        return False
+    if "PULSE_SERVER" not in os.environ and Path("/mnt/wslg/PulseServer").exists():
+        os.environ["PULSE_SERVER"] = "unix:/mnt/wslg/PulseServer"
+    n_bytes = int(SAMPLE_RATE * 2 * secs)
+    try:
+        proc = subprocess.Popen(
+            ["parec", "--format=s16le", f"--rate={SAMPLE_RATE}", "--channels=1"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+        data = proc.stdout.read(n_bytes) if proc.stdout else b""
+        proc.terminate()
+        proc.wait(timeout=3)
+    except Exception:
+        return False
+    if len(data) < n_bytes // 2:
+        return False        # device produced (almost) nothing — try next recorder
+    with wave.open(str(out), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(data)
+    return out.exists()
+
 
 def _arecord(out: Path, secs: float) -> bool:
     if not shutil.which("arecord"):
@@ -60,7 +94,7 @@ def _ffmpeg(out: Path, secs: float) -> bool:
 
 def record_window(out: Path, secs: float) -> bool:
     out.parent.mkdir(parents=True, exist_ok=True)
-    return _arecord(out, secs) or _ffmpeg(out, secs)
+    return _parec(out, secs) or _arecord(out, secs) or _ffmpeg(out, secs)
 
 
 def record_now(out: Path, secs: float) -> Path:
@@ -137,7 +171,39 @@ def _whisper_cli(wav: Path) -> str | None:
     return None
 
 
+def _normalize_gain(wav: Path, target_peak_db: float = NORMALIZE_PEAK_DB) -> None:
+    """Scale a 16-bit mono wav in place so its peak hits target_peak_db. Quiet
+    WSLg-mic captures (peak well below 0 dBFS) are otherwise too faint for
+    reliable transcription. No-op on silence or read errors."""
+    try:
+        with wave.open(str(wav), "rb") as wf:
+            if wf.getsampwidth() != 2:
+                return
+            params = wf.getparams()
+            raw = wf.readframes(wf.getnframes())
+        samples = array.array("h", raw)
+        if not samples:
+            return
+        peak = max(abs(s) for s in samples)
+        if peak < 64:                         # essentially silent — nothing to boost
+            return
+        target = 32768.0 * (10 ** (target_peak_db / 20.0))
+        gain = target / peak
+        if gain <= 1.05:                      # already loud enough
+            return
+        gain = min(gain, 20.0)                # cap so noise floors don't explode
+        for i, s in enumerate(samples):
+            v = int(s * gain)
+            samples[i] = 32767 if v > 32767 else -32768 if v < -32768 else v
+        with wave.open(str(wav), "wb") as wf:
+            wf.setparams(params)
+            wf.writeframes(samples.tobytes())
+    except Exception:
+        return
+
+
 def transcribe(wav: Path) -> str:
+    _normalize_gain(wav)
     return _faster_whisper(wav) or _whisper_cli(wav) or ""
 
 

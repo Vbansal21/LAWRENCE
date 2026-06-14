@@ -1,4 +1,7 @@
-.PHONY: run lint test test-fast help
+.PHONY: run lint test test-fast check help
+
+check:               ## full offline gate (syntax + all test suites) — plan tasks run this
+	@bash scripts/check.sh
 
 help:                ## list targets
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \

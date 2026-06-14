@@ -1,3 +1,5 @@
+> **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
+
 # Plan Coverage Audit
 
 This document checks whether the agreed LAWRENCE v0.1 plan has been transcribed into implementation artifacts and identifies blindspots, failure modes, and alternatives.

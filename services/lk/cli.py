@@ -60,11 +60,9 @@ from . import model  as _model
 from .ctx        import ContextStore
 from .ctx.gate   import gate_config
 from .kernel     import run_turn, run_proactive, run_compaction, write_journal_entry, TurnConfig
+from .lock       import acquire_writer_lock
 from .obs        import VisionObserver, AudioObserver, capture_now, record_now, SpoolReader
-<<<<<<< HEAD
-=======
 from .tasks      import TaskStore
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS, REGION_EMA, REGION_CHANGE_MIN
 from .profile    import ModelProfile
 from .retrieval  import SemanticDB, RetrievalPipeline
@@ -1325,6 +1323,9 @@ def _start_stdin_reader(input_q: "queue.Queue[str | None]") -> None:
 # ── main ──────────────────────────────────────────────────────────────────────
 
 def main() -> int:
+    from .config import apply_to_env
+    apply_to_env()        # .runtime/lk.json defaults (env always wins)
+
     args = _args()
     print("\nLAWRENCE v0.1")
 
@@ -1391,6 +1392,13 @@ def main() -> int:
     def _ctx_live(msg: str) -> None:
         if msg.startswith("[memory]"):
             live_q.put(msg)
+
+    # Single-writer invariant: exactly one kernel process owns memory/.
+    ok, owner = acquire_writer_lock("repl")
+    if not ok:
+        print(f"  another LAWRENCE kernel already owns memory/ ({owner}).")
+        print("  Stop it first — the REPL and the UI bridge are mutually exclusive kernels.")
+        return 1
 
     ctx       = ContextStore(compact_fn=run_compaction, live_fn=_ctx_live)
     db        = SemanticDB()

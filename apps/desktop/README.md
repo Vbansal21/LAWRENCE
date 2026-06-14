@@ -11,8 +11,6 @@ npm run popup
 `npm run popup` starts the native Tauri popup and the local bridge. This is the
 Ctrl+Shift+L launcher surface. It is not a browser page.
 
-<<<<<<< HEAD
-=======
 If the host compositor swallows the hotkey, use the tray menu's
 `Show LAWRENCE` action, click the taskbar entry after Dismiss, or run:
 
@@ -20,7 +18,6 @@ If the host compositor swallows the hotkey, use the tray menu's
 npm run popup:show
 ```
 
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 If you only want the static web preview for layout debugging, run:
 
 ```bash
@@ -36,18 +33,27 @@ npm run dev:web
 | `npm run deps:system` | Installs Ubuntu/Debian native packages required by Tauri and browser QA. Requires interactive sudo. |
 | `npm run bridge` | Runs the desktop-owned HTTP bridge on `http://127.0.0.1:${LK_UI_PORT:-8765}`. |
 | `npm run popup` | Starts the native floating popup plus bridge. |
-<<<<<<< HEAD
-=======
 | `npm run popup:show` | Restarts the desktop popup visible; fallback when the host hotkey is swallowed. |
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 | `npm run popup:stop` | Stops the popup and bridge started by the popup controller. |
 | `npm run popup:restart` | Restarts the popup and bridge. |
 | `npm run popup:status` | Shows popup, bridge, hotkey, and blur-hide state. |
+| `npm run popup:doctor` | Shows LAWRENCE processes, model/bridge/event ports, and unused adjacent services such as Ollama. |
 | `npm run popup:hotkey -- Ctrl+Shift+L` | Persists a new popup hotkey; restart afterward. |
+| `npm run services:start` | Starts only the WSL desktop bridge/services for a host-native UI. |
+| `npm run services:stop` | Stops only the WSL desktop bridge. |
+| `npm run services:restart` | Restarts only the WSL desktop bridge/services. |
+| `npm run host:config` | Prints the WSL-manager handoff JSON for a future host-native UI. |
+| `npm run host:config:write` | Writes that handoff JSON to `.runtime/desktop/host-ui.json`. |
+| `npm run host:install-plan` | Prints the WSL-side plan for installing/updating a host-native UI. |
+| `npm run host:install-plan:write` | Writes that plan to `.runtime/desktop/host-install-plan.json`. |
+| `npm run host:windows:script` | Prints the Windows PowerShell entrypoint for the native ARM64 Tauri build. |
+| `npm run host:windows:start` | Prints the Windows PowerShell entrypoint for launching the native UI. |
+| `npm run host:windows:hotkey` | Prints the Windows PowerShell hotkey helper entrypoint for the current WSLg fallback. |
 | `npm run dev:web` | Runs the bridge plus static web UI on `http://127.0.0.1:${PORT:-1423}`. |
 | `npm run dev` | Runs the bridge plus native Tauri dev mode after native deps are installed. |
 | `npm run build` | Builds the native Tauri bundle after native deps are installed. |
 | `npm run stress` | Runs DOM-level stress tests for UI payloads, attachment classification, escaping, config panels, and transcript bounds. |
+| `npm run test:runtime` | Checks the desktop controller/runtime contract for bridge and event-stream diagnostics. |
 
 On Ubuntu 24.04 / WSL, native Tauri needs these system packages:
 
@@ -75,24 +81,95 @@ The bridge imports the existing `services/lk` kernel modules and calls
 without changing kernel code. If the bridge is unavailable, the popup still
 renders a local draft response.
 
+The bridge intentionally owns two localhost listeners:
+
+- `127.0.0.1:${LK_UI_PORT:-8765}` is the desktop HTTP bridge for health,
+  jobs, turns, observer toggles, context capture, history, and task commands.
+- `127.0.0.1:${LK_UI_EVENTS_PORT:-8766}` is the SSE event stream used by the
+  same bridge process for live status, context, transcript, task, and response
+  events.
+
+These are not two separate UI bridge servers. `npm run popup:status` and
+`npm run popup:doctor` label them separately. If another process occupies the
+HTTP bridge port and does not answer `/health`, the controller refuses to touch
+it instead of killing an adjacent service.
+
+## Native Host UI Split
+
+The current Tauri popup can still run under WSLg, but the intended split is
+Windows ARM64 native Tauri for the visible UI, with LAWRENCE services staying
+inside WSL Ubuntu:
+
+- WSL manager: owns setup, config, startup/shutdown/restart, diagnostics,
+  llama.cpp, kernel services, retrieval stores, bridge HTTP, and bridge events.
+- Host-native UI: owns the visible launcher window, global hotkey, tray,
+  notifications, screen/audio permissions, and smooth OS-native rendering.
+
+The WSL side now exposes the handoff contract with:
+
+```bash
+npm run host:config
+npm run host:config:write
+npm run host:install-plan
+npm run host:install-plan:write
+```
+
+The JSON includes the bridge URL, event-stream URL, model endpoint, manager
+commands, hotkey preference, current transport policy, and warn-only adjacent
+service state. A future Windows/macOS/Linux-native UI should read this file
+instead of discovering WSL services ad hoc.
+
+The install plan records which phases the WSL manager already owns, which host
+directory would be used, and which native-host decisions still block a real
+installer. It deliberately does not pretend to cross-build a Windows/macOS UI
+from inside Linux without the host toolchain decision.
+
+For the first native target, run the host build from Windows PowerShell:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\apps\desktop\host\windows\Build-HostUi.ps1
+powershell -ExecutionPolicy Bypass -File .\apps\desktop\host\windows\Start-HostUi.ps1
+```
+
+That script syncs the desktop app out of WSL into
+`%LOCALAPPDATA%\LAWRENCE\host-ui-src`, uses cached npm/Rust/Tauri build
+directories under `%LOCALAPPDATA%\LAWRENCE\cache`, builds
+`aarch64-pc-windows-msvc`, and installs the native UI into
+`%LOCALAPPDATA%\LAWRENCE`.
+
+`Start-HostUi.ps1` starts only the WSL bridge/services, refreshes
+`host-ui.json`, and launches the native Windows executable. The Tauri app reads
+that handoff config from `%LOCALAPPDATA%\LAWRENCE\config\host-ui.json` when
+environment variables are not set.
+
+Transport choice:
+
+- Data plane: loopback HTTP/SSE to the WSL bridge for turns, jobs, context,
+  telemetry, history, and streaming response events.
+- Control plane: Windows host helper or named-pipe-backed helper for richer
+  lifecycle operations as the system grows. The current host script uses
+  `wsl.exe` for setup/config handoff.
+
+Until the host-native UI is installed, Windows can own the hotkey and call back
+into WSL:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\apps\desktop\host\windows\Register-Hotkey.ps1
+```
+
+That helper registers `Ctrl+Shift+L` on Windows and invokes
+`npm run popup:show` inside WSL, avoiding WSLg shortcut delivery.
+
 The bridge supports async turn jobs:
 
 - `POST /turn/async` returns `{accepted, jobId, state}`.
 - `GET /jobs/{jobId}` returns `queued`, `running`, `done`, or `error`.
-<<<<<<< HEAD
-=======
 - `GET /jobs` returns recent jobs so the UI can recover autonomous voice replies
   if direct SSE delivery is blocked by the WebKitGTK/WSLg environment.
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 The kernel/CLI manager integration contract is documented in `INTEGRATION.md`.
 
 The popup command bar keeps the text input focused when it opens. Inline buttons
-<<<<<<< HEAD
-toggle live visual context, live audio context, deep web search intent, and the
-expandable option drawer. The `LAWRENCE` mark is only an empty-input watermark.
-The transcript renders normal chat input and model responses as safe MDX/Markdown.
-=======
 toggle live visual context, live audio/voice-query context, deep web search
 intent, and the expandable option drawer. The `LAWRENCE` mark is only an
 empty-input watermark. The transcript renders normal chat input and model
@@ -101,34 +178,10 @@ responses as safe MDX/Markdown and shows parsed source cards under responses.
 The drawer opens Config, Sampling, Journal, Reminders, and History as separate
 Tauri sidecar windows when running natively. Static browser preview keeps the
 old in-page fallback for layout debugging.
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
 
 The strip below the text bar shows best-effort runtime state: context fill,
 system load/RAM, queued jobs, backend, visual/audio pipeline state, and recent
 transcript or turn events. Manager-side support for precise telemetry is tracked
-<<<<<<< HEAD
-in `MANAGER_FEATURE_REQUESTS.md`.
-
-Live context and documents are separate:
-
-- `Mic feed` / `Screen feed` request kernel observer toggles.
-- `Mic now` / `Screen now` request a fresh kernel capture.
-- `Attach file` classifies files and sends converter intent.
-- `Attach URL` adds a web-page ingestion request.
-
-File attachments are not blindly fed to the model. The UI classifies common formats and labels the intended route: images, audio, video, PDF, Markdown/MDX, HTML/web pages, Office docs, presentations, spreadsheets, LaTeX/BibTeX, Mermaid diagrams, structured data, text, and EPUB.
-
-- Click `Config` for the small menu: backend, mode, kernel URL, model hint, temperature, max tokens.
-- Open `Runtime` in the drawer to adjust content zoom/font size or dismiss/minimize the popup.
-- Shift-click `Config`, or click `Advanced sampling`, for decoding options such as top-p, min-p, typical-p, top-k, tail-free sampling, epsilon/eta cutoffs, Mirostat, repetition/DRY penalties, seed, timeout on/off, tool limits, web depth, citation mode, grammar/schema, and stop sequences.
-
-Manager-side support for MDX response formatting and deep web search is tracked in
-`MANAGER_FEATURE_REQUESTS.md`.
-
-Advanced sampler values are currently UI payload fields. Kernel support is tracked in `services/lk/kernel/DECODING_OPTIONS_FEATURE_REQUEST.md`.
-
-Attachment/converter bridge support is tracked in `services/lk/kernel/ATTACHMENT_INGEST_FEATURE_REQUEST.md`.
-=======
 in `MANAGER_FEATURE_REQUESTS.mdx`.
 
 Live context, documents, journal items, and reminders are separate:
@@ -159,4 +212,3 @@ File attachments are not blindly fed to the model. The UI classifies common form
 Manager-side support for MDX response formatting, live context policy, deep web
 search, telemetry, attachment conversion, and advanced sampling is tracked in
 `MANAGER_FEATURE_REQUESTS.mdx`.
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)

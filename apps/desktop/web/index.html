@@ -9,18 +9,6 @@
   </head>
   <body>
     <main class="launcher">
-<<<<<<< HEAD
-      <section class="feed" id="feed" aria-label="Assistant output" data-tauri-drag-region></section>
-
-      <form class="composer" id="composer">
-        <button type="button" class="tool-btn" id="video-toggle" aria-label="Use visual context" aria-pressed="false" title="Use visual context">
-          <svg viewBox="0 0 24 24"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
-        </button>
-        <button type="button" class="tool-btn" id="audio-toggle" aria-label="Use audio context" aria-pressed="false" title="Use audio context">
-          <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M19 11a7 7 0 0 1-14 0" /><path d="M12 18v3" /></svg>
-        </button>
-        <button type="button" class="tool-btn" id="deep-search-toggle" aria-label="Deep web search" aria-pressed="false" title="Deep web search">
-=======
       <div class="drag-zone" data-tauri-drag-region title="Drag to move"></div>
 
       <section class="feed" id="feed" aria-label="Assistant output"></section>
@@ -34,7 +22,6 @@
           <svg viewBox="0 0 24 24"><path d="M12 3a3 3 0 0 0-3 3v6a3 3 0 0 0 6 0V6a3 3 0 0 0-3-3Z" /><path d="M19 11a7 7 0 0 1-14 0" /><path d="M12 18v3" /></svg>
         </button>
         <button type="button" class="tool-btn" id="deep-search-toggle" aria-label="Web search depth" aria-pressed="false" title="Web search shallow; click for deep research">
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
           <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m16 16 5 5" /><path d="M8 11h6M11 8v6" /></svg>
         </button>
         <button type="button" class="tool-btn" id="drawer-toggle" aria-label="Options" aria-expanded="false" title="Options">
@@ -48,25 +35,6 @@
       </form>
 
       <section class="option-drawer" id="option-drawer" hidden aria-label="Assistant options">
-<<<<<<< HEAD
-        <details open>
-          <summary>Context</summary>
-          <div class="drawer-actions">
-            <button type="button" class="chip ghost" id="screen-now" title="Ask the kernel for a fresh screenshot via its capture path.">Screen now</button>
-            <button type="button" class="chip ghost" id="mic-now" title="Ask the kernel for a short microphone sample via its record path.">Mic now</button>
-            <button type="button" class="chip active" id="proactive-toggle" aria-pressed="true">Proactive</button>
-          </div>
-        </details>
-        <details>
-          <summary>Retrieval</summary>
-          <div class="drawer-actions">
-            <button type="button" class="chip active" id="retrieval-toggle" aria-pressed="true">Retrieval</button>
-            <button type="button" class="chip" id="deep-search-detail" aria-pressed="false">Deep web</button>
-          </div>
-        </details>
-        <details>
-          <summary>Files</summary>
-=======
         <div class="drawer-section">
           <div class="drawer-title">Context</div>
           <div class="drawer-actions">
@@ -104,33 +72,11 @@
         </div>
         <div class="drawer-section">
           <div class="drawer-title">Files</div>
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
           <div class="drawer-actions">
             <button type="button" class="chip ghost" id="attach-file">Attach file</button>
             <button type="button" class="chip ghost" id="attach-url">Attach URL</button>
           </div>
-<<<<<<< HEAD
-        </details>
-        <details>
-          <summary>Runtime</summary>
-          <div class="drawer-actions">
-            <button type="button" class="chip ghost" id="settings-toggle" aria-expanded="false" title="Click for quick config. Shift-click for advanced config.">Config</button>
-            <button type="button" class="chip ghost" id="advanced-open">Sampling</button>
-            <label class="mini-control">
-              <span>Zoom <output id="content-zoom-value">100%</output></span>
-              <input id="content-zoom" type="range" min="85" max="125" step="5" value="100" />
-            </label>
-            <label class="mini-control">
-              <span>Font <output id="font-size-value">13</output></span>
-              <input id="font-size" type="range" min="11" max="17" step="1" value="13" />
-            </label>
-            <button type="button" class="chip ghost" id="minimize-btn">Minimize</button>
-            <button type="button" class="chip ghost" id="close-btn">Dismiss</button>
-          </div>
-        </details>
-=======
         </div>
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
       </section>
 
       <div class="url-row" id="url-row" hidden>
@@ -144,16 +90,6 @@
 
       <section class="settings" id="settings" hidden aria-label="Assistant settings">
         <label>
-<<<<<<< HEAD
-          <span>Backend</span>
-          <select id="backend">
-            <option>Kernel bridge</option>
-            <option>OpenAI-compatible API</option>
-          </select>
-        </label>
-        <label>
-=======
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
           <span>Mode</span>
           <select id="mode">
             <option>Auto</option>
@@ -162,15 +98,6 @@
             <option>Audio</option>
           </select>
         </label>
-<<<<<<< HEAD
-        <label class="wide">
-          <span>Kernel URL</span>
-          <input id="kernel-url" value="http://127.0.0.1:8765" />
-        </label>
-        <label class="wide">
-          <span>Model hint</span>
-          <input id="model-name" value="kernel-default" />
-=======
         <label>
           <span>Response</span>
           <select id="response-length">
@@ -179,7 +106,6 @@
             <option>Balanced</option>
             <option>Detailed</option>
           </select>
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
         </label>
         <label>
           <span>Temp <output id="temperature-value">0.20</output></span>
@@ -189,9 +115,6 @@
           <span>Max tokens</span>
           <input id="max-tokens" type="number" min="128" step="128" value="2048" />
         </label>
-<<<<<<< HEAD
-        <button type="button" class="detail-btn" id="advanced-open-settings">Advanced sampling</button>
-=======
         <label>
           <span>Language</span>
           <input id="output-language" type="text" placeholder="Auto" />
@@ -227,7 +150,6 @@
         </label>
         <button type="button" class="detail-btn" id="advanced-open-settings">Advanced sampling</button>
         <button type="button" class="detail-btn" id="settings-close">Done</button>
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
       </section>
 
       <section class="advanced-panel" id="advanced-panel" hidden aria-label="Advanced sampling settings">
@@ -357,9 +279,6 @@
         </div>
       </section>
 
-<<<<<<< HEAD
-      <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.tif,.tiff,.wav,.mp3,.m4a,.flac,.ogg,.opus,.mp4,.mov,.mkv,.webm,.avi,.pdf,.md,.mdx,.txt,.html,.htm,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,.xls,.xlsx,.ods,.csv,.tsv,.tex,.bib,.mmd,.mermaid,.json,.jsonl,.yaml,.yml,.xml,.epub" hidden />
-=======
       <section class="tasks-panel" id="tasks-panel" hidden aria-label="Bullet journal">
         <header class="panel-head" data-tauri-drag-region>
           <strong>Bullet journal</strong>
@@ -427,7 +346,6 @@
 
       <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.tif,.tiff,.wav,.mp3,.m4a,.flac,.ogg,.opus,.mp4,.mov,.mkv,.webm,.avi,.pdf,.md,.mdx,.txt,.html,.htm,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,.xls,.xlsx,.ods,.csv,.tsv,.tex,.bib,.mmd,.mermaid,.json,.jsonl,.yaml,.yml,.xml,.epub" hidden />
       <div class="resize-grip" id="resize-grip" title="Resize" aria-hidden="true"></div>
->>>>>>> e4fb94d (UI Working on WSL. Audio from kernal Broken.)
     </main>
     <script src="./app.js" type="module"></script>
   </body>

@@ -11,7 +11,8 @@ requires-python = ">=3.11"
 dependencies = []   # stdlib only for the core path; extras below
 
 [project.scripts]
-lk = "lk.cli:main"
+lk = "lk.ctl:main"          # front door: start/stop/status/repl/ui/doctor/config/wizard/ingest
+lk-repl = "lk.cli:main"     # the terminal REPL directly (same as `lk repl`)
 lk-sensor = "lk.sensor:main"
 
 [project.optional-dependencies]
@@ -24,6 +25,9 @@ audio = [
 ]
 web = [
   "trafilatura>=1.8.0",      # article extraction (fallback to stdlib html parser)
+]
+api = [
+  "anthropic>=0.40.0",       # native Claude backend (LK_BACKEND=anthropic)
 ]
 full = [
   "Pillow>=10.0.0",
