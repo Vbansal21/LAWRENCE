@@ -216,7 +216,8 @@ curl -sN http://127.0.0.1:8766/events | head  # SSE
   stream loop checks (raise → job state `cancelled`).
   *Verify:* stub server that stalls → call errors at ~deadline, process
   healthy; DELETE a running stubbed job → `cancelled`.
-- [ ] **P3.T7 Per-role routing.** `model.py`: optional `routing` dict in
+- [x] **P3.T7 Per-role routing.** *(done 2026-06-13 as V3.T1 — `config.py` routing +
+  `model.configure_routing`, thread-local per-role backend + local fallback.)* `model.py`: optional `routing` dict in
   `.runtime/lk.json` mapping role→`{kind, base_url, model, key_env}`;
   `call_model(role="response"|"analysis"|"proactive"|"compact"|"journal")`
   resolves the backend per call (default: the one configured backend —
@@ -239,7 +240,8 @@ curl -sN http://127.0.0.1:8766/events | head  # SSE
   In `cli.py`/`ui_bridge.py` trigger paths ensure max one queued proactive
   (the gate's droppable behavior already gives this — add a regression test).
   *Verify:* stubbed double event → one finding.
-- [ ] **P4.T2 Desktop notification for findings.** `services/lk/notify.py`
+- [x] **P4.T2 Desktop notification for findings.** *(done 2026-06-12 — `services/lk/notify.py`,
+  called from both finding presenters.)* `services/lk/notify.py`
   (~30 lines): `notify-send` if present else PowerShell balloon on WSL else
   no-op; never raises. Call from both finding presenters.
   *Verify:* function returns cleanly on a system with neither tool.
@@ -256,7 +258,9 @@ curl -sN http://127.0.0.1:8766/events | head  # SSE
   (tiny budgets) + proactive + model-emitted tasks/controls, 60s. Assert: all
   responses ordered, memory files valid JSONL, `fallback_parses()==0`, no
   deadlock. Wire into `make check`. *Verify:* prints `INTERLEAVE: PASS`.
-- [ ] **P4.T6 (optional, after P4.T5 is stable) Slow-loop addendum.** One
+- [x] **P4.T6 (optional, after P4.T5 is stable) Slow-loop addendum.** *(done as WS-R R1/R2 —
+  `kernel/refine.py` + `kernel/elevate.py`; gated `slow_loop`; SSE type is `refined` (not
+  `addendum`) with the same turn-id for in-place swap.)* One
   bounded refinement pass behind config `slow_loop:on`: REFINE prompt returns
   the RESPONSE envelope or `{"improved":false}`; queued at proactive priority
   (droppable); SSE `{"type":"addendum","turn_id",...}`.

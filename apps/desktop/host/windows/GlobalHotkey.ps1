@@ -2,7 +2,7 @@
 # global (a shortcut registered inside WSLg only fires while a WSLg window has
 # focus). On press it connects to the app's control socket inside WSL —
 # WSL2 forwards localhost, so 127.0.0.1:<port> reaches the Linux listener —
-# and sends "toggle". No wsl.exe spawn per keypress.
+# and sends "show". No wsl.exe spawn per keypress.
 #
 # Robustness (this script must NEVER become a CPU hog or an orphan):
 #   * non-blocking PeekMessage + Sleep — uses ~0% CPU, never busy-loops on error
@@ -61,15 +61,22 @@ $WM_HOTKEY = 0x0312
 $PM_REMOVE = 1
 $misses = 0
 $lastCheck = [DateTime]::UtcNow
+$lastHotkey = [DateTime]::MinValue
+$debounceMs = 700
 try {
   while ($true) {
     $msg = New-Object LkHk+MSG
     if ([LkHk]::PeekMessage([ref]$msg, [IntPtr]::Zero, 0, 0, $PM_REMOVE)) {
       if ($msg.message -eq $WM_HOTKEY -and $msg.wParam.ToUInt32() -eq $id) {
+        # Codex: debounce host repeats and send show, not toggle, so one sticky
+        # Ctrl+Shift+L press cannot alternately summon and dismiss the popup.
+        $now = [DateTime]::UtcNow
+        if (($now - $lastHotkey).TotalMilliseconds -lt $debounceMs) { continue }
+        $lastHotkey = $now
         try {
           $c = New-Object System.Net.Sockets.TcpClient
           $c.Connect("127.0.0.1", $Port)
-          $b = [System.Text.Encoding]::ASCII.GetBytes("toggle`n")
+          $b = [System.Text.Encoding]::ASCII.GetBytes("show`n")
           $c.GetStream().Write($b, 0, $b.Length); $c.Close()
         } catch { }
       }

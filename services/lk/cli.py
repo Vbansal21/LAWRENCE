@@ -61,7 +61,7 @@ from .ctx        import ContextStore, Extractor, NoteStore
 from .ctx.gate   import gate_config
 from .kernel     import (
     run_turn, run_proactive, run_compaction, run_extract, write_journal_entry, TurnConfig,
-    CognitiveTick, tick_enabled, Elevator,
+    CognitiveTick, tick_enabled, Elevator, JournalTrigger, journal_enabled,
 )
 from .lock       import acquire_writer_lock
 from .obs        import VisionObserver, AudioObserver, capture_now, record_now, SpoolReader
@@ -1490,11 +1490,21 @@ def main() -> int:
     # drains the B1 perception buffer, and drives the (already throttled + locked)
     # proactive pathway even when no sensor on_event is firing. Idle beats make zero
     # model calls and back the cadence off. Stopped in the finally below.
+    # WS-J autonomous journal — significance-gated + time-floor trigger, consulted
+    # by the tick each beat (reflect_fn). It drafts a first-person entry from the
+    # trailing window + live context and lightly trims the window in place, in a
+    # background thread so the heartbeat never blocks.
+    journal_trigger = (
+        JournalTrigger(ctx, retrieval=pipeline, live_fn=live_q.put)
+        if journal_enabled() else None
+    )
+
     tick: "CognitiveTick | None" = None
     if tick_enabled():
         tick = CognitiveTick(
             extractor.drain,
             lambda events: on_proactive("tick", f"{len(events)} perception event(s)"),
+            reflect_fn=(journal_trigger.beat if journal_trigger else None),
             on_log=live_q.put,
         )
         tick.start()

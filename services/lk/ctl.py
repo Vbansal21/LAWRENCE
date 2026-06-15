@@ -13,7 +13,10 @@ writer-lock file, and delegates real work to the existing entry points:
     lk reset [--all]    force a clean slate from any wedged state (--all: + server)
     lk stop [--all]     stop popup+bridge  (--all also stops llama-server)
     lk memory [...]     inspect/back up/clear memory (stats|clear-cache|clear-all)
+    lk processes        list launcher-managed LAWRENCE processes
     lk notes [...]      browse the zettelkasten (list | show <id> | search <q>)
+    lk chats [...]      manage chats (list | show | export | new | switch | rename | delete)
+    lk links [...]      cross-chat graph (show <chat> <seq> | add <c> <s> <c> <s>)
     lk status           who is running, who owns memory/, model health
     lk repl [flags...]  the terminal REPL (mutually exclusive with the UI kernel)
     lk ui               popup only (bridge must be running / will be started)
@@ -30,9 +33,11 @@ from __future__ import annotations
 
 import json
 import os
+import signal
 import shutil
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -40,6 +45,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 DESKTOPCTL = REPO_ROOT / "apps" / "desktop" / "scripts" / "desktopctl.sh"
 LOCK_PATH = REPO_ROOT / "memory" / ".writer.lock"
 SERVER_LOG = REPO_ROOT / ".runtime" / "lk-server.log"
+LAUNCHER_STATE = REPO_ROOT / ".runtime" / "launcher-actions.json"
+LAUNCHER_LOCK = REPO_ROOT / ".runtime" / "launcher-actions.lock"
 
 UI_PORT = int(os.environ.get("LK_UI_PORT", "8765"))
 LLAMA_PORT = 8190
@@ -93,6 +100,274 @@ def _desktopctl(*args: str) -> int:
 
 def _node_ready() -> bool:
     return (REPO_ROOT / "apps" / "desktop" / "node_modules").is_dir()
+
+
+def _label_linux_process(cmd: str) -> str:
+    root = str(REPO_ROOT)
+    if "scripts/ui_bridge.py" in cmd:
+        return "bridge"
+    if "lawrence-desktop" in cmd and "target/release" in cmd:
+        return "popup"
+    if "llama-server" in cmd and "--port" in cmd and str(LLAMA_PORT) in cmd:
+        return "model"
+    if f"{root}/lk.py" in cmd:
+        return "repl"
+    if "services/lk/sensor.py" in cmd or "lk_sensor.py" in cmd:
+        return "sensor"
+    if f"{root}/lk launcher --gui" in cmd or " lk launcher --gui" in cmd:
+        return "launcher"
+    if any(name in cmd for name in ("dev-tauri.sh", "web-preview.sh", "stress-ui.sh")):
+        return "desktop-dev"
+    return ""
+
+
+def _windows_hotkey_processes() -> list[dict]:
+    if not shutil.which("powershell.exe"):
+        return []
+    query = (
+        "Get-CimInstance Win32_Process | Where-Object { "
+        "$_.ProcessId -ne $PID -and ("
+        "$_.CommandLine -match '(-File|/File)\\s+.*(GlobalHotkey|Register-Hotkey)\\.ps1' -or "
+        "$_.Name -like 'lawrence-desktop*') "
+        "} | ForEach-Object { \"$($_.ProcessId)`t$($_.Name)`t$($_.CommandLine)\" }"
+    )
+    try:
+        out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", query],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    rows: list[dict] = []
+    for line in out.splitlines():
+        parts = line.split("\t", 2)
+        if len(parts) != 3:
+            continue
+        label = "popup" if "lawrence-desktop" in parts[1].lower() else "windows-hotkey"
+        rows.append({"platform": "windows", "pid": int(parts[0]),
+                     "label": label, "cmd": parts[2]})
+    return rows
+
+
+def managed_processes(*, include_launcher: bool = False) -> list[dict]:
+    """Processes the launcher is allowed to stop. Keep patterns project-scoped."""
+    # Codex: keep one launcher-owned inventory so Stop all, Force reset, and the
+    # Processes view agree on which LAWRENCE processes are safe to terminate.
+    rows: list[dict] = []
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,args="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        out = ""
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, cmd = int(parts[0]), parts[1]
+        if pid == os.getpid():
+            continue
+        label = _label_linux_process(cmd)
+        if not label or (label == "launcher" and not include_launcher):
+            continue
+        rows.append({"platform": "linux", "pid": pid, "label": label, "cmd": cmd})
+    rows.extend(_windows_hotkey_processes())
+    rows.sort(key=lambda row: (row["label"], row["platform"], row["pid"]))
+    return rows
+
+
+def format_processes(rows: list[dict]) -> str:
+    if not rows:
+        return "  no launcher-managed LAWRENCE processes found"
+    return "\n".join(
+        f"  {row['label']:<13} {row['platform']:<7} pid={row['pid']}  {row['cmd'][:140]}"
+        for row in rows
+    )
+
+
+def active_jobs() -> tuple[int, list[dict]]:
+    health = _get_json(f"http://127.0.0.1:{UI_PORT}/health", timeout=0.8) or {}
+    counts = health.get("jobs") or {}
+    active = int(counts.get("queued") or 0) + int(counts.get("running") or 0)
+    if active <= 0:
+        return 0, []
+    jobs = _get_json(f"http://127.0.0.1:{UI_PORT}/jobs", timeout=0.8) or {}
+    items = [j for j in jobs.get("items", []) if j.get("state") in ("queued", "running")]
+    return active, items[:5]
+
+
+def _confirm(prompt: str) -> bool:
+    if not sys.stdin.isatty():
+        return False
+    try:
+        return input(prompt + " [y/N] ").strip().lower() == "y"
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+
+def _alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+        # Codex: zombies are already stopped; treating them as alive made Stop
+        # all ask for needless force-kill confirmations that cannot reap them.
+        try:
+            stat = Path(f"/proc/{pid}/stat").read_text(errors="ignore").split()
+            return len(stat) < 3 or stat[2] != "Z"
+        except OSError:
+            return True
+    except OSError:
+        return False
+
+
+def _stop_windows_pid(pid: int) -> None:
+    if shutil.which("powershell.exe"):
+        subprocess.run(["powershell.exe", "-NoProfile", "-Command",
+                        f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"],
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+
+
+def terminate_processes(rows: list[dict], *, force: bool = False) -> None:
+    for row in rows:
+        if row["platform"] == "windows":
+            _stop_windows_pid(row["pid"])
+            continue
+        try:
+            os.kill(row["pid"], signal.SIGTERM)
+        except OSError:
+            pass
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if not any(row["platform"] == "linux" and _alive(row["pid"]) for row in rows):
+            return
+        time.sleep(0.2)
+    if not force:
+        return
+    for row in rows:
+        if row["platform"] == "linux" and _alive(row["pid"]):
+            try:
+                os.kill(row["pid"], signal.SIGKILL)
+            except OSError:
+                pass
+
+
+# ── launcher action gate ─────────────────────────────────────────────────────
+
+def launcher_action_kind(args: list[str]) -> str:
+    cmd = args[0] if args else ""
+    if cmd in ("status", "processes", "ps", "logs", "doctor"):
+        return "inspect"
+    if cmd == "ui":
+        return "open"
+    if cmd == "stop":
+        return "stop-all" if "--all" in args else "stop"
+    if cmd in ("start", "restart", "rebuild", "reset", "wizard", "ingest"):
+        return cmd
+    if cmd in ("config", "secrets", "preset", "memory", "mem", "notes", "chats", "links"):
+        return "tool"
+    return "custom"
+
+
+def launcher_action_is_inspect(kind: str) -> bool:
+    return kind == "inspect"
+
+
+def launcher_action_can_preempt(kind: str) -> bool:
+    return kind in {"stop", "stop-all", "reset"}
+
+
+def _launcher_state() -> dict:
+    try:
+        return json.loads(LAUNCHER_STATE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"last": {}}
+
+
+def _save_launcher_state(state: dict) -> None:
+    LAUNCHER_STATE.parent.mkdir(parents=True, exist_ok=True)
+    LAUNCHER_STATE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
+
+
+def _project_process_busy() -> str:
+    """Return a coarse reason when a project build/lifecycle command is active."""
+    try:
+        out = subprocess.run(["ps", "-eo", "pid=,args="],
+                             capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return ""
+    for line in out.splitlines():
+        parts = line.strip().split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid, cmd = int(parts[0]), parts[1]
+        if pid == os.getpid() or str(REPO_ROOT) not in cmd:
+            continue
+        if "desktopctl.sh" in cmd and any(a in cmd for a in (" build", " rebuild")):
+            return "desktop build is already running"
+        if any(token in cmd for token in ("npm run build", "tauri build", "cargo build")):
+            return "desktop build is already running"
+        if "desktopctl.sh" in cmd and any(a in cmd for a in (" start", " stop", " reset", " restart", " show")):
+            return "desktop lifecycle command is already running"
+    return ""
+
+
+def _launcher_action_block(args: list[str], state: dict) -> str:
+    kind = launcher_action_kind(args)
+    busy = _project_process_busy()
+    if busy and kind in {"start", "open", "restart", "rebuild", "wizard", "custom"}:
+        return f"{busy}; skipped {kind}"
+
+    health = _get_json(f"http://127.0.0.1:{UI_PORT}/health", timeout=0.8)
+    model_loading = bool(health) and not bool(health.get("modelHealth"))
+    if model_loading and kind in {"start", "restart", "rebuild"}:
+        return "bridge/model is still loading; wait, Stop all, or Force reset"
+
+    if kind in {"restart", "rebuild"}:
+        active, _jobs = active_jobs()
+        if active:
+            return f"active work is running ({active} queued/running job(s)); stop/reset first"
+
+    cooldowns = {
+        # Codex: launcher buttons are not queued. These per-action cooldowns
+        # absorb double-clicks while live state checks handle long build/load work.
+        "open": 0.8,
+        "start": 2.0,
+        "restart": 3.0,
+        "rebuild": 8.0,
+        "wizard": 2.0,
+        "ingest": 1.0,
+        "tool": 0.5,
+        "custom": 1.5,
+    }
+    wait = cooldowns.get(kind, 0.0)
+    last = float((state.get("last") or {}).get(kind) or 0)
+    remaining = wait - (time.time() - last)
+    if remaining > 0:
+        return f"{kind} was just requested; try again in {remaining:.1f}s"
+    return ""
+
+
+def claim_launcher_action(args: list[str]) -> tuple[bool, str, str]:
+    """Shared GUI/TUI admission check. It rejects, never queues, unsafe repeats."""
+    kind = launcher_action_kind(args)
+    if launcher_action_is_inspect(kind):
+        return True, kind, ""
+    try:
+        import fcntl
+        LAUNCHER_LOCK.parent.mkdir(parents=True, exist_ok=True)
+        with open(LAUNCHER_LOCK, "a+", encoding="utf-8") as lock:
+            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+            state = _launcher_state()
+            reason = _launcher_action_block(args, state)
+            if reason:
+                return False, kind, reason
+            state.setdefault("last", {})[kind] = time.time()
+            _save_launcher_state(state)
+            return True, kind, ""
+    except Exception:
+        state = _launcher_state()
+        reason = _launcher_action_block(args, state)
+        if reason:
+            return False, kind, reason
+        state.setdefault("last", {})[kind] = time.time()
+        _save_launcher_state(state)
+        return True, kind, ""
 
 
 # ── commands ──────────────────────────────────────────────────────────────────
@@ -160,14 +435,59 @@ def cmd_start(args: list[str]) -> int:
 
 
 def cmd_stop(args: list[str]) -> int:
-    rc = _desktopctl("stop")
-    if "--all" in args:
-        n = subprocess.run(["pkill", "-f", "llama-server"], capture_output=True).returncode
-        print(f"  llama-server: {'stopped' if n == 0 else 'was not running'}")
+    all_ = "--all" in args
+    force = "--force" in args
+    allow_active = force or "--allow-active" in args
+    if all_:
+        # Codex: Stop all checks active bridge jobs first; force termination is
+        # only used after explicit confirmation or a caller-provided --force.
+        n_active, jobs = active_jobs()
+        if n_active and not allow_active:
+            print(f"  active work: {n_active} queued/running job(s)")
+            for job in jobs:
+                print(f"    {job.get('id', '?')}  {job.get('state', '?')}  {job.get('textPreview', '')}")
+            if not _confirm("  stop anyway and interrupt active work?"):
+                print("  stop cancelled")
+                return 1
+
+    _desktopctl("stop")
+    labels = {"popup", "bridge", "windows-hotkey"}
+    if all_:
+        labels.update({"model", "repl", "sensor", "desktop-dev"})
+        model_rows = [row for row in managed_processes() if row["label"] == "model"]
+        if model_rows:
+            # `--all` is an explicit "stop everything". The model is STATELESS
+            # (memory lives in the bridge/store), so SIGTERM-then-SIGKILL is safe
+            # and means the user never has to manually force-kill a warm/orphaned
+            # llama-server. The bridge now reaps the server it started on its own
+            # shutdown; this stays as the backstop for an externally-owned or
+            # pre-existing orphaned server.
+            print("  llama-server: stopping")
+            terminate_processes(model_rows, force=True)
+        else:
+            print("  llama-server: was not running")
     else:
         if _http_ok(f"http://127.0.0.1:{LLAMA_PORT}/health"):
             print("  llama-server left warm on :8190 (use `lk stop --all` to stop it too)")
-    return rc
+
+    leftovers = [row for row in managed_processes() if row["label"] in labels]
+    if leftovers:
+        print("  still running:")
+        print(format_processes(leftovers))
+        if force or _confirm("  force terminate remaining LAWRENCE processes?"):
+            terminate_processes(leftovers, force=True)
+            leftovers = [row for row in managed_processes() if row["label"] in labels]
+    if leftovers:
+        print("  stop incomplete:")
+        print(format_processes(leftovers))
+        return 1
+    print("  all requested LAWRENCE processes stopped")
+    return 0
+
+
+def cmd_processes(args: list[str]) -> int:
+    print(format_processes(managed_processes(include_launcher="--with-launcher" in args)))
+    return 0
 
 
 def cmd_repl(args: list[str]) -> int:
@@ -411,7 +731,19 @@ def cmd_reset(args: list[str]) -> int:
     """Force a clean slate from any state: kill every tracked/untracked popup +
     bridge, the hotkey listener, and stale pidfiles. `--all` also stops the warm
     llama-server. Use when something is wedged and a normal stop won't take."""
-    return _desktopctl("reset", "--all") if "--all" in args else _desktopctl("reset")
+    rc = _desktopctl("reset", "--all") if "--all" in args else _desktopctl("reset")
+    labels = {"popup", "bridge", "windows-hotkey"}
+    if "--all" in args:
+        labels.update({"model", "repl", "sensor", "desktop-dev"})
+    leftovers = [row for row in managed_processes() if row["label"] in labels]
+    if leftovers:
+        terminate_processes(leftovers, force=True)
+    leftovers = [row for row in managed_processes() if row["label"] in labels]
+    if leftovers:
+        print("  reset incomplete:")
+        print(format_processes(leftovers))
+        return 1
+    return rc
 
 
 def cmd_restart(args: list[str]) -> int:
@@ -468,7 +800,8 @@ def cmd_memory(args: list[str]) -> int:
     mapping = {
         "clear-cache":   ["cache"],   "clear-rolling": ["rolling"],
         "clear-logs":    ["log"],     "clear-journal": ["journal"],
-        "clear-notes":   ["notes"],   "clear-all":     ["all"],
+        "clear-notes":   ["notes"],   "clear-chats":   ["chats"],
+        "clear-all":     ["all"],
     }
     if sub in mapping:
         force = "--force" in args
@@ -547,6 +880,122 @@ def cmd_notes(args: list[str]) -> int:
     return 2
 
 
+def cmd_chats(args: list[str]) -> int:
+    """Browse + manage the chat workspace (WS-U Track 1) — switchable conversations.
+
+    lk chats [list | show <id> | export <id> | new [title…] | switch <id>
+              | rename <id> <title…> | delete <id> [--hard]]
+    Works against the same memory/chats/ store the desktop UI uses. Management
+    ops are file-level — prefer running them while the kernel is stopped.
+    """
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk.ctx.chats import ChatStore
+    cs = ChatStore()
+    sub = args[0] if args else "list"
+
+    if sub in ("list", "ls"):
+        active = cs.active_chat()
+        rows = cs.list_chats()
+        if not rows:
+            print("  (no chats yet — created from the desktop UI or `lk chats new`)")
+            return 0
+        print(f"  {len(rows)} chat(s), most recent first (* = active):")
+        for r in rows:
+            mark = "*" if r["id"] == active else " "
+            print(f"   {mark} {r['id']}  {r.get('title') or '(untitled)'}  · {r.get('messages', 0)} msg")
+        print("\n  show one:  lk chats show <id>")
+        return 0
+
+    if sub == "show":
+        if len(args) < 2:
+            print("usage: lk chats show <id>"); return 2
+        chat = cs.get_chat(args[1])
+        if not chat:
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  id     {chat['id']}")
+        print(f"  title  {chat.get('title') or '(untitled)'}")
+        print(f"  msgs   {chat.get('messages', 0)}\n")
+        for m in chat.get("messages_list", []):
+            who = "you" if m.get("role") == "user" else "lk "
+            print(f"    [{m.get('seq')}] {who}  {str(m.get('text', ''))[:100]}")
+        return 0
+
+    if sub == "export":
+        if len(args) < 2:
+            print("usage: lk chats export <id>"); return 2
+        mdx = cs.export_chat(args[1])
+        if not mdx:
+            print(f"  no chat with id {args[1]}"); return 1
+        print(mdx)
+        return 0
+
+    if sub == "new":
+        meta = cs.create_chat(" ".join(args[1:]))
+        cs.set_active(meta["id"])
+        print(f"  created {meta['id']}  {meta.get('title') or '(untitled)'}  (now active)")
+        return 0
+
+    if sub == "switch":
+        if len(args) < 2:
+            print("usage: lk chats switch <id>"); return 2
+        if not cs.set_active(args[1]):
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  active chat → {args[1]}  (a running kernel applies this on next start)")
+        return 0
+
+    if sub == "rename":
+        if len(args) < 3:
+            print("usage: lk chats rename <id> <title…>"); return 2
+        if not cs.rename_chat(args[1], " ".join(args[2:])):
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  renamed {args[1]}")
+        return 0
+
+    if sub in ("delete", "rm"):
+        if len(args) < 2:
+            print("usage: lk chats delete <id> [--hard]"); return 2
+        hard = "--hard" in args
+        if not cs.delete_chat(args[1], hard=hard):
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  {'deleted' if hard else 'archived'} {args[1]}")
+        return 0
+
+    print("usage: lk chats [list | show <id> | export <id> | new [title…] | "
+          "switch <id> | rename <id> <title…> | delete <id> [--hard]]")
+    return 2
+
+
+def cmd_links(args: list[str]) -> int:
+    """Browse + create cross-chat graph links (WS-U Track 2) — the zettelkasten
+    extended so chat messages are first-class, linkable nodes.
+
+    lk links show <chatId> <seq>                      a message's neighborhood
+    lk links add  <srcChat> <srcSeq> <dstChat> <dstSeq> [kind]
+    """
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk.ctx import NoteStore
+    ns = NoteStore()
+    sub = args[0] if args else ""
+
+    if sub == "show" and len(args) >= 3:
+        node = f"{args[1]}:{args[2]}"
+        nb = ns.neighborhood(node)
+        print(f"  node    {node}")
+        print(f"  → out   {', '.join(nb['out']) or '—'}")
+        print(f"  ← in    {', '.join(nb['in']) or '—'}")
+        return 0
+
+    if sub == "add" and len(args) >= 5:
+        src, dst = f"{args[1]}:{args[2]}", f"{args[3]}:{args[4]}"
+        kind = args[5] if len(args) > 5 else "link"
+        created = ns.add_edge(src, dst, kind=kind)
+        print(f"  {'linked' if created else 'already linked'} {src} ↔ {dst}")
+        return 0
+
+    print("usage: lk links [show <chatId> <seq> | add <srcChat> <srcSeq> <dstChat> <dstSeq> [kind]]")
+    return 2
+
+
 def cmd_preset(args: list[str]) -> int:
     """Apply a one-pick backend + per-role routing setup."""
     sys.path.insert(0, str(REPO_ROOT / "services"))
@@ -576,12 +1025,14 @@ def cmd_preset(args: list[str]) -> int:
 
 _COMMANDS = {
     "status": cmd_status, "start": cmd_start, "stop": cmd_stop,
+    "processes": cmd_processes, "ps": cmd_processes,
     "repl": cmd_repl, "ui": cmd_ui, "attach": cmd_attach,
     "logs": cmd_logs, "doctor": cmd_doctor, "config": cmd_config,
     "secrets": cmd_secrets, "wizard": cmd_wizard, "ingest": cmd_ingest,
     "launcher": cmd_launcher, "menu": cmd_launcher, "preset": cmd_preset,
     "restart": cmd_restart, "rebuild": cmd_rebuild, "reset": cmd_reset,
     "memory": cmd_memory, "mem": cmd_memory, "notes": cmd_notes,
+    "chats": cmd_chats, "links": cmd_links,
 }
 
 

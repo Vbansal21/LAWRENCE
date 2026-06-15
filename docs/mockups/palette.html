@@ -1,0 +1,323 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>LAWRENCE · palette variant — design mockup</title>
+<!--
+  STATIC DESIGN MOCKUP for WS-U Track B (the new `palette` UI). No backend, no Tauri —
+  fake data, hand-wired state switches. Purpose: agree on the native FEEL + layout
+  before implementation. Open in any browser. Mockup-only controls sit top-right.
+  Shortcuts: ⌘K / Ctrl-K = command menu · ⌘, = settings · Esc = close · 1..4 = states.
+-->
+<style>
+  :root {
+    /* theme tokens — these become CSS vars in the real palette variant */
+    --bg: rgba(22, 23, 28, 0.72);
+    --bg-solid: #16171c;
+    --stroke: rgba(255, 255, 255, 0.08);
+    --stroke-strong: rgba(255, 255, 255, 0.14);
+    --text: #e9e9ee;
+    --text-dim: #9b9ca6;
+    --text-faint: #6b6c76;
+    --accent: #8b7cf6;
+    --accent-soft: rgba(139, 124, 246, 0.16);
+    --good: #57c98a;
+    --user: #c7c9d4;
+    --radius: 14px;
+    --radius-sm: 9px;
+    --font: -apple-system, "SF Pro Text", "Segoe UI", Inter, system-ui, sans-serif;
+    --mono: "SF Mono", "JetBrains Mono", ui-monospace, "Cascadia Code", monospace;
+    --shadow: 0 24px 70px -12px rgba(0,0,0,0.62), 0 0 0 1px var(--stroke);
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: var(--font);
+    color: var(--text);
+    /* faux desktop so the overlay translucency/vibrancy reads */
+    background:
+      radial-gradient(1200px 700px at 18% 12%, #2a2740 0%, transparent 55%),
+      radial-gradient(1000px 800px at 88% 86%, #14323a 0%, transparent 50%),
+      radial-gradient(900px 600px at 60% 30%, #3a2233 0%, transparent 55%),
+      #0c0d11;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  /* blurred "wallpaper" blobs to make the backdrop-filter visible */
+  .blob { position: fixed; border-radius: 50%; filter: blur(60px); opacity: 0.5; z-index: 0; }
+  .b1 { width: 420px; height: 420px; background:#5b4bd6; top: 8%; left: 12%; }
+  .b2 { width: 380px; height: 380px; background:#1f8f9c; bottom: 6%; right: 14%; }
+  .b3 { width: 300px; height: 300px; background:#b0568a; top: 40%; left: 55%; }
+
+  /* ── the overlay (the Tauri window) ─────────────────────────────── */
+  .overlay {
+    position: relative; z-index: 2;
+    width: 640px; max-height: 78vh;
+    background: var(--bg);
+    -webkit-backdrop-filter: blur(34px) saturate(150%);
+    backdrop-filter: blur(34px) saturate(150%);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+    overflow: hidden;
+    transition: width .18s ease, max-height .2s ease;
+  }
+  .overlay.compact { width: 560px; }
+
+  /* input bar — always present, never crowded */
+  .bar {
+    display: flex; align-items: center; gap: 11px;
+    padding: 15px 16px; flex: none;
+  }
+  .bar .glyph { color: var(--text-faint); font-size: 17px; }
+  .bar input {
+    flex: 1; background: transparent; border: 0; outline: 0;
+    color: var(--text); font-family: var(--font); font-size: 16px;
+  }
+  .bar input::placeholder { color: var(--text-faint); }
+  .kbd {
+    font-family: var(--mono); font-size: 11px; color: var(--text-dim);
+    border: 1px solid var(--stroke-strong); border-radius: 6px;
+    padding: 2px 6px; background: rgba(255,255,255,0.03);
+  }
+  .bar .icon-btn { color: var(--text-faint); cursor: pointer; font-size: 15px; }
+  .bar .icon-btn:hover { color: var(--text); }
+
+  .divider { height: 1px; background: var(--stroke); flex: none; }
+
+  /* transcript — scrollable conversation */
+  .feed {
+    overflow-y: auto; padding: 6px 18px 12px;
+    display: flex; flex-direction: column; gap: 16px;
+  }
+  .feed::-webkit-scrollbar { width: 8px; }
+  .feed::-webkit-scrollbar-thumb { background: var(--stroke-strong); border-radius: 8px; }
+  .msg { display: flex; flex-direction: column; gap: 6px; }
+  .who { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--text-faint); }
+  .msg.user .body { color: var(--user); }
+  .msg .body { font-size: 14.5px; line-height: 1.55; }
+  .msg .body code { font-family: var(--mono); font-size: 12.5px; background: rgba(255,255,255,.05);
+    padding: 1px 5px; border-radius: 5px; }
+  .assistant .who { color: var(--accent); }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 2px; }
+  .chip {
+    font-size: 11.5px; color: var(--text-dim);
+    border: 1px solid var(--stroke); border-radius: 999px;
+    padding: 3px 9px; display: inline-flex; align-items: center; gap: 5px; cursor: pointer;
+  }
+  .chip:hover { border-color: var(--stroke-strong); color: var(--text); }
+  .chip.refined { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+  .chip.link { color: var(--good); }
+
+  /* a proactive "found" card in the feed */
+  .finding {
+    border: 1px solid var(--stroke); border-left: 2px solid var(--accent);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+    background: rgba(255,255,255,0.02); font-size: 13px; color: var(--text-dim);
+  }
+  .finding b { color: var(--text); font-weight: 600; }
+
+  /* status rail */
+  .status {
+    display: flex; align-items: center; gap: 10px; flex: none;
+    padding: 9px 16px; font-size: 12px; color: var(--text-dim);
+    border-top: 1px solid var(--stroke);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); box-shadow: 0 0 8px var(--good); }
+  .status .spacer { flex: 1; }
+  .status .chatsel { color: var(--text); cursor: pointer; display:flex; gap:6px; align-items:center; }
+  .status .chatsel:hover { color: var(--accent); }
+
+  /* ── command menu (⌘K) ──────────────────────────────────────────── */
+  .cmd { display: none; }
+  .cmd.show { display: block; }
+  .cmd .feed { padding-top: 4px; gap: 2px; }
+  .cmd-item {
+    display: flex; align-items: center; gap: 11px; padding: 10px 12px;
+    border-radius: var(--radius-sm); font-size: 14px; color: var(--text); cursor: pointer;
+  }
+  .cmd-item .ci-icon { width: 18px; text-align: center; color: var(--text-dim); }
+  .cmd-item .spacer { flex: 1; }
+  .cmd-item.active, .cmd-item:hover { background: var(--accent-soft); }
+  .cmd-item.active .ci-icon { color: var(--accent); }
+  .cmd-sep { font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+    color: var(--text-faint); padding: 12px 12px 4px; }
+
+  /* ── settings (separate window) ─────────────────────────────────── */
+  .settings {
+    position: fixed; z-index: 3; top: 14%; right: 8%;
+    width: 460px; max-height: 70vh; display: none;
+    background: var(--bg); -webkit-backdrop-filter: blur(34px) saturate(150%);
+    backdrop-filter: blur(34px) saturate(150%);
+    border-radius: var(--radius); box-shadow: var(--shadow);
+    flex-direction: column; overflow: hidden;
+  }
+  .settings.show { display: flex; }
+  .settings .head { padding: 13px 16px; font-size: 13px; color: var(--text-dim);
+    border-bottom: 1px solid var(--stroke); display:flex; align-items:center; gap:10px; }
+  .settings .head b { color: var(--text); font-weight: 600; }
+  .settings .body { overflow-y: auto; padding: 8px; }
+  .sgroup { padding: 9px 11px; border-radius: var(--radius-sm); cursor: pointer; }
+  .sgroup:hover { background: rgba(255,255,255,0.03); }
+  .sgroup .t { font-size: 14px; }
+  .sgroup .d { font-size: 12px; color: var(--text-faint); margin-top: 2px; }
+  .pill-row { display:flex; gap:6px; margin-top:6px; }
+  .pill { font-size:11px; color:var(--text-dim); border:1px solid var(--stroke); border-radius:999px; padding:2px 8px; }
+  .pill.on { color: var(--accent); border-color: var(--accent-soft); background: var(--accent-soft); }
+
+  /* mockup-only controls */
+  .mock {
+    position: fixed; top: 14px; right: 14px; z-index: 9;
+    display: flex; gap: 6px; align-items: center;
+    font-size: 11px; color: var(--text-faint);
+  }
+  .mock button {
+    font: inherit; color: var(--text-dim); cursor: pointer;
+    background: rgba(0,0,0,.35); border: 1px solid var(--stroke);
+    border-radius: 7px; padding: 5px 9px;
+  }
+  .mock button.on { color: var(--text); border-color: var(--accent); }
+  .mock .tag { opacity:.6; margin-right:4px; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+  <div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div>
+
+  <div class="mock">
+    <span class="tag">mockup:</span>
+    <button data-state="idle">1 Idle</button>
+    <button data-state="chat" class="on">2 Chat</button>
+    <button data-state="cmd">3 ⌘K</button>
+    <button data-state="settings">4 Settings</button>
+  </div>
+
+  <!-- the overlay (Tauri window) -->
+  <div class="overlay" id="overlay">
+    <!-- input bar -->
+    <div class="bar">
+      <span class="glyph">⌕</span>
+      <input id="prompt" placeholder="Ask LAWRENCE…" autofocus />
+      <span class="kbd" id="kbar">⌘K</span>
+      <span class="icon-btn" title="settings" id="gear">⚙</span>
+    </div>
+
+    <!-- conversation view -->
+    <div id="conv">
+      <div class="divider"></div>
+      <div class="feed" id="feed" style="max-height: 52vh;">
+        <div class="msg user">
+          <div class="who">you</div>
+          <div class="body">how does the priority gate work, and where did we decide that?</div>
+        </div>
+        <div class="msg assistant">
+          <div class="who">◆ Lawrence</div>
+          <div class="body">Local inference runs in a <b>single slot</b>, serialized by a priority
+            gate ordered <code>TURN &lt; REFINE &lt; COMPACT &lt; PROACTIVE</code>. Proactive work is
+            <i>droppable</i>: if the slot is busy it returns empty instead of queuing.</div>
+          <div class="chips">
+            <span class="chip refined">⟲ refined</span>
+            <span class="chip">2 sources</span>
+            <span class="chip link">🔗 linked from “gate-design” · msg7</span>
+          </div>
+        </div>
+        <div class="finding">
+          ▸ <b>found</b> — a related note on droppable proactive calls and how the tick yields to
+          turns. <span style="color:var(--text-faint)">click to open · dismiss with ⌫</span>
+        </div>
+        <div class="msg user">
+          <div class="who">you</div>
+          <div class="body">link this answer to the “memory tiers” chat where we sketched L1/L2.</div>
+        </div>
+        <div class="msg assistant">
+          <div class="who">◆ Lawrence</div>
+          <div class="body">Linked. This message now points to <code>memory-tiers · msg12</code>; a
+            backlink chip appears on both ends, and the edge is browsable in the graph.</div>
+          <div class="chips"><span class="chip link">🔗 memory-tiers · msg12</span></div>
+        </div>
+      </div>
+      <div class="status">
+        <span class="dot"></span><span>ready</span>
+        <span style="color:var(--text-faint)">·</span><span>gemini</span>
+        <span class="spacer"></span>
+        <span class="chatsel" id="chatsel">“gate-design” &nbsp;‹ ⌥1 of 3 chats ›</span>
+      </div>
+    </div>
+
+    <!-- command menu (⌘K) — replaces the feed -->
+    <div class="cmd" id="cmd">
+      <div class="divider"></div>
+      <div class="feed" style="max-height: 56vh;">
+        <div class="cmd-sep">Chats</div>
+        <div class="cmd-item active"><span class="ci-icon">＋</span>New chat<span class="spacer"></span><span class="kbd">⌘N</span></div>
+        <div class="cmd-item"><span class="ci-icon">⇄</span>Switch chat…<span class="spacer"></span><span class="kbd">⌘P</span></div>
+        <div class="cmd-item"><span class="ci-icon">🔗</span>Link this point → another chat<span class="spacer"></span><span class="kbd">⌘L</span></div>
+        <div class="cmd-item"><span class="ci-icon">⬡</span>Open chat graph…</div>
+        <div class="cmd-sep">Manage</div>
+        <div class="cmd-item"><span class="ci-icon">⭳</span>Backup / export chat</div>
+        <div class="cmd-item"><span class="ci-icon">🗑</span>Delete chat</div>
+        <div class="cmd-item"><span class="ci-icon">⚙</span>Settings…<span class="spacer"></span><span class="kbd">⌘,</span></div>
+        <div class="cmd-sep">Perception</div>
+        <div class="cmd-item"><span class="ci-icon">◉</span>Toggle vision · audio · proactive</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- settings — a SEPARATE window (never resizes/covers the bar) -->
+  <div class="settings" id="settings">
+    <div class="head">⚙ <b>LAWRENCE · Settings</b><span class="spacer" style="flex:1"></span>
+      <span class="kbd">esc</span></div>
+    <div class="body">
+      <div class="bar" style="padding:8px 10px"><span class="glyph">⌕</span>
+        <input placeholder="search settings…" /></div>
+      <div class="sgroup"><div class="t">Model &amp; Routing</div>
+        <div class="d">preset · per-role backends (response/analysis/refine/compact-l*/extract)</div></div>
+      <div class="sgroup"><div class="t">Sampling</div>
+        <div class="d">temperature · top-p · top-k … <span style="opacity:.6">(API-dropped knobs greyed)</span></div></div>
+      <div class="sgroup"><div class="t">Memory tiers</div>
+        <div class="d">layers · per-level budget / ratio / cap / role · per-chat L1·L2 + shared L3</div></div>
+      <div class="sgroup"><div class="t">Loops</div>
+        <div class="d">slow-loop · refine depth · significance σ · journal interval · proactive</div></div>
+      <div class="sgroup"><div class="t">Retrieval / Web</div>
+        <div class="d">depth · providers · citation mode</div></div>
+      <div class="sgroup"><div class="t">Surface</div>
+        <div class="d">theme · opacity · font · zoom
+          <div class="pill-row"><span class="pill on">variant: palette</span><span class="pill">classic</span></div></div></div>
+    </div>
+  </div>
+
+<script>
+  const ov = document.getElementById('overlay');
+  const conv = document.getElementById('conv');
+  const cmd = document.getElementById('cmd');
+  const settings = document.getElementById('settings');
+  const buttons = [...document.querySelectorAll('.mock button')];
+
+  function setState(s) {
+    buttons.forEach(b => b.classList.toggle('on', b.dataset.state === s));
+    // idle = bar only; chat = bar+feed; cmd = bar+command list; settings = chat + settings window
+    conv.classList.toggle('hidden', s === 'idle' || s === 'cmd');
+    cmd.classList.toggle('show', s === 'cmd');
+    settings.classList.toggle('show', s === 'settings');
+    ov.classList.toggle('compact', s === 'idle' || s === 'cmd');
+    document.getElementById('prompt').placeholder =
+      s === 'cmd' ? 'type a command…' : 'Ask LAWRENCE…';
+    document.getElementById('prompt').focus();
+  }
+  buttons.forEach(b => b.onclick = () => setState(b.dataset.state));
+  document.getElementById('gear').onclick = () => setState('settings');
+  document.getElementById('kbar').onclick = () => setState('cmd');
+
+  addEventListener('keydown', e => {
+    const meta = e.metaKey || e.ctrlKey;
+    if (meta && e.key.toLowerCase() === 'k') { e.preventDefault(); setState('cmd'); }
+    else if (meta && e.key === ',') { e.preventDefault(); setState('settings'); }
+    else if (e.key === 'Escape') setState('chat');
+    else if (['1','2','3','4'].includes(e.key) && !e.target.matches('input'))
+      setState(['idle','chat','cmd','settings'][+e.key - 1]);
+  });
+  setState('chat');
+</script>
+</body>
+</html>

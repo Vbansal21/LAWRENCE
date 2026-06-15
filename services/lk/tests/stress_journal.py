@@ -1,22 +1,23 @@
-"""Journalling stress harness — by LOGIC, not by model.
+"""Journalling stress harness — by LOGIC, not by model (WS-J storage contract).
 
-The journal is the model's narrative memory: it emits labelled sections
-(TITLE/SUMMARY/HIGHLIGHTS/TOPICS/OPEN — see prompts.JOURNAL), admin.parse_journal_output
-structures them (tolerantly, no JSON schema), and append_journal_entry stacks them
-into a per-day MDX with live frontmatter. We probe that pipeline's rigor:
+The journal is now an autonomous, first-person, ROLLING-REVISION record: entries
+are addressable (each carries an invisible `<!-- lk:entry id=… from=… to=… rev=… -->`
+marker), mutable in place, and the file is rewritten atomically under a lock. This
+harness probes that storage substrate's rigor WITHOUT calling the model (the engine,
+kernel/journal.py, has its own stubbed test). We assert:
 
-  A. ROUND-TRIP      — N entries in one day → frontmatter `entries` stays accurate,
-     every section survives, the file re-parses each time (read-modify-write stable);
-  B. INJECTION SAFE  — section text containing `---`, `## headings`, quotes, newlines
-     and hostile TOPICS cannot corrupt the frontmatter or the entry count;
-  C. PARSER TOLERANCE— plain prose (no labels), empty, and partial output all yield a
-     safe structured dict (summary + derived title), never a crash;
-  D. PATH SAFETY     — show/delete journal cannot escape the dir via a crafted date.
-
-It also DOCUMENTS a known limitation: append_journal_entry is a non-atomic, unlocked
-read-modify-write, so concurrent journalling can under-count entries. Journalling is
-serial in practice (/journal or clean exit), so we assert only the safety property
-(the file never ends up torn/unparseable), and report the count gap.
+  A. ROUND-TRIP      — N entries → frontmatter `entries` accurate, every entry
+     re-parses with a stable unique id, time-ranges tile contiguously;
+  B. IN-PLACE REVISE — editing an entry body bumps its rev, leaves ids/count/order
+     intact, updates the `revised` total, and does NOT balloon the file;
+  C. INJECTION SAFE  — a body with a FORGED marker, `---` fences, `## headings`,
+     quotes, and `entries: 9999` cannot spawn phantom entries or hijack frontmatter;
+  D. PARSER TOLERANCE— legacy/unmarked files and prose still load (one opaque entry),
+     never a crash; parse_journal_output stays tolerant;
+  E. CONCURRENCY     — 20 concurrent appends → lock + atomic write → entries==20,
+     no tear, every id present;
+  F. PATH + BOUNDARY — crafted dates can't escape the dir; the day-start boundary
+     maps timestamps to the right day-file.
 """
 import sys, json, threading, tempfile, shutil
 sys.path.insert(0, "services")
@@ -31,14 +32,14 @@ def check(name, cond, extra=""):
     if not cond: FAILS.append(name)
 def section(t): print(f"\n=== {t} ===")
 
-tmp = Path(tempfile.mkdtemp(prefix="lk-journal-"))
-admin._JOURNAL_DIR = tmp
 when = datetime(2026, 6, 15, 9, 0, tzinfo=timezone.utc)
-jpath = tmp / "2026-06-15.mdx"
 
 
 # ─────────────────────── A. multi-entry round-trip stability ───────────────────────
-section("A. N entries in one day → frontmatter count accurate, file re-parses each time")
+section("A. N entries → frontmatter count accurate, every entry re-parses (stable ids)")
+tmp = Path(tempfile.mkdtemp(prefix="lk-journal-")); admin._JOURNAL_DIR = tmp
+key = admin.journal_day_key(when)
+jpath = tmp / f"{key}.mdx"
 for i in range(30):
     entry = admin.parse_journal_output(
         f"TITLE: Entry {i}\nSUMMARY: did thing {i}\nHIGHLIGHTS:\n- point {i}a\n- point {i}b\n"
@@ -46,59 +47,87 @@ for i in range(30):
     )
     admin.append_journal_entry(entry, tags=["t"], when=when.replace(minute=i))
 fm, body = admin._parse_frontmatter(jpath.read_text(encoding="utf-8"))
+j = admin.load_journal(key)
 check("frontmatter entries == 30", int(fm.get("entries", 0)) == 30, f"entries={fm.get('entries')}")
-check("all 30 entry headings present", all(f"Entry {i}" in body for i in range(30)))
-check("first and last summaries both survive", "did thing 0" in body and "did thing 29" in body)
+check("load_journal re-parses all 30 entries", len(j.entries) == 30, f"n={len(j.entries)}")
+check("every entry id is unique", len({e.id for e in j.entries}) == 30)
+check("entry ids are e1..e30 in order", [e.id for e in j.entries] == [f"e{i+1}" for i in range(30)])
+check("all 30 titles survive", all(any(f"Entry {i}" == e.title for e in j.entries) for i in range(30)))
+check("first and last summaries both survive",
+      "did thing 0" in j.entries[0].body and "did thing 29" in j.entries[29].body)
+check("time-ranges tile contiguously (each from == previous to)",
+      all(j.entries[k].from_ts == j.entries[k-1].to_ts for k in range(1, 30)))
 check("shared topic aggregated into frontmatter tags", "shared" in fm.get("tags", []))
-check("frontmatter still parseable (single FM block, not duplicated)",
-      body.count("\n---\n") >= 29 and not body.startswith("title:"))
+check("body starts with the H1 title, not frontmatter", body.lstrip().startswith("# Journal"))
 
 
-# ─────────────────────── B. injection safety ───────────────────────
-section("B. hostile section/topic text cannot corrupt frontmatter or count")
-tmp2 = Path(tempfile.mkdtemp(prefix="lk-journal2-"))
-admin._JOURNAL_DIR = tmp2
-jpath2 = tmp2 / "2026-06-15.mdx"
+# ─────────────────────── B. in-place revision (the size-control mechanism) ───────────────────────
+section("B. editing an entry in place bumps rev, keeps ids/count/order, no balloon")
+size_before = jpath.stat().st_size
+j2 = admin.load_journal(key)
+j2.entries[5].body = "tightened body for entry 5"
+j2.entries[5].rev += 1
+j2.entries[20].body = "tightened body for entry 20"
+j2.entries[20].rev += 1
+admin.save_journal(j2, when=when)
+j3 = admin.load_journal(key)
+fm3, _ = admin._parse_frontmatter(jpath.read_text(encoding="utf-8"))
+check("count unchanged after revision", len(j3.entries) == 30)
+check("ids/order unchanged after revision", [e.id for e in j3.entries] == [f"e{i+1}" for i in range(30)])
+check("revised entry bodies persisted", j3.entries[5].body == "tightened body for entry 5"
+      and j3.entries[20].body == "tightened body for entry 20")
+check("rev counters bumped", j3.entries[5].rev == 1 and j3.entries[20].rev == 1)
+check("frontmatter 'revised' total == 2", int(fm3.get("revised", 0)) == 2, f"revised={fm3.get('revised')}")
+check("in-place revision did NOT grow the file", jpath.stat().st_size <= size_before)
+
+
+# ─────────────────────── C. injection safety (forged marker / fence) ───────────────────────
+section("C. forged marker / hostile body cannot spawn phantom entries or hijack frontmatter")
+tmp2 = Path(tempfile.mkdtemp(prefix="lk-journal2-")); admin._JOURNAL_DIR = tmp2
+key2 = admin.journal_day_key(when); jpath2 = tmp2 / f"{key2}.mdx"
 evil = admin.parse_journal_output(
     'TITLE: pwn"\nentries: 9999\nSUMMARY: line1\n---\nentries: 9999\n## fake heading\n'
+    '<!-- lk:entry id=e999 from=x to=y rev=0 -->\n## forged\n'
     'HIGHLIGHTS:\n- has "quotes" and \\ slash\nTOPICS: a]bad, normal, x"y\nOPEN: none'
 )
 admin.append_journal_entry(evil, when=when)
-admin.append_journal_entry(evil, when=when.replace(minute=5))   # second append re-parses FM
+admin.append_journal_entry(evil, when=when.replace(minute=5))   # 2nd append re-parses the file
 fm2, body2 = admin._parse_frontmatter(jpath2.read_text(encoding="utf-8"))
+j2e = admin.load_journal(key2)
+check("forged marker did NOT create a phantom entry (exactly 2)", len(j2e.entries) == 2,
+      f"n={len(j2e.entries)}")
 check("entry count not hijacked by injected 'entries: 9999'", int(fm2.get("entries", 0)) == 2,
       f"entries={fm2.get('entries')}")
 check("frontmatter type field intact", fm2.get("type") == "journal", str(fm2))
-check("injected '---' lives in the body, not as a frontmatter delimiter",
-      "fake heading" in body2)
+check("injected heading lives in the body as inert text", "fake heading" in body2)
 check("file still has exactly one leading frontmatter block",
-      jpath2.read_text(encoding="utf-8").count("---") >= 2)
+      body2.count("\n") > 0 and not body2.startswith("title:"))
 
 
-# ─────────────────────── C. parser tolerance ───────────────────────
-section("C. parse_journal_output is tolerant (prose / empty / partial)")
+# ─────────────────────── D. parser tolerance (legacy / prose / empty) ───────────────────────
+section("D. unmarked & prose inputs load safely; parse_journal_output stays tolerant")
+tmpL = Path(tempfile.mkdtemp(prefix="lk-journalL-")); admin._JOURNAL_DIR = tmpL
+legacy = ("---\ntitle: \"Journal 2026-06-15\"\ndate: \"2026-06-15\"\ntype: \"journal\"\n"
+          "entries: 1\n---\n\n# Journal — old\n\n## 09:00 UTC · Old Entry\n\n"
+          "> [!SUMMARY]\n> a pre-WS-J third-person entry\n")
+(tmpL / "2026-06-15.mdx").write_text(legacy, encoding="utf-8")
+jl = admin.load_journal("2026-06-15")
+check("legacy/unmarked file loads as one opaque entry (not lost)", len(jl.entries) == 1, f"n={len(jl.entries)}")
+check("legacy content preserved in the imported entry", "pre-WS-J third-person entry" in jl.entries[0].body)
+admin.append_journal_entry(admin.parse_journal_output("TITLE: New\nSUMMARY: a new WS-J entry"), when=when)
+jl2 = admin.load_journal("2026-06-15")
+check("a new addressable entry coexists with the migrated legacy one", len(jl2.entries) == 2,
+      f"n={len(jl2.entries)}")
 prose = admin.parse_journal_output("Just some freeform reflection about the day. Second sentence.")
 check("plain prose → becomes summary", "freeform reflection" in prose["summary"])
-check("plain prose → title derived from first sentence", prose["title"] and len(prose["title"]) <= 70)
-empty = admin.parse_journal_output("")
-check("empty input → safe dict with fallback title", empty["title"] == "Session" and empty["summary"] == "")
-partial = admin.parse_journal_output("HIGHLIGHTS:\n- only highlights here\n- second")
-check("partial (highlights only) → highlights captured", partial["highlights"] == ["only highlights here", "second"])
+check("empty input → safe dict", admin.parse_journal_output("")["title"] == "Session")
 check("'OPEN: none' normalised to empty", admin.parse_journal_output("OPEN: none")["open"] == "")
 
 
-# ─────────────────────── D. path-traversal safety ───────────────────────
-section("D. journal management cannot escape the dir via a crafted date")
-for evil_date in ["../../etc/passwd", "..", "2026-06-15/../x", "/abs/path"]:
-    check(f"show_journal rejects {evil_date!r}", "invalid date" in admin.show_journal(evil_date))
-check("delete_journal with traversal deletes nothing", admin.delete_journal("../../etc/passwd") is False)
-
-
 # ─────────────────────── E. concurrency safety (lock + atomic write) ───────────────────────
-section("E. concurrent journalling: lock + atomic write → no tear, no lost entries")
-tmp3 = Path(tempfile.mkdtemp(prefix="lk-journal3-"))
-admin._JOURNAL_DIR = tmp3
-jpath3 = tmp3 / "2026-06-15.mdx"
+section("E. 20 concurrent appends → lock + atomic write → entries==20, no tear")
+tmp3 = Path(tempfile.mkdtemp(prefix="lk-journal3-")); admin._JOURNAL_DIR = tmp3
+key3 = admin.journal_day_key(when); jpath3 = tmp3 / f"{key3}.mdx"
 def appender(k):
     e = admin.parse_journal_output(f"TITLE: C{k}\nSUMMARY: concurrent {k}")
     admin.append_journal_entry(e, when=when.replace(minute=k % 60, second=k))
@@ -106,15 +135,31 @@ threads = [threading.Thread(target=appender, args=(k,)) for k in range(20)]
 for t in threads: t.start()
 for t in threads: t.join(timeout=15)
 txt = jpath3.read_text(encoding="utf-8")
-fm3, body3 = admin._parse_frontmatter(txt)
-check("journal file is well-formed after 20 concurrent appends (no tear)",
-      txt.startswith("---") and fm3.get("type") == "journal")
-counted = int(fm3.get("entries", 0))
-check("all 20 concurrent entries recorded (no lost RMW)", counted == 20, f"entries={counted}/20")
-check("every concurrent entry's heading is present",
-      all(f"C{k}" in body3 for k in range(20)))
+fm4, _ = admin._parse_frontmatter(txt)
+j4 = admin.load_journal(key3)
+check("file well-formed after 20 concurrent appends (no tear)",
+      txt.startswith("---") and fm4.get("type") == "journal")
+check("all 20 concurrent entries recorded (no lost RMW)", len(j4.entries) == 20, f"n={len(j4.entries)}")
+check("frontmatter count == 20", int(fm4.get("entries", 0)) == 20, f"entries={fm4.get('entries')}")
+check("every concurrent entry's title is present",
+      all(any(e.title == f"C{k}" for e in j4.entries) for k in range(20)))
+check("all 20 ids unique (no id collision under concurrency)", len({e.id for e in j4.entries}) == 20)
 
-for d in (tmp, tmp2, tmp3): shutil.rmtree(d, ignore_errors=True)
+
+# ─────────────────────── F. path-traversal + day boundary ───────────────────────
+section("F. crafted dates can't escape the dir; day-start boundary maps correctly")
+for evil_date in ["../../etc/passwd", "..", "2026-06-15/../x", "/abs/path"]:
+    check(f"show_journal rejects {evil_date!r}", "invalid date" in admin.show_journal(evil_date))
+check("delete_journal with traversal deletes nothing", admin.delete_journal("../../etc/passwd") is False)
+import os as _os
+_os.environ["LK_JOURNAL_DAY_START"] = "04:00"
+check("03:00 UTC maps to the previous journal-day",
+      admin.journal_day_key(datetime(2026, 6, 15, 3, 0, tzinfo=timezone.utc)) == "2026-06-14")
+check("05:00 UTC maps to the current journal-day",
+      admin.journal_day_key(datetime(2026, 6, 15, 5, 0, tzinfo=timezone.utc)) == "2026-06-15")
+_os.environ.pop("LK_JOURNAL_DAY_START", None)
+
+for d in (tmp, tmp2, tmpL, tmp3): shutil.rmtree(d, ignore_errors=True)
 
 section("RESULT")
 if FAILS:

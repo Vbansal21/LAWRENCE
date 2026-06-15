@@ -130,3 +130,39 @@ REFINE = {
     "required": ["better"],
     "additionalProperties": False,
 }
+
+# WS-J: the autonomous first-person journal. DRAFT writes the new entry (`narrative`
+# first + required so a partial parse still yields the prose); REVISE returns only
+# the trailing entries it actually trimmed, keyed by stable id.
+JOURNAL_DRAFT = {
+    "type": "object",
+    "properties": {
+        "narrative":  {"type": "string"},
+        "title":      {"type": "string"},
+        "highlights": {"type": "array", "items": {"type": "string"}},
+        "topics":     {"type": "array", "items": {"type": "string"}},
+        "open":       {"type": "string"},
+    },
+    "required": ["narrative"],
+    "additionalProperties": False,
+}
+
+JOURNAL_REVISE = {
+    "type": "object",
+    "properties": {
+        "revisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id":   {"type": "string"},
+                    "body": {"type": "string"},
+                },
+                "required": ["id", "body"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["revisions"],
+    "additionalProperties": False,
+}

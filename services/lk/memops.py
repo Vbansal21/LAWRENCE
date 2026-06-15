@@ -45,6 +45,7 @@ _CATEGORIES = {
 # cleared when named explicitly; ``vault`` is never auto-cleared at all.
 _OPT_IN = {
     "notes": ["notes/*"],
+    "chats": ["chats/*"],   # switchable conversations — durable, opt-in clear (WS-U)
 }
 _PRESERVE = {".writer.lock", ".gitkeep"}
 

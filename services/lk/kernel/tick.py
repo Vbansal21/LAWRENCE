@@ -74,20 +74,22 @@ class CognitiveTick(threading.Thread):
         drain_fn: Callable[[], list[dict[str, Any]]],
         act_fn:   Callable[[list[dict[str, Any]]], Any] | None = None,
         *,
-        due_fn:   Callable[[], list[Any]] | None = None,
-        fire_fn:  Callable[[Any], Any]    | None = None,
-        idle_fn:  Callable[[], Any]       | None = None,
+        due_fn:    Callable[[], list[Any]] | None = None,
+        fire_fn:   Callable[[Any], Any]    | None = None,
+        idle_fn:   Callable[[], Any]       | None = None,
+        reflect_fn: Callable[[list[dict[str, Any]]], Any] | None = None,
         interval:     float = 25.0,
         max_interval: float = 120.0,
         idle_every:   int   = 8,
         on_log:   Callable[[str], None] | None = None,
     ) -> None:
         super().__init__(name="cognitive-tick")
-        self._drain = drain_fn
-        self._act   = act_fn
-        self._due   = due_fn
-        self._fire  = fire_fn
-        self._idle  = idle_fn
+        self._drain   = drain_fn
+        self._act     = act_fn
+        self._due     = due_fn
+        self._fire    = fire_fn
+        self._idle    = idle_fn
+        self._reflect = reflect_fn
         self._base_interval = interval
         self._max_interval  = max_interval
         self._interval      = interval
@@ -138,6 +140,16 @@ class CognitiveTick(threading.Thread):
             events = list(self._drain() or [])
         except Exception:
             events = []
+
+        # 2b. per-beat reflection hook (WS-J journal trigger). Consulted EVERY beat
+        # — active or idle — so it sees the drained events' significance AND can
+        # enforce its own time-floor independent of the cadence. It never blocks:
+        # the trigger dispatches any actual journalling to a background thread.
+        if self._reflect is not None:
+            try:
+                self._reflect(events)
+            except Exception:
+                pass
 
         # 3. idle beat → ZERO model calls; back the cadence off and maybe reflect.
         if not events:

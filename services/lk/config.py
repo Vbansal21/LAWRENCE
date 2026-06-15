@@ -92,6 +92,16 @@ _ENV_MAP = {
     "slow_loop":          "LK_SLOW_LOOP",
     "elevate_delta":      "LK_ELEVATE_DELTA",
     "elevate_max_per_min": "LK_ELEVATE_MAX_PER_MIN",
+    # autonomy: WS-J journal (autonomous first-person rolling-revision journal)
+    "journal":              "LK_JOURNAL",                 # master on/off
+    "journal_day_start":    "LK_JOURNAL_DAY_START",       # "HH:MM" day boundary
+    "journal_window":       "LK_JOURNAL_WINDOW",          # trailing entries drafted/trimmed
+    "journal_revise":       "LK_JOURNAL_REVISE",          # in-place trimming pass on/off
+    "journal_web":          "LK_JOURNAL_WEB",             # per-entry web retrieval on/off
+    "journal_web_min_gap":  "LK_JOURNAL_WEB_MIN_GAP",     # throttle (s) between web calls
+    "journal_min_interval": "LK_JOURNAL_MIN_INTERVAL",    # trigger: min gap between entries
+    "journal_max_interval": "LK_JOURNAL_MAX_INTERVAL",    # trigger: time floor (≥1 per N s)
+    "journal_sig_tier":     "LK_JOURNAL_SIG_TIER",        # trigger: C2 tier that forces an entry
     "thinking":      "LK_THINKING",
     "searxng_url":   "LK_SEARXNG_URL",
     "ui_port":       "LK_UI_PORT",
@@ -225,7 +235,8 @@ def _resolve_spec(name_or_cfg: Any, cfg: dict[str, Any]) -> dict[str, Any] | Non
     if the named provider needs a key that isn't available."""
     if isinstance(name_or_cfg, dict):
         spec = dict(name_or_cfg)
-        prov = PROVIDERS.get(str(spec.get("provider", "")), {})
+        provider = str(spec.get("provider", "")).strip().lower()
+        prov = PROVIDERS.get(provider, {})
         for k, v in prov.items():
             spec.setdefault(k, v)
     else:
@@ -234,9 +245,10 @@ def _resolve_spec(name_or_cfg: Any, cfg: dict[str, Any]) -> dict[str, Any] | Non
             # treat unknown as an OpenAI-compatible base URL set elsewhere
             return None
         spec = dict(PROVIDERS[name])
+        provider = name
     kind = spec.get("kind", "local")
     if kind == "local":
-        return {"kind": "local"}
+        return {"kind": "local", "provider": "local"}
     key_env = str(spec.get("key_env", "") or "")
     api_key = os.environ.get(key_env) if key_env else None
     if kind in ("api", "anthropic") and key_env and not api_key:
@@ -244,6 +256,9 @@ def _resolve_spec(name_or_cfg: Any, cfg: dict[str, Any]) -> dict[str, Any] | Non
     # allow per-role model override via cfg["models"][provider]
     return {
         "kind": kind,
+        # Codex: preserve the named provider so model.py can apply the right
+        # request/schema compatibility rules instead of treating all APIs alike.
+        "provider": provider,
         "base_url": spec.get("base_url", ""),
         "model": str(spec.get("model", "")) or None,
         "api_key": api_key,
@@ -289,6 +304,7 @@ def apply_to_env() -> dict[str, str]:
             _model.configure_backend(
                 kind=spec["kind"], base_url=spec.get("base_url", ""),
                 api_key=spec.get("api_key"), model=spec.get("model"),
+                provider=spec.get("provider", ""),
             )
         # per-role routing (background work → fast API)
         for role, prov in (cfg.get("routing") or {}).items():

@@ -312,10 +312,20 @@ fn spawn_control_listener(app: AppHandle) {
             let Ok(stream) = stream else { continue };
             let mut line = String::new();
             let _ = BufReader::new(stream).read_line(&mut line);
-            match line.trim().to_ascii_lowercase().as_str() {
+            let command = line.trim().to_ascii_lowercase();
+            // Codex: Windows liveness probes connect without sending a verb; do
+            // not treat that blank read as toggle, or the popup will flap.
+            if command.is_empty() {
+                continue;
+            }
+            // Codex: log real control verbs so future popup churn can be traced
+            // to show/hide/toggle callers without guessing from window state.
+            eprintln!("control listener: command={command}");
+            match command.as_str() {
                 "show" => show_from_app(&app),
                 "hide" | "dismiss" => dismiss_from_app(&app),
-                _ => toggle_launcher(&app),
+                "toggle" => toggle_launcher(&app),
+                other => eprintln!("control listener: ignored command={other}"),
             }
         }
     });

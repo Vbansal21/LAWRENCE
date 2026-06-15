@@ -581,36 +581,16 @@ def run_compaction(events_text: str, layer: Any) -> str:
 
 # ── journal (on demand / session end) ────────────────────────────────────────
 
-def write_journal_entry(ctx: ContextStore) -> str:
+def write_journal_entry(ctx: ContextStore, *, retrieval: Any = None,
+                        live_fn: Callable[[str], None] | None = None) -> str:
     """
-    Write a synthesized session journal entry to memory/journal/YYYY-MM-DD.mdx.
-    Called explicitly (/journal command) or at clean exit.
+    Write a journal entry to memory/journal/YYYY-MM-DD.mdx. Called explicitly
+    (/journal command), at clean exit, and autonomously from the cognitive tick.
 
-    The model writes a title line + prose; admin.append_journal_entry assembles
-    it into a browseable MDX journal (frontmatter + timestamped, titled sections).
-    Returns the prose written, or "" if there was nothing to journal.
+    Delegates to the WS-J engine (kernel/journal.run_journal): an autonomous,
+    first-person, rolling-revision journal — it drafts a new first-person entry
+    from the trailing window + live context and lightly trims the window in place.
+    Returns the new entry's title, or "" if there was nothing to journal.
     """
-    tail = ctx.tail_for_model()
-    if tail == "(no context yet)":
-        return ""
-    try:
-        # Headroom matters: thinking models (e.g. Gemma 4) spend tokens in a
-        # thought block before the answer channel, and the amount of thinking
-        # scales with context size. 400 ran out mid-thought on a large session
-        # (→ _strip_thinking returned ""). The model stops at EOS, so a high
-        # ceiling isn't wasteful — it just guarantees room to reach the answer.
-        raw = call_model(
-            _build_messages(prompts.JOURNAL, tail, [], []),
-            max_tokens=2048, temperature=0.3, role="journal",
-        )
-        entry = raw.get("text", "").strip()
-    except Exception:
-        return ""
-    if not entry:
-        return ""
-
-    from ..admin import append_journal_entry, day_tags, parse_journal_output
-    parsed = parse_journal_output(entry)
-    append_journal_entry(parsed, tags=day_tags())
-    # Return a short human-readable confirmation (summary, falling back to title)
-    return parsed.get("summary") or parsed.get("title") or ""
+    from .journal import run_journal
+    return run_journal(ctx, retrieval=retrieval, live_fn=live_fn)

@@ -17,9 +17,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -174,39 +176,239 @@ def day_tags(date: str | None = None, limit: int = 8) -> list[str]:
     return tags[:limit]
 
 
-def _render_entry(time_str: str, entry: dict) -> str:
-    """Render one journal entry as rich, MDX/GFM-renderable markdown.
+# ── journal: addressable entry model (WS-J) ───────────────────────────────────
+# The journal is redesigned (WS-J) into an autonomous, first-person, ROLLING-
+# REVISION record: each new entry is drafted from the trailing window + live
+# rolling context, and that window is then lightly re-trimmed IN PLACE (the engine
+# lives in kernel/journal.py). For in-place revision the file must be machine-
+# addressable, so every entry carries an invisible HTML-comment marker — hidden by
+# every MDX/Markdown renderer, so the file stays browseable — that pins a stable
+# id, the time-range it covers, and how many times it has been revised.
 
-    Uses constructs that display well in MDX pipelines (Docusaurus/Nextra) and
-    degrade gracefully in plain Markdown viewers (GitHub/Obsidian/VS Code):
-    a GFM admonition for the summary, a highlights list, inline-code topic pills,
-    and a collapsible <details> block for open threads.
-    """
-    parts: list[str] = [f"## {time_str} · {entry['title']}", ""]
+_ENTRY_MARK = re.compile(r"<!--\s*lk:entry\s+(?P<attrs>[^>]*?)\s*-->", re.IGNORECASE)
 
+
+def _sanitize_block(s: str) -> str:
+    """Neutralise anything in model/user text that could forge an entry marker or a
+    frontmatter fence when the file is re-parsed (the marker is the entry delimiter,
+    so an injected one would corrupt the round-trip)."""
+    return (s or "").replace("<!--", "<! --").replace("-->", "-- >")
+
+
+def _sanitize_inline(s: str) -> str:
+    """Single-line fields (titles, topics): also strip newlines so they cannot forge
+    a heading or break the single-line marker comment."""
+    return _sanitize_block(s).replace("\r", " ").replace("\n", " ").strip()
+
+
+# ── day-boundary strategy (decision 2 — fixed now, seam for a dynamic one) ─────
+
+def _day_start_hm() -> tuple[int, int]:
+    """Configured journal day-start as (hour, minute) — LK_JOURNAL_DAY_START,
+    'HH:MM', default '00:00' (== calendar UTC date, the historical behaviour)."""
+    raw = os.environ.get("LK_JOURNAL_DAY_START", "00:00").strip()
+    try:
+        h, _, m = raw.partition(":")
+        return max(0, min(23, int(h or 0))), max(0, min(59, int(m or 0)))
+    except ValueError:
+        return 0, 0
+
+
+def journal_day_key(when: datetime | None = None) -> str:
+    """Map a timestamp to its journal-day file stem, honouring the day-start
+    boundary. A single pluggable function so the future dynamic ("running session")
+    strategy slots in here with no caller change."""
+    when = when or datetime.now(timezone.utc)
+    h, m = _day_start_hm()
+    return (when - timedelta(hours=h, minutes=m)).strftime("%Y-%m-%d")
+
+
+def journal_day_start(date_key: str) -> str:
+    """ISO timestamp of when a journal-day begins — the from_ts floor for its first
+    entry, so entry time-ranges tile the day contiguously."""
+    h, m = _day_start_hm()
+    try:
+        d = datetime.strptime(date_key, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return ""
+    return (d + timedelta(hours=h, minutes=m)).isoformat()
+
+
+# ── entry / journal containers ────────────────────────────────────────────────
+
+@dataclass
+class JournalEntry:
+    id:      str                 # stable, e.g. "e7"; survives revision
+    from_ts: str                 # ISO 8601 start of the range it covers ("" = point)
+    to_ts:   str                 # ISO 8601 end of the range
+    rev:     int                 # times this entry has been re-trimmed in place
+    title:   str
+    body:    str                 # first-person markdown block (opaque on revision)
+
+    def time_label(self) -> str:
+        return _fmt_time_range(self.from_ts, self.to_ts)
+
+
+@dataclass
+class Journal:
+    date:    str
+    entries: list[JournalEntry] = field(default_factory=list)
+    tags:    list[str]          = field(default_factory=list)
+
+
+def _hhmm(iso: str) -> str:
+    try:
+        return datetime.fromisoformat(iso).strftime("%H:%M")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _fmt_time_range(from_ts: str, to_ts: str) -> str:
+    t2 = _hhmm(to_ts) or _hhmm(from_ts)
+    t1 = _hhmm(from_ts)
+    if not t1 or not t2 or t1 == t2:
+        return f"{t2 or t1 or '??:??'} UTC"
+    return f"{t1}–{t2} UTC"
+
+
+def _next_entry_id(entries: list[JournalEntry]) -> str:
+    mx = 0
+    for e in entries:
+        m = re.match(r"e(\d+)$", e.id or "")
+        if m:
+            mx = max(mx, int(m.group(1)))
+    return f"e{mx + 1}"
+
+
+# ── rendering ─────────────────────────────────────────────────────────────────
+
+def _render_entry_body(entry: dict) -> str:
+    """Render a parsed third-person dict (parse_journal_output) into an entry body.
+    Used by the legacy/degraded append path; the WS-J engine composes its own
+    first-person body."""
+    parts: list[str] = []
     if entry.get("summary"):
-        parts += ["> [!SUMMARY]", f"> {entry['summary']}", ""]
-
+        parts.append(str(entry["summary"]).strip())
     if entry.get("highlights"):
-        parts.append("**Highlights**")
-        parts += [f"- {h}" for h in entry["highlights"]]
         parts.append("")
-
+        parts += [f"- {h}" for h in entry["highlights"]]
     if entry.get("topics"):
         pills = " · ".join(f"`{t}`" for t in entry["topics"])
-        parts += [f"**Topics:** {pills}", ""]
+        parts += ["", f"**Topics:** {pills}"]
+    open_t = str(entry.get("open") or "").strip()
+    if open_t and open_t.lower() not in ("none", "n/a", "-"):
+        parts += ["", f"> **Next:** {open_t}"]
+    return "\n".join(parts).strip()
 
-    if entry.get("open"):
-        parts += [
-            "<details>",
-            "<summary>Open threads</summary>",
-            "",
-            entry["open"],
-            "",
-            "</details>",
-            "",
-        ]
-    return "\n".join(parts).rstrip() + "\n"
+
+def _render_entry_block(e: JournalEntry) -> str:
+    """One addressable entry: invisible marker + heading + body. Title and body are
+    sanitised here — the single choke point before bytes hit disk."""
+    attrs = f"id={e.id} from={e.from_ts} to={e.to_ts} rev={int(e.rev)}"
+    title = _sanitize_inline(e.title) or "Entry"
+    body  = _sanitize_block(e.body).strip()
+    return f"<!-- lk:entry {attrs} -->\n## {e.time_label()} · {title}\n\n{body}".rstrip() + "\n"
+
+
+# ── parsing ───────────────────────────────────────────────────────────────────
+
+def _parse_entry_attrs(attrs: str) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for tok in attrs.split():
+        k, _, v = tok.partition("=")
+        if k:
+            out[k.strip()] = v.strip()
+    return out
+
+
+def _split_heading(seg: str) -> tuple[str, str]:
+    """From an entry segment (after its marker) → (title, body). Tolerant of a
+    leading/trailing `---` separator and a missing heading."""
+    s = seg.strip()
+    if s.startswith("---"):
+        s = s[3:].lstrip("\n")
+    if s.endswith("---"):
+        s = s[:-3].rstrip()
+    lines = s.splitlines()
+    if lines and lines[0].lstrip().startswith("#"):
+        head = lines[0].lstrip("#").strip()
+        title = head.split("·", 1)[1].strip() if "·" in head else head
+        return title, "\n".join(lines[1:]).strip()
+    return "", s
+
+
+def _strip_h1(body: str) -> str:
+    """Drop a leading `# Journal — …` file title."""
+    lines = body.lstrip().splitlines()
+    if lines and lines[0].startswith("# "):
+        return "\n".join(lines[1:]).lstrip()
+    return body
+
+
+def _parse_entries(body: str) -> list[JournalEntry]:
+    marks = list(_ENTRY_MARK.finditer(body))
+    if not marks:
+        # Legacy / unmarked file: preserve the whole body as ONE opaque entry so a
+        # pre-WS-J journal is never lost. New entries get markers alongside it.
+        prose = _strip_h1(body).strip()
+        return [JournalEntry("e1", "", "", 0, "Earlier (imported)", prose)] if prose else []
+    out: list[JournalEntry] = []
+    for i, mk in enumerate(marks):
+        a   = _parse_entry_attrs(mk.group("attrs"))
+        end = marks[i + 1].start() if i + 1 < len(marks) else len(body)
+        title, prose = _split_heading(body[mk.end():end])
+        try:
+            rev = int(a.get("rev", 0))
+        except ValueError:
+            rev = 0
+        out.append(JournalEntry(
+            id=a.get("id") or f"e{i + 1}",
+            from_ts=a.get("from", ""), to_ts=a.get("to", ""),
+            rev=rev, title=title or "Entry", body=prose,
+        ))
+    return out
+
+
+# ── load / save (the WS-J read-modify-write substrate) ────────────────────────
+
+def load_journal(date: str) -> Journal:
+    """Parse the day's journal into an addressable, mutable Journal. Empty if none.
+    Callers mutate `.entries` / `.tags` and call save_journal under _journal_lock."""
+    p = _JOURNAL_DIR / f"{date}.mdx"
+    try:
+        text = p.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return Journal(date=date)
+    fm, body = _parse_frontmatter(text)
+    raw_tags = fm.get("tags", [])
+    tags = list(raw_tags) if isinstance(raw_tags, list) else []
+    return Journal(date=date, entries=_parse_entries(body), tags=tags)
+
+
+def save_journal(j: Journal, when: datetime | None = None) -> Path:
+    """Atomically rewrite the day's journal from its entry list. Frontmatter
+    (entries/revised/updated/tags) is recomputed so the file stays a self-describing,
+    browseable MDX. Caller holds _journal_lock across load→mutate→save."""
+    when = when or datetime.now(timezone.utc)
+    _JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
+    path = _JOURNAL_DIR / f"{j.date}.mdx"
+    fm = {
+        "title":   f"Journal {j.date}",
+        "date":    j.date,
+        "type":    "journal",
+        "tags":    sorted(set(j.tags) | {"daily", "lawrence"}),
+        "entries": len(j.entries),
+        "revised": sum(int(e.rev) for e in j.entries),
+        "updated": when.isoformat(),
+    }
+    blocks  = "\n\n---\n\n".join(_render_entry_block(e) for e in j.entries)
+    content = (_render_frontmatter(fm)
+               + f"# Journal — {_human_date(j.date)}\n\n"
+               + blocks).rstrip() + "\n"
+    tmp = path.with_suffix(".mdx.tmp")
+    tmp.write_text(content, encoding="utf-8")
+    os.replace(tmp, path)
+    return path
 
 
 def append_journal_entry(
@@ -214,43 +416,24 @@ def append_journal_entry(
     tags: list[str] | None = None,
     when: datetime | None = None,
 ) -> Path:
-    """Append a structured entry (see parse_journal_output) to today's journal MDX,
-    creating it with frontmatter if new. Multiple entries per day stack under
-    timestamped headings; frontmatter `entries`/`updated`/`tags` are kept current
-    so the file stays a browseable journal in any MDX/Markdown viewer."""
-    when     = when or datetime.now(timezone.utc)
-    date     = when.strftime("%Y-%m-%d")
-    time_str = when.strftime("%H:%M UTC")
-    # topics from the entry enrich the file-level tags
-    tags     = sorted(set(tags or []) | set(entry.get("topics", [])) | {"daily", "lawrence"})
-
-    _JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
-    path    = _JOURNAL_DIR / f"{date}.mdx"
-    section = _render_entry(time_str, entry)
-
-    # The whole read-modify-write runs under the lock and lands via an atomic
-    # temp+replace, so concurrent/tick-driven entries can't tear the file.
+    """Append ONE structured entry (see parse_journal_output) as a new addressable
+    entry on the day's journal. This is the legacy/degraded single-shot path
+    (used by the WS-J engine's fallback and any direct caller); the autonomous
+    rolling-revision path lives in kernel/journal.py. Locked + atomic so concurrent
+    or tick-driven entries can never tear the file."""
+    when    = when or datetime.now(timezone.utc)
+    date    = journal_day_key(when)
+    add     = sorted(set(tags or []) | set(entry.get("topics", [])) | {"daily", "lawrence"})
+    body    = _render_entry_body(entry)
     with _journal_lock:
-        if path.exists():
-            fm, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
-            fm["entries"] = int(fm.get("entries", 1)) + 1
-            fm["updated"] = when.isoformat()
-            fm["tags"]    = sorted(set(fm.get("tags", [])) | set(tags))
-            content = _render_frontmatter(fm) + body.rstrip() + "\n\n---\n\n" + section
-        else:
-            fm = {
-                "title":   f"Journal {date}",
-                "date":    date,
-                "type":    "journal",
-                "tags":    tags,
-                "entries": 1,
-                "updated": when.isoformat(),
-            }
-            content = _render_frontmatter(fm) + f"# Journal — {_human_date(date)}\n\n" + section
-        tmp = path.with_suffix(".mdx.tmp")
-        tmp.write_text(content, encoding="utf-8")
-        os.replace(tmp, path)
-    return path
+        j       = load_journal(date)
+        from_ts = j.entries[-1].to_ts if j.entries else journal_day_start(date)
+        j.entries.append(JournalEntry(
+            id=_next_entry_id(j.entries), from_ts=from_ts or "", to_ts=when.isoformat(),
+            rev=0, title=str(entry.get("title") or "Session"), body=body,
+        ))
+        j.tags = sorted(set(j.tags) | set(add))
+        return save_journal(j, when=when)
 
 
 # ── journal: management ───────────────────────────────────────────────────────

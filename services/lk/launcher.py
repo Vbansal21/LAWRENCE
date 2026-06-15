@@ -42,6 +42,13 @@ def _clear() -> None:
 
 def _run_front(*args: str) -> int:
     """Run a front-door command as a child so we always return to the menu."""
+    from . import ctl
+    ok, _kind, reason = ctl.claim_launcher_action(list(args))
+    if not ok:
+        # Codex: TUI uses the same no-queue launcher gate as the GUI, so rapid
+        # command entry gets a clear refusal instead of overlapping subprocesses.
+        print(_c("33", f"  skipped: {reason}"))
+        return 1
     return subprocess.call([sys.executable, str(FRONT), *args])
 
 
@@ -147,6 +154,23 @@ def _act_notes() -> None:
     _pause()
 
 
+def _act_memory() -> None:
+    _clear()
+    print(_c("1", "  Memory") + _c("2", "  stats · backup · clear-cache · clear-rolling · clear-logs · clear-all"))
+    q = input("\n  memory> ").strip()
+    _run_front("memory", *(q.split() if q else ["stats"]))
+    _pause()
+
+
+def _act_key() -> None:
+    provider = input("  provider (blank = list): ").strip()
+    if provider:
+        _run_front("secrets", "set", provider)
+    else:
+        _run_front("secrets", "list")
+    _pause()
+
+
 # (key, label, callable). Callables either run a front-door command or a local action.
 def _menu() -> list[tuple[str, str, object]]:
     return [
@@ -154,14 +178,17 @@ def _menu() -> list[tuple[str, str, object]]:
         ("2", "Open popup    — show/focus the UI",           lambda: _run_front("ui")),
         ("3", "Stop          — leave the model warm",        lambda: _run_front("stop")),
         ("4", "Stop all      — also stop the model server",  lambda: _run_front("stop", "--all")),
+        ("5", "Processes     — list launcher-managed PIDs",  lambda: _run_front("processes")),
+        ("6", "Restart       — stop then start",             lambda: _run_front("restart")),
         ("b", "Rebuild popup — recompile the Tauri binary",  lambda: _run_front("rebuild")),
         ("x", "Force reset   — clean slate from any wedged state", lambda: _run_front("reset", "--all")),
         ("r", "Chat (REPL)   — talk to it in this terminal", lambda: _run_front("repl")),
         ("w", "Setup wizard  — first-run detect & write config", lambda: _run_front("wizard")),
         ("p", "Presets       — backend / routing in one pick", _act_presets),
-        ("k", "API keys      — store a provider key (0600)",  lambda: _run_front("secrets", "list")),
+        ("k", "API keys      — list or store provider keys",  _act_key),
         ("c", "Config        — show/edit preferences",        lambda: _run_front("config", "list")),
         ("g", "Ingest        — add a doc/URL to the KB",      _act_ingest),
+        ("m", "Memory        — stats/backup/clear",           _act_memory),
         ("n", "Notes         — browse the zettelkasten",      _act_notes),
         ("d", "Doctor        — diagnose deps & pipelines",    lambda: _run_front("doctor")),
         ("l", "Logs          — tail bridge/popup/server",     lambda: _run_front("logs")),
@@ -200,7 +227,7 @@ def run() -> int:
         try:
             fn()
             # front-door commands already printed; give a beat unless they paused.
-            if choice in {"1", "2", "3", "4", "b", "x", "w", "k", "c", "d", "l"}:
+            if choice in {"1", "2", "3", "4", "5", "6", "b", "x", "w", "c", "d", "l"}:
                 _pause()
         except KeyboardInterrupt:
             pass

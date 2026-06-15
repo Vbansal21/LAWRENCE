@@ -37,7 +37,7 @@ npm run dev:web
 | `npm run popup:stop` | Stops the popup and bridge started by the popup controller. |
 | `npm run popup:restart` | Restarts the popup and bridge. |
 | `npm run popup:status` | Shows popup, bridge, hotkey, and blur-hide state. |
-| `npm run popup:doctor` | Shows LAWRENCE processes, model/bridge/event ports, and unused adjacent services such as Ollama. |
+| `npm run popup:doctor` | Shows LAWRENCE processes and model/bridge/event ports. Ollama is not part of LAWRENCE and should be disabled/removed if present. |
 | `npm run popup:hotkey -- Ctrl+Shift+L` | Persists a new popup hotkey; restart afterward. |
 | `npm run services:start` | Starts only the WSL desktop bridge/services for a host-native UI. |
 | `npm run services:stop` | Stops only the WSL desktop bridge. |

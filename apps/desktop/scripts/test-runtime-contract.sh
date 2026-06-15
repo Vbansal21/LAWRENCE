@@ -41,7 +41,7 @@ required_fragments = [
     "desktop HTTP bridge",
     "desktop SSE event stream",
     "non-LAWRENCE process; not touching it",
-    "ollama server (not used by LAWRENCE)",
+    "\"removedServices\"",
     "host ui config:",
     "\"uiRuntime\": \"host-native\"",
     "host install plan:",
@@ -170,7 +170,7 @@ checks = {
     "hotkeyHelper": data.get("ui", {}).get("windowsHotkeyHelper") == "apps/desktop/host/windows/Register-Hotkey.ps1",
     "dataPlane": data.get("security", {}).get("dataPlane") == "loopback-http-sse",
     "controlPlane": data.get("security", {}).get("controlPlane") == "windows-host-helper-or-named-pipe",
-    "adjacentPolicy": data.get("adjacentServices", {}).get("policy") == "warn-only",
+    "ollamaRemoved": "ollama" in data.get("removedServices", {}),
 }
 failed = [name for name, ok in checks.items() if not ok]
 if failed:

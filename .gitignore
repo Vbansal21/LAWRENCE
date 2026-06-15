@@ -41,4 +41,5 @@ memory/*.*
 memory/journal/*.*
 memory/logs/*.*
 memory/vault/*.*
+memory/notes/*.*
 !memory/vault/.gitkeep

@@ -37,6 +37,8 @@ $modControl = 0x0002
 $modShift = 0x0004
 $vkL = 0x4C
 $wmHotkey = 0x0312
+$lastHotkey = [DateTime]::MinValue
+$debounceMs = 700
 
 if (-not [LawrenceHotkey]::RegisterHotKey([IntPtr]::Zero, $id, $modControl -bor $modShift, $vkL)) {
   throw "Could not register Ctrl+Shift+L. Another app may already own it."
@@ -51,10 +53,15 @@ try {
       break
     }
     if ($msg.message -eq $wmHotkey -and $msg.wParam.ToUInt32() -eq $id) {
+      # Codex: this is the popup:show path; show is idempotent, while toggle
+      # makes repeated Windows hotkey events hide the UI immediately after show.
+      $now = [DateTime]::UtcNow
+      if (($now - $lastHotkey).TotalMilliseconds -lt $debounceMs) { continue }
+      $lastHotkey = $now
       Start-Process -WindowStyle Hidden -FilePath "wsl.exe" -ArgumentList @(
         "-d", $WslDistro,
         "--cd", $WslDesktop,
-        "--", "bash", "scripts/desktopctl.sh", "toggle"
+        "--", "bash", "scripts/desktopctl.sh", "show"
       )
     }
   }

@@ -63,11 +63,31 @@ class Backend:
     base_url: str = ""               # api only, e.g. "https://api.openai.com/v1"
     api_key:  str | None = None      # api/anthropic (anthropic falls back to ANTHROPIC_API_KEY)
     model:    str | None = None      # served model name (api/anthropic)
+    provider: str = "local"          # named provider; keeps API compatibility rules separate
 
 
 _backend = Backend()                     # default backend (query path)
 _routing: dict[str, Backend] = {}        # role → Backend (background work routing)
 _active = threading.local()              # per-thread currently-active backend
+
+
+def _infer_provider(kind: str, base_url: str = "", model: str | None = None) -> str:
+    if kind == "local":
+        return "local"
+    if kind == "anthropic":
+        return "anthropic"
+    marker = f"{base_url} {model or ''}".lower()
+    if "generativelanguage.googleapis.com" in marker or "gemini" in marker:
+        return "gemini"
+    if "openrouter" in marker:
+        return "openrouter"
+    if "api.openai.com" in marker or (model or "").lower().startswith(("gpt-", "o")):
+        return "openai"
+    if "api.poe.com" in marker:
+        return "poe"
+    if "127.0.0.1:1234" in marker or "localhost:1234" in marker:
+        return "lmstudio"
+    return "api"
 
 
 def _current_backend() -> Backend:
@@ -78,10 +98,14 @@ def _current_backend() -> Backend:
 
 
 def configure_routing(role: str, *, kind: str = "local", base_url: str = "",
-                      api_key: str | None = None, model: str | None = None) -> None:
+                      api_key: str | None = None, model: str | None = None,
+                      provider: str = "") -> None:
     """Route a role (extract/proactive/compact/journal/study/…) to a specific
     backend. Roles with no route use the default backend."""
-    _routing[role] = Backend(kind=kind, base_url=base_url or "", api_key=api_key, model=model)
+    _routing[role] = Backend(
+        kind=kind, base_url=base_url or "", api_key=api_key, model=model,
+        provider=provider or _infer_provider(kind, base_url, model),
+    )
 
 
 def clear_routing() -> None:
@@ -114,6 +138,7 @@ def configure_backend(
     base_url: str | None = None,
     api_key: str | None = None,
     model: str | None = None,
+    provider: str | None = None,
 ) -> None:
     """Update the active backend. Unspecified fields are left unchanged."""
     if kind is not None:
@@ -124,6 +149,10 @@ def configure_backend(
         _backend.api_key = api_key
     if model is not None:
         _backend.model = model
+    if provider is not None:
+        _backend.provider = provider or _infer_provider(_backend.kind, _backend.base_url, _backend.model)
+    elif kind is not None or base_url is not None or model is not None:
+        _backend.provider = _infer_provider(_backend.kind, _backend.base_url, _backend.model)
 
 
 def backend() -> Backend:
@@ -139,6 +168,7 @@ def backend_from_env() -> bool:
             kind="anthropic",
             api_key=os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("LK_API_KEY") or None,
             model=os.environ.get("LK_API_MODEL") or _ANTHROPIC_DEFAULT_MODEL,
+            provider="anthropic",
         )
         return True
     base = os.environ.get("LK_API_BASE", "").strip()
@@ -149,13 +179,14 @@ def backend_from_env() -> bool:
         base_url=base,
         api_key=os.environ.get("LK_API_KEY") or None,
         model=os.environ.get("LK_API_MODEL") or None,
+        provider=_infer_provider("api", base, os.environ.get("LK_API_MODEL")),
     )
     return True
 
 
 def describe_backend() -> str:
     if _backend.kind == "api":
-        return f"api: {_backend.model or '(no model set)'} @ {_backend.base_url}"
+        return f"api/{_backend.provider}: {_backend.model or '(no model set)'} @ {_backend.base_url}"
     if _backend.kind == "anthropic":
         return f"anthropic: {_backend.model or _ANTHROPIC_DEFAULT_MODEL} @ api.anthropic.com"
     return f"local: {_server.server_url()}"
@@ -389,28 +420,86 @@ def health(timeout: float = 4.0) -> bool:
 
 # ── constrained decoding (local + OpenAI-compatible) ──────────────────────────
 
-# Sampling knobs only llama-server understands — stripped before any remote
-# OpenAI-compatible endpoint (OpenAI proper rejects unknown params with 400).
-_LLAMA_ONLY_KEYS = (
-    "min_p", "top_k", "typical_p", "tfs_z", "repeat_penalty", "repeat_last_n",
-    "mirostat", "mirostat_tau", "mirostat_eta",
-    "dry_multiplier", "dry_base", "dry_allowed_length",
-)
+_API_OPTION_KEYS = {
+    "api":        {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
+    "openai":     {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
+    "openrouter": {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
+    "lmstudio":   {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
+    "poe":        {"top_p", "stop"},
+    "gemini":     {"top_p", "stop"},
+}
 
 _SCHEMA_MODES = ("json_schema", "json_object", "none")
-_schema_mode: dict[str, str] = {}   # backend kind → first shape that worked
+_schema_mode: dict[str, str] = {}   # provider key → first shape that worked
+
+
+def _schema_key(b: Backend) -> str:
+    return f"{b.kind}:{b.provider or _infer_provider(b.kind, b.base_url, b.model)}:{b.base_url.rstrip('/')}"
+
+
+def _schema_modes_for(b: Backend) -> tuple[str, ...]:
+    if b.provider == "gemini":
+        # Codex: Gemini's OpenAI-compatible endpoint documents structured
+        # outputs, but not llama.cpp's older json_object+schema fallback.
+        return ("json_schema", "none")
+    return _SCHEMA_MODES
+
+
+def _schema_for_backend(schema: dict[str, Any], b: Backend) -> dict[str, Any]:
+    if b.provider != "gemini":
+        return schema
+
+    def clean(node: Any) -> Any:
+        if isinstance(node, list):
+            return [clean(x) for x in node]
+        if not isinstance(node, dict):
+            return node
+        out: dict[str, Any] = {}
+        for k, v in node.items():
+            if k == "additionalProperties":
+                continue
+            if k == "anyOf":
+                choices = [clean(x) for x in v if isinstance(x, dict) and x.get("type") != "null"]
+                if choices:
+                    out.update(choices[0])
+                continue
+            out[k] = clean(v)
+        return out
+
+    # Codex: keep LAWRENCE's strict local schemas intact; Gemini gets a relaxed
+    # subset so its compatibility layer sees only schema features it reliably accepts.
+    return clean(schema)
 
 
 def _apply_schema(payload: dict[str, Any], schema: dict[str, Any], mode: str) -> dict[str, Any]:
     p = dict(payload)
     if mode == "json_schema":        # OpenAI-style; current llama-server + OpenRouter
+        envelope: dict[str, Any] = {"name": "lk_envelope", "schema": schema}
+        if _current_backend().provider != "gemini":
+            envelope["strict"] = True
         p["response_format"] = {
             "type": "json_schema",
-            "json_schema": {"name": "lk_envelope", "strict": True, "schema": schema},
+            "json_schema": envelope,
         }
     elif mode == "json_object":      # older llama-server shape
         p["response_format"] = {"type": "json_object", "schema": schema}
     return p
+
+
+def _api_options_for_backend(b: Backend, options: dict[str, Any]) -> dict[str, Any]:
+    allowed = _API_OPTION_KEYS.get(b.provider, _API_OPTION_KEYS["api"])
+    out: dict[str, Any] = {}
+    for k, v in options.items():
+        if v is None:
+            continue
+        if k in allowed:
+            out[k] = v
+            continue
+        # Codex: advanced llama.cpp/OpenAI knobs stay configurable, but are
+        # dropped per provider when that API rejects or ignores them.
+        _warn_once(f"{b.provider}-drop-{k}",
+                   f"[model] '{k}' is not supported by {b.provider} — dropped for this backend")
+    return out
 
 
 def _generate(
@@ -422,16 +511,21 @@ def _generate(
 ) -> str:
     """One generation against local/api, attaching the schema in whichever
     response_format shape this backend accepts (probed once, then cached)."""
-    kind = _backend.kind
+    b = _current_backend()
+    key = _schema_key(b)
     if schema is None:
         if stream_fn:
             return _post_stream(payload, req_timeout, wall_timeout, stream_fn)
         resp = _post_with_retry(payload, req_timeout)
         return resp["choices"][0]["message"]["content"] or ""
 
-    start = _schema_mode.get(kind, "json_schema")
+    modes = _schema_modes_for(b)
+    start = _schema_mode.get(key, modes[0])
+    if start not in modes:
+        start = modes[0]
+    schema = _schema_for_backend(schema, b)
     last_err: Exception | None = None
-    for mode in _SCHEMA_MODES[_SCHEMA_MODES.index(start):]:
+    for mode in modes[modes.index(start):]:
         p = _apply_schema(payload, schema, mode)
         try:
             if stream_fn:
@@ -441,11 +535,11 @@ def _generate(
                 # rejected shape); the final plain mode gets normal retries.
                 resp = _post(p, req_timeout) if mode != "none" else _post_with_retry(p, req_timeout)
                 text = resp["choices"][0]["message"]["content"] or ""
-            if _schema_mode.get(kind) != mode:
-                _schema_mode[kind] = mode
+            if _schema_mode.get(key) != mode:
+                _schema_mode[key] = mode
                 if mode == "none":
-                    _warn_once(f"schema-none-{kind}",
-                               f"[model] {kind} backend rejected response_format — "
+                    _warn_once(f"schema-none-{key}",
+                               f"[model] {b.provider} backend rejected response_format — "
                                "running without constrained decoding")
             return text
         except RuntimeError as exc:
@@ -462,6 +556,41 @@ def _generate(
 # ── anthropic (native Claude Messages API) ────────────────────────────────────
 
 _DATA_URL_RE = re.compile(r"^data:([^;]+);base64,(.*)$", re.DOTALL)
+
+
+def _audio_format_from_mime(mime: str) -> str:
+    suffix = mime.rsplit("/", 1)[-1].lower()
+    return {"mpeg": "mp3", "x-wav": "wav"}.get(suffix, suffix or "wav")
+
+
+def _messages_for_backend(messages: list[dict[str, Any]], b: Backend) -> list[dict[str, Any]]:
+    if b.provider != "gemini":
+        return messages
+    converted: list[dict[str, Any]] = []
+    for msg in messages:
+        content = msg.get("content")
+        if not isinstance(content, list):
+            converted.append(msg)
+            continue
+        blocks: list[dict[str, Any]] = []
+        for block in content:
+            if block.get("type") != "audio_url":
+                blocks.append(block)
+                continue
+            url = (block.get("audio_url") or {}).get("url", "")
+            m = _DATA_URL_RE.match(url)
+            if not m:
+                _warn_once("gemini-audio-url",
+                           "[model] gemini expects inline input_audio blocks — audio URL dropped")
+                continue
+            # Codex: LAWRENCE keeps its internal audio_url block, then adapts it
+            # only for Gemini's documented OpenAI-compatible input_audio shape.
+            blocks.append({
+                "type": "input_audio",
+                "input_audio": {"data": m.group(2), "format": _audio_format_from_mime(m.group(1))},
+            })
+        converted.append({**msg, "content": blocks})
+    return converted
 
 
 def _anthropic_client(timeout: float | None):
@@ -620,7 +749,7 @@ def call_model(
             )
 
         payload: dict[str, Any] = {
-            "messages":    messages,
+            "messages":    _messages_for_backend(messages, b),
             "max_tokens":  max_tokens,
             "temperature": temperature,
             "stream":      False,
@@ -634,12 +763,9 @@ def call_model(
             "dry_allowed_length": dry_allowed_length, "seed": seed, "stop": stop or None,
         }
         if b.kind == "api":
-            for k in _LLAMA_ONLY_KEYS:
-                if _opt.get(k) is not None:
-                    _warn_once(f"api-drop-{k}",
-                               f"[model] '{k}' is llama.cpp-only — dropped for the API backend")
-                    _opt[k] = None
-        payload.update({k: v for k, v in _opt.items() if v is not None})
+            payload.update(_api_options_for_backend(b, _opt))
+        else:
+            payload.update({k: v for k, v in _opt.items() if v is not None})
 
         if b.kind == "api":
             if not b.model:
@@ -681,7 +807,7 @@ def call_model(
         _warn_once(f"route-fallback-{role}",
                    f"[model] role={role} {primary.kind} backend failed ({exc}); "
                    "falling back to local")
-        _active.backend = Backend(kind="local")
+        _active.backend = Backend(kind="local", provider="local")
         try:
             return _attempt()
         finally:

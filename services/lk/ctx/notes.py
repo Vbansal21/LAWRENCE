@@ -65,6 +65,7 @@ class NoteStore:
     ) -> None:
         self._dir   = mem_dir / "notes"
         self._index = self._dir / "index.jsonl"
+        self._edges = self._dir / "edges.jsonl"
         self._lock  = threading.Lock()
         self._index_fn = index_fn        # optional: (id, title, body) → retrieval FTS
         self._dir.mkdir(parents=True, exist_ok=True)
@@ -187,9 +188,83 @@ class NoteStore:
         """Count + total bytes of the notes tree (for `lk memory` / memops)."""
         files = list(self._dir.glob("*.md"))
         nbytes = 0
-        for p in [*files, self._index]:
+        for p in [*files, self._index, self._edges]:
             try:
                 nbytes += p.stat().st_size
             except OSError:
                 pass
         return {"notes": len(files), "bytes": nbytes}
+
+    # ── generic graph edges (WS-U Track 2) ──────────────────────────────────────
+    # Notes link note↔note via `[[id]]`. The graph generalises to ANY addressable
+    # node — chat messages ("<chatId>:<seq>"), whole chats ("<chatId>"), or notes —
+    # so "link this point → another chat" is a bidirectional edge in the SAME graph
+    # as the zettelkasten. Edges live in an append-only edges.jsonl; node ids are
+    # opaque strings, so messages and notes coexist as first-class nodes.
+
+    def _read_edges(self) -> list[dict[str, Any]]:
+        out: list[dict[str, Any]] = []
+        try:
+            lines = self._edges.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return out
+        for l in lines:
+            if l.strip():
+                try:
+                    out.append(json.loads(l))
+                except json.JSONDecodeError:
+                    pass
+        return out
+
+    def add_edge(
+        self, src: str, dst: str, *, kind: str = "link", meta: dict[str, Any] | None = None
+    ) -> bool:
+        """Create a bidirectional edge between two nodes. Idempotent — an identical
+        (src, dst, kind) edge is never duplicated. Returns True if a new edge was
+        written. Self-loops and empty ids are rejected."""
+        src, dst = str(src or "").strip(), str(dst or "").strip()
+        if not src or not dst or src == dst:
+            return False
+        with self._lock:
+            for e in self._read_edges():
+                if e.get("src") == src and e.get("dst") == dst and e.get("kind", "link") == kind:
+                    return False
+            rec: dict[str, Any] = {
+                "src": src, "dst": dst, "kind": kind,
+                "ts": datetime.now(timezone.utc).isoformat(),
+            }
+            if meta:
+                rec["meta"] = meta
+            with self._edges.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        return True
+
+    def edges_for(self, node: str) -> list[dict[str, Any]]:
+        """Every edge incident on ``node``, each annotated with the other endpoint
+        and direction ('out' = node is src, 'in' = node is dst)."""
+        node = str(node or "").strip()
+        out: list[dict[str, Any]] = []
+        for e in self._read_edges():
+            if e.get("src") == node:
+                out.append({**e, "peer": e.get("dst"), "dir": "out"})
+            elif e.get("dst") == node:
+                out.append({**e, "peer": e.get("src"), "dir": "in"})
+        return out
+
+    def neighborhood(self, node: str) -> dict[str, Any]:
+        """The local graph around ``node``: its edges (both directions) plus, when
+        ``node`` is itself a note id, that note's forward `[[links]]` and backlinks —
+        so messages and notes surface uniformly when navigating cross-chat links."""
+        node = str(node or "").strip()
+        edges = self.edges_for(node)
+        result: dict[str, Any] = {
+            "node": node,
+            "out":  [e["peer"] for e in edges if e["dir"] == "out"],
+            "in":   [e["peer"] for e in edges if e["dir"] == "in"],
+            "edges": edges,
+        }
+        rec = next((e for e in self._read_index() if e.get("id") == node), None)
+        if rec is not None:
+            result["links"] = list(rec.get("links") or [])
+            result["backlinks"] = self.backlinks(node)
+        return result

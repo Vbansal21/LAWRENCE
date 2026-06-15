@@ -418,6 +418,40 @@ Autonomy must never cost operability or safety.
 ---
 
 ## 6. Progress log
+- **2026-06-15** — **WS-U Track 1 + Track 2 (the BASE half) DONE — gate green, 22 suites.**
+  Built the UI-agnostic chat-workspace subsystem ahead of any UI ("keep UI for last"):
+  **Track 1** — `ctx/chats.py ChatStore` (registry `memory/chats/index.json`, per-chat
+  durable transcript `<id>/messages.jsonl` with stable addressable ids `<chatId>:<seq>`,
+  active-pointer that survives restart, auto-title, CRUD + MDX export, `ensure_default`
+  scratch-chat degraded path). **Hybrid memory** — two additive `ContextStore` primitives:
+  `promote_fn` (a top archive layer forwards aged-out entries instead of dropping) +
+  `ingest_summary` (append a promoted summary into the deepest/shared tier, bounded). The
+  bridge runs a per-chat conversation store (`_CONVERSATION_LAYERS` under `memory/chats/<id>/`)
+  whose L2 promotes into the global store's shared L3, and composes *global ambient +
+  active-chat conversation* per turn via `_ChatContext` — resolving the open L1-split
+  question (ambient = global, conversation = per-chat). **Track 2** — generic graph edges on
+  `NoteStore` (`edges.jsonl`, `add_edge`/`edges_for`/`neighborhood`; opaque node ids make
+  messages, chats, and notes first-class nodes in one graph). **Contract** (add-only, I5):
+  `GET/POST /chats`, `GET /chats/{id}`, `POST /chats/{id}/switch`, `PATCH/DELETE /chats/{id}`,
+  `GET /chats/{id}/export`, `POST /links`, `GET /links/{chatId}/{msgId}`; `health.activeChat`;
+  bridge records each turn's user+assistant message to the active chat. **Parity** — `lk chats`
+  + `lk links`; memops `chats` opt-in category (counted/backed-up, spared by clear-all). New
+  suites `test_chats.py` + `test_chat_memory.py` wired into check.sh + Makefile. Single-writer
+  (I1) preserved (promote writes to a *different* store under its own lock). UI tracks (0/A/B)
+  remain, deferred to last.
+- **2026-06-15** — **WS-J journal redesign DONE** (autonomous, first-person,
+  rolling-revision durable episodic memory; addressable mutable entries in `admin.py`,
+  engine + significance-gated/time-floor `JournalTrigger` in `kernel/journal.py` wired as
+  the tick's new `reflect_fn` in cli.py + ui_bridge.py; gate now 20 suites). Plus a
+  **launcher clean-shutdown fix** (bridge reaps tick + observers on exit; `lk stop --all`
+  auto-force-reaps the stateless model — no more manual force-kill; warm-on-plain-stop
+  kept). **Planning pass for WS-U → switchable UIs:** user authorised a NEW UI design kept
+  selectable alongside the old one. Rewrote §8 with the **UI-variant architecture** (§8.0):
+  a variant-blind Tauri shell + `bootstrap.js` switch + a single `web/lib/bridge.js`
+  contract client both UIs share, gated by `ui_variant` (GUI==CLI), with base-robustness
+  turned into three `stress_ui.py` assertions. Tracks: **0** seam (proves UI-agnosticism) →
+  **A** `classic` minimal refactor → **B** new `palette` command-palette variant. No UI
+  code yet this turn.
 - **2026-06-14** — Phase A complete (control plane: launcher, parity, memory mgmt,
   lifecycle mutex + force-reset, rebuild). Autonomy doc created, then expanded into
   the granular WS-M/P/C/T/A/X plan with tests, dependencies, and the contributor
@@ -608,7 +642,13 @@ Autonomy must never cost operability or safety.
 - Self-check: **stale-result guard** — never surface A's refinement after the
   context moved on. Defer until R1+R2+C1 are stable.
 
-## 8. WS-U — UI refinement (the Raycast surface)  `[ ]`
+## 8. WS-U — UI refinement (the Raycast surface)  `[~]`
+
+> Status 2026-06-15: the **BASE** half is built and gate-green — Track 1 (chat/session
+> model + hybrid per-chat memory) and Track 2 (cross-chat message graph), both UI-agnostic
+> over the HTTP/SSE contract. The **UI** half (Track 0 seam, Track A `classic` refactor,
+> Track B `palette` variant) is deferred to last per the user. The base now offers chats +
+> links over the wire so either variant can consume them.
 
 > Intent (README + memory `lawrence-desktop-ops`/`lawrence-target-architecture`):
 > a **Tauri-native floating overlay** (NOT a web app), **Raycast-style** — one input
@@ -627,7 +667,160 @@ Autonomy must never cost operability or safety.
 needed (`lawrence-desktop-ops`); never touch `.code-workspace` (I6); CLI=GUI parity
 preserved (every control removed from view stays reachable via overlay/command).
 
-- **U1 — Raycast geometry.** Window collapses to just the input bar when idle
+### 8.0 — UI-variant architecture (switchable UIs) — **decision 2026-06-15**
+
+> User directive: refactor the current UI (don't change it dramatically) **and** ship
+> a **new, better design as a switchable option**, with the old one kept selectable.
+> "The base is supposed to be robust to the UI" — so two front-ends must coexist over
+> one stable contract, and if that strains anything, that strain marks exactly the
+> coupling to fix. This subsection makes the seam **explicit and tested**; U1–U5 below
+> are then scoped to the variants per the tracks.
+
+**The seam (what "base robust to the UI" means concretely).** The base↔UI contract is
+already the bridge's **HTTP + SSE** wire (I5): GET `/health` `/tasks` `/history` `/jobs`
+`/history/*` `/jobs/*`; POST `/turn` `/turn/async` `/context` `/context-pack/async`
+`/observer` `/tasks` `/voice` `/voice/listen` `/ingest`; SSE envelope `{type: status |
+context | tasks | delta | finding | refined | response}`. Nothing presentational lives
+below it. A new UI is therefore "just another client of that wire" — no kernel change.
+
+**Target front-end layout (no Rust change, no second build).** The Tauri shell stays
+variant-blind; the switch is a pure dynamic import:
+
+```
+web/
+  index.html          thin bootstrap shell (variant-blind; unchanged chrome)
+  bootstrap.js        reads the variant from /health, dynamic-imports the entry,
+                      falls back to `classic` on ANY error (robust default)
+  lib/
+    bridge.js         ← THE contract client: the ONLY module that talks to the base.
+                        Wraps transport (Tauri bridge_get/bridge_post + fetch fallback)
+                        + an SSE event-bus + typed commands (health, sendTurn, asyncTurn,
+                        pollJob, observer, tasks, voice, ingest). Both variants import it.
+    markdown.js       vendored single-file md renderer (shared; kills hand-rolled renderMdx)
+  variants/
+    classic/{app.js,styles.css}   today's UI, refactored to consume lib/bridge.js
+    palette/{app.js,styles.css}   the NEW command-palette UI (Track B)
+```
+
+**Variant selection.** New config key `ui_variant` (`config._ENV_MAP →
+LK_UI_VARIANT`, default `classic`), surfaced in `/health` as `uiVariant`, switchable by
+`lk config set ui_variant palette` **and** a picker in the settings surface (GUI==CLI
+parity). `bootstrap.js` resolves it once, imports `variants/<v>/app.js`, and on any
+failure imports `classic` — so a broken new variant can never brick the overlay.
+
+**Base-robustness, made a tested invariant (extend `tests/stress_ui.py`).**
+- **Seam enforcement:** only `web/lib/bridge.js` may reference the raw transport
+  (`bridge_get`/`bridge_post`/`EventSource`/`fetch`); a grep over `web/variants/**`
+  for those tokens must be empty. (A variant reaching around the client = coupling bug.)
+- **Contract parity:** every SSE `payload.type` the bridge can emit is handled by
+  `lib/bridge.js`'s event-bus (the old `app.js` emit/handle-parity check, relocated to
+  the shared client so it covers *all* variants at once).
+- **Both entrypoints compile:** `node --check` on `lib/bridge.js` + each
+  `variants/*/app.js` (added to `scripts/check.sh`).
+*Check:* the three assertions above pass; `lk config set ui_variant palette && lk
+config get ui_variant` round-trips; with the bridge stubbed, `bootstrap` falls back to
+`classic` when `variants/palette` throws.
+
+### 8.1 — Chat workspace & memory model — **locked 2026-06-15**
+
+Three decisions (user) that turn the "UI refinement" into a real workspace and add
+**base** capabilities (UI-agnostic, exposed over the contract; both variants may consume):
+
+1. **Native feel = Tauri webview, restyled native** (NOT a Rust/egui rewrite). Kill the
+   web-page look in CSS/interaction: window vibrancy/blur, system font, keyboard-first
+   command-palette, no panels/telemetry/cards. Stays in the webview → keeps markdown +
+   streaming easy. This is purely the `palette` variant's styling + interaction model.
+2. **Chats ↔ memory = HYBRID (one mind, per-chat working set).** Global long-term is
+   shared across all chats — the **journal (WS-J) + notes (zettelkasten) + the deep tier
+   (L3)** = the agent's continuous mind. Each chat scopes its **own short-term L1/L2
+   conversation context**; a chat's L2→L3 compaction promotes its working memory INTO the
+   global long-term (consistent with the N-tier cascade + journal-as-durable-memory).
+   *Open for Track 1:* ambient perception (vision/audio) is global, not per-chat — so a
+   turn's `tail_for_model` composes **global ambient + active-chat conversation**; the
+   exact L1 split (ambient stream vs per-chat conversation stream) is a Track-1 decision.
+3. **Cross-chat links = backlinked GRAPH, reusing the zettelkasten** (`ctx/notes.py
+   NoteStore`). Chats and individual messages become addressable nodes; "link this point →
+   another chat" creates a **bidirectional edge** in the SAME graph as notes; each message
+   shows its backlinks; clicking navigates (and can open the local graph neighborhood).
+   Subsumes plain reference links; composes with the existing note graph.
+
+**New base subsystem (kernel, UI-agnostic).** Chats become first-class persistent
+entities — this formalises today's ad-hoc `/history/{journal|chat}/{date}` + rolling
+archives:
+- **Chat/session store** — each chat = `{id, title, created, updated, messages[(id, role,
+  text, ts, …)], short-term namespace}`. CRUD: list · new (`new-init`) · switch (set
+  active) · rename · delete · export/backup. Likely layout: `memory/chats/<id>/rolling-l1
+  .jsonl|rolling-l2.jsonl` (per-chat) + shared `memory/rolling-l3.jsonl`, `memory/journal/`,
+  notes. (I1 single-writer + I2 canonical-files still hold.)
+- **Active-chat concept in the bridge** — `DesktopBridge` tracks the active chat; a turn
+  reads/writes that chat's L1/L2 + the global tiers; switching loads another chat's L1/L2.
+- **Message addressability + edges** — stable message ids (`<chatId>:<msgId>`); links are
+  NoteStore edges between message nodes (and note nodes); backlinks + neighborhood queries.
+- **Contract additions (add, never rename — I5):** `GET /chats`, `POST /chats` (new),
+  `GET /chats/{id}` (transcript), `POST /chats/{id}/switch`, `PATCH /chats/{id}` (rename),
+  `DELETE /chats/{id}`, `GET /chats/{id}/export`; `POST /links` (A·msg→B·msg),
+  `GET /links/{chatId}/{msgId}` (backlinks/neighborhood). SSE may add `chat`/`link` types.
+
+**Palette variant — refined spec (consumes the above).** Compact summon → grows to
+content; scrollable transcript; quiet status rail (active chat + count + backend). All
+management lives behind **⌘K**: New chat (⌘N) · Switch chat (⌘P) · **Link this point →
+another chat (⌘L)** · Backup/export · Delete · Settings (⌘,) · observer toggles. The ⌘L
+flow: pick a source message → choose target chat + message → creates the graph edge; both
+ends show a 🔗 backlink chip; clicking navigates. Settings stays a **separate Tauri
+window** (already supported), grouped/searchable, hosting the `ui_variant` picker.
+`classic` remains the fallback and need not implement the chat-graph UI — the base still
+offers it over the wire.
+
+### 8 — Tracks
+
+- **Track 0 — the seam (do first; unblocks both).** Extract `web/lib/bridge.js` from
+  today's `app.js` data layer (`sendTurn`/`postBridge`/`getBridge`/`fetchJson`/
+  `waitForBridgeJob`/`connectEvents`/`refreshHealth`/`pollRemoteJobs`) + vendor
+  `lib/markdown.js`; add `bootstrap.js` + the `ui_variant` config key + `/health.uiVariant`;
+  add the three stress_ui assertions. **No visual change yet** — `classic` is the current
+  UI re-pointed at the shared client. This is the refactor that proves base-robustness.
+- **Track 1 — chat/session model + hybrid memory (BASE; biggest new piece, UI-agnostic).**
+  ✅ **DONE 2026-06-15.** `ctx/chats.py ChatStore` (registry `memory/chats/index.json` +
+  per-chat durable transcript `<id>/messages.jsonl` with stable ids `<chatId>:<seq>` +
+  active-pointer + auto-title + CRUD/export). Hybrid memory: `ContextStore.promote_fn` +
+  `ingest_summary` primitives — a per-chat conversation store (`_CONVERSATION_LAYERS`, files
+  under `memory/chats/<id>/`) promotes aged-out L2 summaries into the SHARED L3; ambient
+  perception stays in the bridge's global store. The bridge composes both per turn via
+  `_ChatContext` (model reads global ambient + active-chat conversation; the turn writes to
+  the chat). **L1 split decision (was open):** ambient = global store, conversation =
+  per-chat store, merged at read time — the conversation half is what's per-chat. Endpoints
+  `GET/POST /chats`, `GET /chats/{id}`, `POST /chats/{id}/switch`, `PATCH/DELETE /chats/{id}`,
+  `GET /chats/{id}/export`; `health.activeChat`. CLI parity `lk chats …`; memops `chats`
+  opt-in (counted/backed-up, spared by clear-all). Degraded path: a default "scratch" chat ⇒
+  nothing regresses. Tests: `test_chats.py` (CRUD/transcript/active/ensure_default/export) +
+  `test_chat_memory.py` (promote/ingest/isolation/default-off). Gate green (22 suites).
+- **Track 2 — message graph & cross-chat links (BASE; builds on Track 1 + `NoteStore`).**
+  ✅ **DONE 2026-06-15.** Generic edge layer on `NoteStore` (`edges.jsonl` +
+  `add_edge`/`edges_for`/`neighborhood`) — node ids are opaque strings, so chat messages
+  (`<chatId>:<seq>`), whole chats, and notes are first-class nodes in the SAME graph;
+  idempotent, bidirectional, survives reload, composes with note `[[links]]`. Endpoints
+  `POST /links` (message/note endpoints normalised by `_link_node`) + `GET /links/{chatId}/{msgId}`
+  (neighborhood). CLI parity `lk links show|add`. Tests in `test_chats.py` (Track 2 section).
+- **Track A — `classic` refactor (minimal, in-place; the safe fallback variant).** Only
+  the fixes that are correct regardless of design: U3 de-bloat (swap `renderMdx` for the
+  vendored lib), **truthful toggles** (read `/health`, follow SSE — old P7.T2), **dead-path
+  cleanup** (drop `localDraft` fabricated answers — old P7.T4), and move config off the bar
+  into the existing panel windows (U2 placement only). Keep the look. This is "don't change
+  dramatically."
+- **Track B — `palette` variant (the NEW design; build right, not retrofit).** A from-
+  scratch command-palette overlay consuming `lib/bridge.js` + the Track-1/2 chat APIs:
+  U1 geometry (grows to content), scrollable transcript, ⌘K menu (new/switch/link/backup/
+  delete/settings/toggles), the ⌘L cross-chat link flow + backlink chips, settings as a
+  separate non-intervening window, U4 in-place elevation, U5 Raycast polish + native-feel
+  styling (vibrancy, system font, no web chrome). Built fresh so the 2308-line `app.js`
+  legacy never has to be bent into the new shape — `classic` stays available behind the
+  switch while this matures. Showcase mockup: `docs/mockups/palette.html` (static, no
+  backend).
+
+The U-items below are the **detailed specs**; each now names its track. (U1/U4/U5 →
+Track B · U2/U2b → both surfaces, Track A does placement only · U3 → Track 0.)
+
+- **U1 — Raycast geometry.** [Track B] Window collapses to just the input bar when idle
   (~720×64) and **auto-grows to content** (clamp ≤ maxHeight) as the feed fills —
   measure feed height in JS, call Tauri `setSize(LogicalSize)`. Keep centered, no
   decorations, transparent, rounded, subtle border + backdrop blur, always-on-top.
@@ -703,8 +896,23 @@ correct before moving on. `[x]` done · `[ ]` open.
    the §7 pseudo-tests pass with the model stubbed; `slow_loop:off` == today (edge
    suite regression green). (`kernel/refine.py` + `kernel/elevate.py`;
    `tests/test_refine.py` + `tests/test_elevate.py`.)
-4. [ ] **WS-U/U1→U3** (Raycast geometry → slim chrome → de-bloat `app.js`). *Goal-post:*
-   idle window = bar only; auto-grows; `node --check` green; markdown via vendored lib.
+4. **WS-U — switchable UIs over one contract** (see §8.0 + tracks). Split base/UI:
+   - [x] **Track 1 (BASE)** chat/session model + hybrid per-chat memory + `/chats…`
+     endpoints + `lk chats` (`ctx/chats.py`, `ContextStore.promote_fn`/`ingest_summary`,
+     bridge `_ChatContext`). Gate green. *Goal-post met:* chat CRUD round-trips; a turn
+     scopes its own L1/L2 while sharing L3; single-writer (I1) intact; default scratch chat
+     ⇒ no regression.
+   - [x] **Track 2 (BASE)** message graph + cross-chat links (`NoteStore` edges, `/links…`,
+     `lk links`). *Goal-post met:* a message↔message edge is bidirectional, idempotent,
+     survives reload, and composes with the note graph.
+   - [ ] **Track 0 (UI seam)** extract `lib/bridge.js` + `bootstrap.js` + `ui_variant`
+     switch + the 3 stress_ui seam/parity assertions (zero visual change).
+   - [ ] **Track A (UI)** `classic` minimal refactor (vendored md, truthful toggles, drop
+     `localDraft`, config off the bar). · [ ] **Track B (UI)** `palette` variant (U1
+     geometry, ⌘K menu, settings window, ⌘L link flow + backlink chips, U4 elevation, U5
+     polish). *Goal-post:* `ui_variant` round-trips GUI==CLI; only `lib/bridge.js` touches
+     the transport; `bootstrap` falls back to `classic` on a broken variant; idle `palette`
+     = bar only, auto-grows; `node --check` green on both entrypoints + the shared lib.
 5. [~] **U4 elevation rendering** (needs R2) — `app.js` `onRefined` renders the
    `refined` SSE event in place (badge + critique + `.message.refined` accent);
    `finding` cards already existed. Remaining: turn-id-accurate targeting after
@@ -724,3 +932,84 @@ correct before moving on. `[x]` done · `[ ]` open.
 **Conceptual acceptance (the litmus, §5):** with the user idle, the tick runs cheap;
 acts only on its own graded judgment; surfaces a refined/elevated answer or a found
 gap **without** a re-prompt; the UI feels like a command palette, not a form.
+
+---
+
+## 10. Cross-plan reconciliation & feature-request map (2026-06-15)
+
+> This repo carries three planning lineages that drifted; this section is the single
+> consolidated index so a post-compaction session has one true map. Re-iterated through
+> every plan/feature/alignment doc on 2026-06-15.
+
+### 10a. Document map (what to trust)
+
+- **Living plan (this doc, AUTONOMY.md).** The conceptual tracker + execution plan for
+  the **autonomy build** (WS-M/P/C/R/J/U + WS-T/A/X). Most current. Build to §9.
+- **`docs/IMPLEMENTATION_PLAN.md`** — the **foundation-hardening** plan (P0–P9 + V3). Still
+  valid for its open items (P3.T6 timeout/cancel, P3.T8 provider smoke, P4.T1/T4/T5
+  dedup/stale-guard/interleave, P5 audio, P6.T1/T3 retrieval, P7 UI, P8 polish, P9 stretch,
+  V3.T4/T6/T7/T8). Stale checkboxes corrected 2026-06-15 (see its §11). Invariants I1–I9
+  there are authoritative and consistent with §4 here.
+- **`docs/AUDIT.md`** (2026-06-13 + 2026-06-15 update) — honest is-it-real scan. The
+  "HOLLOW/DEAD" list is the near-term cleanup backlog.
+- **`apps/desktop/MANAGER_FEATURE_REQUESTS.mdx`** — the desktop UI↔kernel contract wishlist
+  (FR-001..011). Mapped to workstreams in §10c.
+- **CONCEPTUAL-ONLY (historical, do NOT treat as truth):** `PLAN_COVERAGE.md`,
+  `IMPLEMENTATION_STATUS.md`, `AGENT_HANDOFF.md`, `ARCHITECTURE.md`, `interfaces.md`,
+  `SCHEMAS.md`, `OPERATIONS.md`, `N8N_WORKFLOWS.md`, `RISK_REGISTER.md`. They describe the
+  replaced FastAPI/n8n design (`services/kernel/lawrence_kernel/…`, `TurnContextSnapshot`,
+  n8n facets) — none of it exists in `services/lk/`. Already bannered. ⚠️ `AGENT_HANDOFF`'s
+  "source of truth order" points AT these stale docs — ignore that ordering; use this §10a.
+
+### 10b. Self-alignment scaffolding (the guardrails, in one place)
+
+- **Protagonist Principle (§1b):** the model is the most-swappable, least-trusted organ;
+  every cognitive policy goes through the role seam + has a degraded path.
+- **Invariants:** I1 single memory writer · I2 canonical human-readable files · I3 provider
+  logic only in `model.py` · I4 stdlib core, heavy deps lazy · I5 add-only wire contracts ·
+  I6 never touch `.code-workspace` · I7 ports 8190/8765/8766 · I8 high token ceilings on
+  thinking models · I9 don't serialise the parallel paths (coordinate via the priority gate).
+- **DoD + path-correction signals:** §4 (DoD checklist) + §9 (standing signals). Every task
+  ends green on `make check` with a degraded-path test and CLI=GUI=TUI parity.
+
+### 10c. Feature-request reconciliation (FR-001..011 → status / workstream)
+
+- **FR-001 Host launcher & hotkey** — ✅ DONE (`GlobalHotkey.ps1` → control socket :8767,
+  `desktopctl.sh`, `lk start/stop/ui`).
+- **FR-002 Canonical MDX session restore** — ✅ DONE 2026-06-15 by **WS-U Track 1**
+  (`ChatStore`: durable per-chat transcript, stable ids `<chatId>:<seq>`, `GET /chats/{id}`
+  + `/export`; jobId/source already on turns/SSE). *(Optional alias `GET /session/recent` not
+  added — `/chats` covers it.)*
+- **FR-003 Declarative visual/audio/web policies** — ✅ DONE (turn `config`: `contextPolicy`,
+  `webIntent`, `voiceListen`, deep/single/off). Open nicety: structured `audioTranscript`
+  route events (FR-003/004 overlap).
+- **FR-004 Runtime telemetry + bullet-journal contract** — 🟡 PARTIAL (`/health` system
+  metrics + jobs + `/tasks`/TaskStore done; typed **context cards** + structured transcript
+  events not yet → ties to FR-008).
+- **FR-005 Converter-aware ingest** — ✅ backend DONE (`converters.convert` + `/ingest` +
+  `lk ingest`); ⛔ **no UI button** (DEAD path in AUDIT — add in WS-U Track A/B).
+- **FR-006 Sampling & agent-control mapping** — ✅ DONE (per-turn decoding map +
+  `uiAppliedConfig`/`uiUnsupportedConfig`; never mutates globals).
+- **FR-007 Active reminder scheduler** — ⛔ OPEN ⇒ **WS-T/D1** (real schedule store + tick
+  `due_fn`/`fire_fn`). The hollow `localStorage` reminders panel is waiting on this backend.
+- **FR-008 Response evidence & asset cards** — 🟡 PARTIAL (Markdown citations done; typed
+  `assets[]` payload not) ⇒ new item, pairs with **WS-A** artifacts + FR-004 cards.
+- **FR-009 Managed response-quality loop** — ✅ LARGELY DONE (bridge `_answer_middleware`
+  format-repair + **WS-R** refine/elevate); remaining: tool-round retry budget honouring.
+- **FR-010 Magnetic sidecar panel geometry** — 🟡 PARTIAL (separate Tauri windows exist) ⇒
+  finished by **WS-U Track B** (settings as a separate, persistent, snapping window).
+- **FR-011 Native host UI + WSL service manager** — 🟡 PARTIAL/STRATEGIC. Build scaffolding
+  exists (`apps/desktop/host/windows/Build-HostUi.ps1`/`Start-HostUi.ps1`,
+  `npm run services:start|stop|restart`, `host-ui.json`). **This is a distinct strategic
+  axis** from the WS-U variant switch (host-native Windows-ARM64 surface vs. WSLg overlay):
+  it should become its own workstream **WS-H** when prioritised — the variant architecture
+  (§8.0) is compatible (a host-native shell is just another client of the same HTTP/SSE wire).
+
+### 10d. Open backlog rollup (post-Track-1/2, what's actually left)
+
+Near-term cleanup (AUDIT): wire **/ingest** + **mic PTT** + decide **/context-pack** UI;
+remove or wire the **reminders panel** (⇒ FR-007/WS-T) and the 3 unsupported sampling knobs;
+fix README `crates/system-hooks/` line (dir absent). Autonomy: **WS-U UI** (Track 0/A/B) ·
+**WS-T** scheduler (FR-007) · **WS-A** artifacts incl. asset cards (FR-008) · **WS-X**
+effectors · V3.T4 audio→extraction · V3.T6 terse prompts · V3.T7 no-stale-image · P3.T6
+timeout/cancel · P5 audio e2e · P6 retrieval dedup. Strategic: **WS-H** host-native UI (FR-011).

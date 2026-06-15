@@ -27,10 +27,11 @@ from lk import model as _model, server as _server  # noqa: E402
 from lk.admin import list_journals, list_logs, show_journal, show_log  # noqa: E402
 from lk.converters import convert as _convert  # noqa: E402
 from lk.ctx import ContextStore, Extractor, NoteStore  # noqa: E402
+from lk.ctx.chats import ChatStore  # noqa: E402
 from lk.config import apply_to_env as _apply_config_env  # noqa: E402
 from lk.kernel import (  # noqa: E402
-    CognitiveTick, Elevator, TurnConfig,
-    run_compaction, run_extract, run_proactive, run_turn, tick_enabled,
+    CognitiveTick, Elevator, JournalTrigger, TurnConfig,
+    journal_enabled, run_compaction, run_extract, run_proactive, run_turn, tick_enabled,
 )
 from lk.lock import acquire_writer_lock  # noqa: E402
 from lk.notify import notify as _notify  # noqa: E402
@@ -48,6 +49,44 @@ from lk.ui import UIConnector  # noqa: E402
 _DEEP_TOP_K       = 18
 _DEEP_FRESH_PER_Q = 8
 _DEEP_DB_MIN_HITS = 2
+
+# Per-chat conversation memory shape (WS-U Track 1b): two short-term tiers under
+# memory/chats/<id>/. The top tier (l2) promotes its aged-out summaries into the
+# SHARED long-term L3 (via the store's promote_fn) — the hybrid "one mind,
+# per-chat working set" model. Ambient perception stays in the bridge's global
+# store with the default 3 tiers.
+_CONVERSATION_LAYERS = [
+    {"name": "l1", "file": "rolling-l1.jsonl", "compact_ratio": 0.60,
+     "promote_to": "l2", "header": "[CONVERSATION]", "is_raw": True},
+    {"name": "l2", "file": "rolling-l2.jsonl", "compact_ratio": 0.40,
+     "promote_to": None, "header": "[CONVERSATION MEMORY]", "char_budget": 10_000},
+]
+
+
+class _ChatContext:
+    """Per-turn context seam (WS-U Track 1b). The model reads GLOBAL ambient
+    perception PLUS the ACTIVE chat's conversation memory; the turn is written to
+    the chat's own short-term store (whose aged-out summaries promote into the
+    shared long-term tier). Only the conversation half is per-chat — ambient stays
+    owned by the bridge's main store. Implements the slice of the ContextStore
+    surface run_turn/refine use (tail_for_model + append); everything else
+    delegates to the conversation store."""
+
+    def __init__(self, ambient: ContextStore, conversation: ContextStore) -> None:
+        self._ambient = ambient
+        self._conversation = conversation
+
+    def tail_for_model(self) -> str:
+        amb  = self._ambient.tail_for_model()
+        conv = self._conversation.tail_for_model()
+        parts = [p for p in (amb, conv) if p and p != "(no context yet)"]
+        return "\n\n".join(parts) if parts else "(no context yet)"
+
+    def append(self, *args: Any, **kwargs: Any) -> None:
+        self._conversation.append(*args, **kwargs)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._conversation, name)
 
 
 class BridgeError(Exception):
@@ -153,6 +192,13 @@ class DesktopBridge:
             extractor=self.extractor,
         )
         self.retrieval = RetrievalPipeline(self.db)
+        # WS-U Track 1: chat workspace — first-class switchable conversations. Each
+        # chat owns its short-term L1/L2 (memory/chats/<id>/); the journal, notes,
+        # and the deep L3 tier stay shared (the agent's continuous mind). The active
+        # chat defaults to a 'scratch' chat so single-stream use never regresses.
+        self.chats = ChatStore()
+        self.active_chat_id = self.chats.ensure_default()
+        self._chat_ctx: dict[str, ContextStore] = {}
         self.vision: VisionObserver | None = None
         self.audio: AudioObserver | None = None
         self.voice_enabled = False
@@ -175,11 +221,19 @@ class DesktopBridge:
         # WS-C/C1 cognitive tick — the heartbeat / spine. Drains the B1 perception
         # buffer on an adaptive cadence and drives the (throttled) proactive pathway
         # even when no sensor on_event is firing. Idle beats make zero model calls.
+        # WS-J autonomous journal — significance-gated + time-floor trigger consulted
+        # by the tick each beat; journals run in a background thread (never block it).
+        self.journal_trigger: JournalTrigger | None = (
+            JournalTrigger(self.ctx, retrieval=self.retrieval,
+                           live_fn=lambda msg: self.ui.push_context_event("journal", msg))
+            if journal_enabled() else None
+        )
         self.tick: CognitiveTick | None = None
         if tick_enabled():
             self.tick = CognitiveTick(
                 self.extractor.drain,
                 lambda events: self._maybe_proactive(),
+                reflect_fn=(self.journal_trigger.beat if self.journal_trigger else None),
                 on_log=lambda msg: self.ui.push_context_event("tick", msg),
             )
             self.tick.start()
@@ -221,6 +275,8 @@ class DesktopBridge:
                 "audio": bool(self.audio and self.audio.active),
             },
             "voice": {"listening": bool(self.voice_enabled and self.audio and self.audio.active)},
+            "activeChat": self.active_chat_id,
+            "chats": len(self.chats.list_chats()),
             "tasks": self.tasks.snapshot()["counts"],
             "jobs": {
                 "queued": sum(1 for job in jobs if job.get("state") == "queued"),
@@ -515,6 +571,120 @@ class DesktopBridge:
             return {"ok": True, "kind": kind, "date": date, "format": "chat-log", "text": text}
         raise BridgeError(400, f"unsupported history kind: {kind or '(missing)'}")
 
+    # ── chat workspace (WS-U Track 1) ───────────────────────────────────────────
+    def _conversation_ctx(self, chat_id: str) -> ContextStore:
+        """Lazily build + cache the per-chat conversation store. Its short-term
+        L1/L2 live under memory/chats/<id>/; aged-out summaries promote into the
+        shared long-term tier (self.ctx's L3) via ingest_summary."""
+        store = self._chat_ctx.get(chat_id)
+        if store is None:
+            store = ContextStore(
+                mem_dir=self.chats.chat_dir(chat_id),
+                compact_fn=run_compaction,
+                live_fn=lambda msg: self.ui.push_context_event("memory", msg),
+                layers=copy.deepcopy(_CONVERSATION_LAYERS),
+                promote_fn=lambda ev: self.ctx.ingest_summary(
+                    ev.get("summary", ""), ev.get("ts_from", ""), ev.get("ts_to", "")),
+            )
+            self._chat_ctx[chat_id] = store
+        return store
+
+    def _resolve_chat(self, request: dict[str, Any]) -> str:
+        """The chat a turn belongs to: an explicit chatId (becomes active) else the
+        active chat. Falls back to a recreated default if the active chat vanished."""
+        turn = request.get("turn") or {}
+        cid = str(request.get("chatId") or turn.get("chatId") or "").strip()
+        if cid and self.chats.chat_meta(cid):
+            if cid != self.active_chat_id:
+                self.active_chat_id = cid
+                self.chats.set_active(cid)
+            return cid
+        if not self.chats.chat_meta(self.active_chat_id):
+            self.active_chat_id = self.chats.ensure_default()
+        return self.active_chat_id
+
+    def chats_index(self) -> dict[str, Any]:
+        return {"ok": True, "active": self.active_chat_id, "items": self.chats.list_chats()}
+
+    def chat_create(self, request: dict[str, Any]) -> dict[str, Any]:
+        meta = self.chats.create_chat(str(request.get("title") or ""))
+        self.active_chat_id = meta["id"]
+        self.chats.set_active(meta["id"])
+        self.ui.push_context_event("chat", f"new chat: {meta['title'] or meta['id']}")
+        return {"ok": True, "active": self.active_chat_id, "chat": meta}
+
+    def chat_get(self, chat_id: str) -> dict[str, Any]:
+        chat = self.chats.get_chat(chat_id)
+        if chat is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, "active": self.active_chat_id, **chat}
+
+    def chat_switch(self, chat_id: str) -> dict[str, Any]:
+        if not self.chats.set_active(chat_id):
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        self.active_chat_id = chat_id
+        self.ui.push_context_event("chat", f"switched chat → {chat_id}")
+        return {"ok": True, "active": chat_id}
+
+    def chat_rename(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        title = str(request.get("title") or "").strip()
+        if not title:
+            raise BridgeError(400, "rename needs {'title': ...}")
+        if not self.chats.rename_chat(chat_id, title):
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, "chat": self.chats.chat_meta(chat_id)}
+
+    def chat_delete(self, chat_id: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        hard = bool((request or {}).get("hard"))
+        if not self.chats.delete_chat(chat_id, hard=hard):
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        self._chat_ctx.pop(chat_id, None)
+        if self.active_chat_id == chat_id:
+            self.active_chat_id = self.chats.ensure_default()
+        self.ui.push_context_event("chat", f"deleted chat {chat_id}")
+        return {"ok": True, "active": self.active_chat_id, "deleted": chat_id, "hard": hard}
+
+    def chat_export(self, chat_id: str) -> dict[str, Any]:
+        mdx = self.chats.export_chat(chat_id)
+        if not mdx:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, "id": chat_id, "format": "mdx", "text": mdx}
+
+    # ── cross-chat graph links (WS-U Track 2) ───────────────────────────────────
+    def _link_node(self, spec: Any) -> str:
+        """Normalise a link endpoint → a graph node id. Accepts a message
+        ({chatId, msgId|seq}), a note ({noteId}), or a raw string id."""
+        if isinstance(spec, str):
+            return spec.strip()
+        if not isinstance(spec, dict):
+            return ""
+        if spec.get("noteId"):
+            return str(spec["noteId"]).strip()
+        cid = str(spec.get("chatId") or "").strip()
+        mid = spec.get("msgId")
+        if mid is None:
+            mid = spec.get("seq")
+        if cid and mid is not None:
+            mid = str(mid)
+            return mid if mid.startswith(f"{cid}:") else f"{cid}:{mid}"
+        return cid
+
+    def create_link(self, request: dict[str, Any]) -> dict[str, Any]:
+        src = self._link_node(request.get("src"))
+        dst = self._link_node(request.get("dst"))
+        if not src or not dst:
+            raise BridgeError(400, "link needs src and dst nodes (message or note)")
+        kind = str(request.get("kind") or "link")
+        created = self.notes.add_edge(src, dst, kind=kind)
+        if created:
+            self.ui.push_context_event("link", f"linked {src} ↔ {dst}")
+        return {"ok": True, "created": created, "src": src, "dst": dst, "kind": kind,
+                "neighborhood": self.notes.neighborhood(src)}
+
+    def links_for(self, chat_id: str, msg_id: str) -> dict[str, Any]:
+        node = msg_id if str(msg_id).startswith(f"{chat_id}:") else f"{chat_id}:{msg_id}"
+        return {"ok": True, **self.notes.neighborhood(node)}
+
     # ── voice ───────────────────────────────────────────────────────────────────
     def voice_once(self, request: dict[str, Any]) -> dict[str, Any]:
         """Push-to-talk: record a short window, transcribe, enqueue it as a turn.
@@ -605,6 +775,9 @@ class DesktopBridge:
             raise BridgeError(400, "turn text is required")
         if not _model.health():
             raise BridgeError(503, f"kernel backend unreachable: {_model.describe_backend()}")
+        # Clean user text for the durable per-chat transcript, captured BEFORE the
+        # attachment/forced-web/directive augmentation below mutates `text`.
+        user_message = text
 
         config       = turn.get("config") or {}
         mode         = str(config.get("mode", "Auto"))
@@ -673,6 +846,11 @@ class DesktopBridge:
 
         retrieval = self._retrieval_for_turn(deep_search)
 
+        # WS-U Track 1b: the turn reads global ambient + the active chat's
+        # conversation memory, and writes to that chat's own short-term store.
+        chat_id  = self._resolve_chat(request)
+        turn_ctx = _ChatContext(self.ctx, self._conversation_ctx(chat_id))
+
         with self.lock:
             self.events.clear()
             forced_results = self._forced_web_results(text, config, deep_search)
@@ -716,7 +894,7 @@ class DesktopBridge:
 
             answer, controls = run_turn(
                 turn_text,
-                ctx=self.ctx,
+                ctx=turn_ctx,
                 retrieval=retrieval,
                 cfg=cfg,
                 images=images,
@@ -731,6 +909,15 @@ class DesktopBridge:
             )
             answer = _process_answer(answer)
             answer = _append_once(answer, forced_suffix)
+            # Durable per-chat transcript (addressable message ids for Track 2 links).
+            user_mid = asst_mid = ""
+            try:
+                user_mid = self.chats.append_message(
+                    chat_id, "user", user_message,
+                    meta={"source": source} if source else None)
+                asst_mid = self.chats.append_message(chat_id, "assistant", answer)
+            except Exception as exc:
+                self.events.append(f"[chat] transcript write failed: {exc}")
             controls = dict(controls or {})
             applied = self._apply_model_controls(controls)
             if applied:
@@ -743,7 +930,10 @@ class DesktopBridge:
             if deep_search:
                 src_count = sum(1 for e in self.events if "[retrieval]" in e)
                 self.events.append(f"deep-search: {src_count} sources considered")
-            return {"answer": answer, "controls": controls, "events": list(self.events)}
+            return {
+                "answer": answer, "controls": controls, "events": list(self.events),
+                "chatId": chat_id, "userMsgId": user_mid, "assistantMsgId": asst_mid,
+            }
 
     def _forced_web_results(self, text: str, config: dict[str, Any], deep: bool) -> list[Any]:
         web_intent = config.get("webIntent") or {}
@@ -1539,6 +1729,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.job(job_id))
             except BridgeError as exc:
                 self._send(exc.status, {"error": exc.message})
+        elif path == "/chats":
+            self._send(200, self.bridge.chats_index())
+        elif path.startswith("/chats/"):
+            parts = path.strip("/").split("/")          # chats / {id} [/ export]
+            try:
+                if len(parts) == 2:
+                    self._send(200, self.bridge.chat_get(unquote(parts[1])))
+                elif len(parts) == 3 and parts[2] == "export":
+                    self._send(200, self.bridge.chat_export(unquote(parts[1])))
+                else:
+                    self._send(404, {"error": "not found"})
+            except BridgeError as exc:
+                self._send(exc.status, {"error": exc.message})
+        elif path.startswith("/links/"):
+            parts = path.strip("/").split("/")          # links / {chatId} / {msgId}
+            if len(parts) == 3:
+                self._send(200, self.bridge.links_for(unquote(parts[1]), unquote(parts[2])))
+            else:
+                self._send(400, {"error": "usage: /links/{chatId}/{msgId}"})
         else:
             self._send(404, {"error": "not found"})
 
@@ -1563,6 +1772,40 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.set_voice_listen(body))
             elif self.path == "/ingest":
                 self._send(200, self.bridge.ingest_document(body))
+            elif self.path == "/chats":
+                self._send(200, self.bridge.chat_create(body))
+            elif self.path == "/links":
+                self._send(200, self.bridge.create_link(body))
+            elif self.path.startswith("/chats/") and self.path.endswith("/switch"):
+                cid = unquote(self.path.strip("/").split("/")[1])
+                self._send(200, self.bridge.chat_switch(cid))
+            else:
+                self._send(404, {"error": "not found"})
+        except BridgeError as exc:
+            self._send(exc.status, {"error": exc.message})
+        except Exception as exc:
+            self._send(500, {"error": str(exc)})
+
+    def do_PATCH(self) -> None:
+        try:
+            body  = self._read_json()
+            parts = urlparse(self.path).path.strip("/").split("/")
+            if len(parts) == 2 and parts[0] == "chats":
+                self._send(200, self.bridge.chat_rename(unquote(parts[1]), body))
+            else:
+                self._send(404, {"error": "not found"})
+        except BridgeError as exc:
+            self._send(exc.status, {"error": exc.message})
+        except Exception as exc:
+            self._send(500, {"error": str(exc)})
+
+    def do_DELETE(self) -> None:
+        try:
+            parsed = urlparse(self.path)
+            parts  = parsed.path.strip("/").split("/")
+            if len(parts) == 2 and parts[0] == "chats":
+                hard = "hard=1" in parsed.query or "hard=true" in parsed.query
+                self._send(200, self.bridge.chat_delete(unquote(parts[1]), {"hard": hard}))
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:
@@ -1581,7 +1824,7 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Headers", "content-type")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(raw)))
         self.end_headers()
@@ -1621,8 +1864,20 @@ def main() -> int:
     except KeyboardInterrupt:
         pass
     finally:
-        if Handler.bridge.tick:
-            Handler.bridge.tick.stop()
+        # Stop everything THIS process owns that would otherwise orphan. The model
+        # server is deliberately left warm here (a plain `stop` keeps it for a fast
+        # restart; `lk stop --all` reaps it) — but the tick and the observers' capture
+        # subprocesses (ffmpeg / screen grab) must be torn down or they leak.
+        b = Handler.bridge
+        if b is not None:
+            if b.tick:
+                b.tick.stop()
+            for _obs in (getattr(b, "vision", None), getattr(b, "audio", None)):
+                try:
+                    if _obs:
+                        _obs.stop()
+                except Exception:
+                    pass
         server.server_close()       # release the socket promptly for a clean restart
     return 0
 

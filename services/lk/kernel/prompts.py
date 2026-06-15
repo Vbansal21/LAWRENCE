@@ -6,7 +6,9 @@ PROACTIVE — reads context only (no question), decides what to pre-fetch silent
 PROACTIVE_BRIEF — after a silent fetch, decides whether to surface a finding unprompted.
 COMPACT_L1 — compresses a block of raw L1 events into a dense L2 summary entry.
 COMPACT_L2 — compresses a block of L2 summaries into a dense L3 entry.
-JOURNAL   — synthesizes a narrative journal entry from the current session memory.
+JOURNAL   — (legacy) third-person session journal; the WS-J degraded fallback.
+JOURNAL_DRAFT  — WS-J: writes the NEW first-person entry from the trailing window + context.
+JOURNAL_REVISE — WS-J: lightly trims the trailing window so the file grows without duplication.
 """
 
 ANALYSIS = (
@@ -153,4 +155,47 @@ JOURNAL = (
     "TOPICS: <3-6 comma-separated topic keywords>\n"
     "OPEN: <unresolved questions or next steps, or 'none'>\n"
     "No markdown headers, no code fences, no preamble — only those labelled sections."
+)
+
+# ── WS-J: autonomous, first-person, rolling-revision journal ──────────────────
+# JOURNAL_DRAFT writes the NEW entry for the period just elapsed, in the user's
+# own voice ("I"), from the trailing window of recent entries + the live rolling
+# context. JOURNAL_REVISE then LIGHTLY trims the trailing window so the file grows
+# slowly and without duplication — a tightening pass, never a rewrite.
+
+JOURNAL_DRAFT = (
+    "You are LAWRENCE, keeping a personal journal on the user's behalf, in their "
+    "OWN VOICE — first person ('I worked on…', 'I figured out…'). You are given the "
+    "most recent journal entries already written for today (for continuity — do NOT "
+    "repeat them) and the live rolling context of what just happened (screen, audio, "
+    "conversation, memory). Write ONE new entry covering the period since the last "
+    "entry: what I did, worked on, learned, decided, or ran into.\n"
+    "Be specific and factual first, lightly reflective second. Concrete over generic. "
+    "Continue naturally from the recent entries without restating them. If nothing "
+    "meaningful happened, say so briefly rather than padding.\n"
+    "Return ONLY a valid JSON object with these keys:\n"
+    '  "narrative": string — 1-3 short first-person paragraphs (the entry itself), '
+    "Markdown, JSON-escape newlines as \\n and quotes as \\\".\n"
+    '  "title": string — a short 3-7 word first-person title,\n'
+    '  "highlights": array of 0-4 short strings (specific things done/found), [] if none,\n'
+    '  "topics": array of 2-6 topic keyword strings,\n'
+    '  "open": string — what is still open / what I plan to do next, or "" if nothing.\n'
+    "No markdown fences around the outer JSON. No preamble. Output ONLY the JSON object."
+)
+
+JOURNAL_REVISE = (
+    "You are LAWRENCE tidying today's journal so it stays tight and non-repetitive. "
+    "A NEW entry has just been added. You are given that new entry plus the few "
+    "entries immediately before it. Your ONLY job is to LIGHTLY trim those EARLIER "
+    "entries where the new one now makes some of their detail redundant: tighten "
+    "wording, drop duplicated facts, merge a dangling thought into a cleaner "
+    "sentence. This is a conservative tightening pass, NOT a rewrite — keep each "
+    "entry's voice (first person), meaning, and any unique fact. Do NOT touch the new "
+    "entry. Only return entries you actually changed; if nothing needs trimming, "
+    "return an empty list.\n"
+    "Return ONLY a valid JSON object with this key:\n"
+    '  "revisions": array of objects, each {"id": "<the entry id>", "body": '
+    '"<the trimmed first-person body as Markdown>"} — omit any entry you left as-is. '
+    "JSON-escape newlines as \\n and quotes as \\\".\n"
+    "No markdown fences around the outer JSON. No preamble. Output ONLY the JSON object."
 )

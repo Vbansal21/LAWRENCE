@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import os
 import queue
+import signal
 import socket
 import subprocess
 import sys
@@ -55,6 +56,11 @@ class Launcher:
     def __init__(self, guard: socket.socket) -> None:
         self.guard = guard
         self.q: queue.Queue[str] = queue.Queue()
+        self.current_lock = threading.Lock()
+        self.current_proc: subprocess.Popen[str] | None = None
+        self.current_kind = ""
+        self.current_id = 0
+        self.current_cancel = False
         self.root = tk.Tk()
         self.root.title("LAWRENCE — Launcher")
         self.root.geometry("560x620")
@@ -79,14 +85,15 @@ class Launcher:
 
         # lifecycle row
         life = ttk.LabelFrame(self.root, text="Run"); life.pack(fill="x", padx=10, pady=6)
-        for i, (label, args) in enumerate([
+        for i, (label, action) in enumerate([
             ("▶ Start", ["start"]), ("◧ Open popup", ["ui"]),
             ("■ Stop", ["stop"]), ("⟲ Restart", ["restart"]),
-            ("⏻ Stop all", ["stop", "--all"]), ("⟳ Rebuild popup", ["rebuild"]),
-            ("✖ Force reset", ["reset", "--all"]), ("⌨ Chat (REPL)", None),
+            ("⏻ Stop all", self._stop_all), ("▦ Processes", ["processes"]),
+            ("✖ Force reset", ["reset", "--all"]), ("⟳ Rebuild popup", ["rebuild"]),
+            ("⌨ Chat (REPL)", None),
         ]):
             b = ttk.Button(life, text=label, width=16,
-                           command=(self._chat if args is None else (lambda a=args: self._run(a))))
+                           command=(self._chat if action is None else (action if callable(action) else (lambda a=action: self._run(a)))))
             b.grid(row=i // 2, column=i % 2, **pad, sticky="ew")
         life.columnconfigure(0, weight=1); life.columnconfigure(1, weight=1)
 
@@ -97,9 +104,22 @@ class Launcher:
         self.preset.grid(row=0, column=1, **pad, sticky="ew")
         ttk.Button(cfg, text="Apply", width=8, command=self._apply_preset).grid(row=0, column=2, **pad)
         ttk.Button(cfg, text="Add API key", command=self._add_key).grid(row=1, column=0, **pad, sticky="ew")
-        ttk.Button(cfg, text="Setup wizard", command=lambda: self._run(["wizard", "--yes"])).grid(row=1, column=1, **pad, sticky="ew")
-        ttk.Button(cfg, text="Doctor", command=lambda: self._run(["doctor"])).grid(row=1, column=2, **pad, sticky="ew")
+        ttk.Button(cfg, text="API keys", command=lambda: self._run(["secrets", "list"])).grid(row=1, column=1, **pad, sticky="ew")
+        ttk.Button(cfg, text="Config", command=lambda: self._run(["config", "list"])).grid(row=1, column=2, **pad, sticky="ew")
+        ttk.Button(cfg, text="Setup wizard", command=lambda: self._run(["wizard", "--yes"])).grid(row=2, column=0, **pad, sticky="ew")
+        ttk.Button(cfg, text="Doctor", command=lambda: self._run(["doctor"])).grid(row=2, column=1, **pad, sticky="ew")
+        ttk.Button(cfg, text="Run lk...", command=self._run_lk_command).grid(row=2, column=2, **pad, sticky="ew")
         cfg.columnconfigure(1, weight=1)
+
+        # Codex: keep GUI/TUI launcher capabilities paired through the same
+        # front-door commands; layout may differ, behaviour should not.
+        work = ttk.LabelFrame(self.root, text="Work"); work.pack(fill="x", padx=10, pady=6)
+        for i, (label, action) in enumerate([
+            ("Ingest", self._ingest), ("Notes", lambda: self._run(["notes", "list"])),
+            ("Terminal", self._shell),
+        ]):
+            ttk.Button(work, text=label, command=action).grid(row=0, column=i, **pad, sticky="ew")
+            work.columnconfigure(i, weight=1)
 
         # memory panel
         mem = ttk.LabelFrame(self.root, text="Memory (lawrence-memory)"); mem.pack(fill="x", padx=10, pady=6)
@@ -156,24 +176,118 @@ class Launcher:
 
     def _run(self, args: list[str], on_done=None) -> None:
         """Run a front-door command in a worker thread, stream output to console."""
+        from . import ctl
+        kind = ctl.launcher_action_kind(args)
+        if not self._admit_gui_action(kind):
+            return
+        ok, _kind, reason = ctl.claim_launcher_action(args)
+        if not ok:
+            self._log(f"  skipped: {reason}")
+            return
+        tracked = not ctl.launcher_action_is_inspect(kind)
+        run_id = 0
+        if tracked:
+            with self.current_lock:
+                self.current_id += 1
+                run_id = self.current_id
+                self.current_kind = kind
+                self.current_proc = None
+                self.current_cancel = False
         self._log(f"$ lk {' '.join(args)}")
 
         def work():
+            p: subprocess.Popen[str] | None = None
             try:
                 p = subprocess.Popen(
                     [sys.executable, str(FRONT), *args],
                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                    text=True, cwd=str(REPO_ROOT))
+                    text=True, cwd=str(REPO_ROOT), start_new_session=True)
+                if tracked:
+                    with self.current_lock:
+                        cancelled = self.current_cancel or self.current_id != run_id
+                        if not cancelled:
+                            self.current_proc = p
+                            self.current_kind = kind
+                    if cancelled:
+                        self._kill_process(p)
+                        self._log("  cancelled before launch")
+                        return
                 for line in p.stdout:               # type: ignore[union-attr]
                     self._log(line.rstrip("\n"))
                 p.wait()
             except Exception as exc:
                 self._log(f"  error: {exc}")
+            finally:
+                if p is not None:
+                    with self.current_lock:
+                        if self.current_id == run_id and (self.current_proc is p or self.current_proc is None):
+                            self.current_proc = None
+                            self.current_kind = ""
+                            self.current_cancel = False
             if on_done:
                 self.root.after(0, on_done)
             self.root.after(0, self._refresh_status)
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _admit_gui_action(self, kind: str) -> bool:
+        from . import ctl
+        with self.current_lock:
+            p = self.current_proc
+            current = self.current_kind
+        if not current or ctl.launcher_action_is_inspect(kind):
+            return True
+        if p is not None and p.poll() is not None:
+            with self.current_lock:
+                if self.current_proc is p:
+                    self.current_proc = None
+                    self.current_kind = ""
+                    self.current_cancel = False
+            return True
+        if current == "reset":
+            self._log("  skipped: reset is already recovering the runtime")
+            return False
+        if current in {"stop", "stop-all"} and kind in {"stop", "stop-all"}:
+            self._log("  skipped: stop is already running")
+            return False
+        if ctl.launcher_action_can_preempt(kind):
+            # Codex: Stop all / Force reset are recovery actions. They interrupt
+            # weaker launcher-owned commands instead of waiting behind them.
+            self._log(f"  interrupting {current} before {kind}")
+            if p is None:
+                with self.current_lock:
+                    self.current_cancel = True
+                    self.current_kind = ""
+            else:
+                self._terminate_current(p)
+            return True
+        self._log(f"  skipped: {kind} is not allowed while {current} is running")
+        return False
+
+    def _terminate_current(self, proc: subprocess.Popen[str]) -> None:
+        self._kill_process(proc)
+        with self.current_lock:
+            if self.current_proc is proc:
+                self.current_proc = None
+                self.current_kind = ""
+                self.current_cancel = False
+
+    def _kill_process(self, proc: subprocess.Popen[str]) -> None:
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except OSError:
+            proc.terminate()
+        try:
+            proc.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, signal.SIGKILL)
+            except OSError:
+                proc.kill()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                self._log(f"  warning: child pid {proc.pid} did not exit after SIGKILL")
 
     # ── actions ───────────────────────────────────────────────────────────────
     def _apply_preset(self) -> None:
@@ -223,6 +337,62 @@ class Launcher:
                 except Exception:
                     continue
         self._log("  no terminal emulator found — run `./lk repl` yourself for chat.")
+
+    def _shell(self) -> None:
+        shell_cmd = f'cd "{REPO_ROOT}" && exec ${{SHELL:-bash}}'
+        for term, flag in (("x-terminal-emulator", "-e"), ("gnome-terminal", "--"),
+                           ("konsole", "-e"), ("xterm", "-e")):
+            from shutil import which
+            if which(term):
+                try:
+                    if term == "gnome-terminal":
+                        subprocess.Popen([term, "--", "bash", "-lc", shell_cmd], start_new_session=True)
+                    else:
+                        subprocess.Popen([term, flag, "bash", "-lc", shell_cmd], start_new_session=True)
+                    self._log(f"  opened {term} in the repo.")
+                    return
+                except Exception:
+                    continue
+        self._log(f"  no terminal emulator found — repo: {REPO_ROOT}")
+
+    def _ingest(self) -> None:
+        target = simpledialog.askstring("Ingest", "Path or URL:", parent=self.root)
+        if target:
+            self._run(["ingest", target.strip()])
+
+    def _run_lk_command(self) -> None:
+        cmd = simpledialog.askstring("Run lk", "Command arguments:", parent=self.root)
+        if cmd:
+            self._run(cmd.split())
+
+    def _stop_all(self, on_done=None) -> None:
+        from . import ctl
+        active, jobs = ctl.active_jobs()
+        args = ["stop", "--all"]
+        if active:
+            detail = "\n".join(
+                f"{job.get('id', '?')}  {job.get('state', '?')}  {job.get('textPreview', '')}"
+                for job in jobs
+            ) or "The bridge reports active queued/running work."
+            # Codex: GUI Stop all asks before interrupting active work; leftover
+            # process force-kill is a second confirmation after graceful stop.
+            if not messagebox.askyesno("Stop active work?", detail + "\n\nStop all anyway?", parent=self.root):
+                return
+            args.append("--allow-active")
+        self._run(args, on_done=lambda: self._confirm_leftovers(on_done=on_done))
+
+    def _confirm_leftovers(self, on_done=None) -> None:
+        from . import ctl
+        leftovers = ctl.managed_processes(include_launcher=False)
+        if not leftovers:
+            if on_done:
+                on_done()
+            return
+        msg = "Still running after graceful stop:\n\n" + ctl.format_processes(leftovers)
+        if messagebox.askyesno("Force terminate?", msg + "\n\nForce terminate these LAWRENCE processes?", parent=self.root):
+            self._run(["stop", "--all", "--force"], on_done=on_done)
+        elif on_done:
+            on_done()
 
     # ── memory panel ────────────────────────────────────────────────────────────
     def _refresh_memory(self) -> None:

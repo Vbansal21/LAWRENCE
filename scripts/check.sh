@@ -25,10 +25,13 @@ step "concurrency suite"    python3 services/lk/tests/test_concurrency.py
 step "memory-tier suite"    python3 services/lk/tests/test_memory_tiers.py
 step "extraction suite"     python3 services/lk/tests/test_extract.py
 step "zettelkasten suite"   python3 services/lk/tests/test_notes.py
+step "chat/session suite"   python3 services/lk/tests/test_chats.py
+step "chat-memory suite"    python3 services/lk/tests/test_chat_memory.py
 step "cognitive-tick suite" python3 services/lk/tests/test_tick.py
 step "significance suite"   python3 services/lk/tests/test_significance.py
 step "slow-loop suite"      python3 services/lk/tests/test_refine.py
 step "elevation suite"      python3 services/lk/tests/test_elevate.py
+step "journal suite"        python3 services/lk/tests/test_journal.py
 step "kernel stress"        python3 services/lk/tests/stress_kernel.py
 step "memory stress"        python3 services/lk/tests/stress_memory.py
 step "logs stress"          python3 services/lk/tests/stress_logs.py

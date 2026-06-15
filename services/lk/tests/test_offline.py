@@ -148,8 +148,9 @@ path = admin.append_journal_entry(pf, tags=["y"], when=w2)
 txt = path.read_text()
 check("mdx has frontmatter", txt.startswith("---"))
 check("mdx entries=2", "entries: 2" in txt)
-check("mdx has callout", "> [!SUMMARY]" in txt)
-check("mdx has details", "<details>" in txt)
+check("mdx has addressable entry markers (WS-J)", txt.count("<!-- lk:entry ") == 2)
+check("mdx renders summary + topics + next", "A summary line." in txt
+      and "**Topics:**" in txt and "> **Next:** keep going" in txt)
 check("mdx two sections", txt.count("## ")==2)
 check("journal list 1 file", len(admin.list_journals())==1)
 check("journal show works", "T One" in admin.show_journal("2026-06-07"))
@@ -410,18 +411,49 @@ def _fake_post(payload, timeout):
     _cap.update(payload=payload, timeout=timeout, endpoint=MB._endpoint()); return {"choices":[{"message":{"content":"x"}}]}
 MB._post = _fake_post
 MB.configure_backend(kind="local")
-MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=300)
+MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=300, min_p=0.1)
 check("local endpoint", _cap["endpoint"].endswith(":8190/v1/chat/completions"))
 check("local cache_prompt on", _cap["payload"].get("cache_prompt") is True)
+check("local keeps llama.cpp sampling", _cap["payload"].get("min_p") == 0.1)
 check("local no model field", "model" not in _cap["payload"])
 check("local blocks (timeout None)", _cap["timeout"] is None)
 MB.configure_backend(kind="api", base_url="https://x.test/v1/", api_key="k", model="m1")
-MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=99)
+MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=99, min_p=0.1, seed=7)
 check("api endpoint", _cap["endpoint"]=="https://x.test/v1/chat/completions")
 check("api model field", _cap["payload"].get("model")=="m1")
 check("api no cache_prompt", "cache_prompt" not in _cap["payload"])
+check("api drops llama.cpp sampling", "min_p" not in _cap["payload"])
+check("api keeps generic seed", _cap["payload"].get("seed") == 7)
 check("api timeout set", _cap["timeout"]==99)
 check("describe api", "x.test" in MB.describe_backend())
+_mtmp = Path(tempfile.mkdtemp())
+audio = _mtmp/"sample.wav"; audio.write_bytes(b"RIFFxxxxWAVE")
+gemini_schema = {
+    "type": "object",
+    "properties": {
+        "x": {"anyOf": [{"type": "string"}, {"type": "object", "additionalProperties": False}]}
+    },
+    "required": ["x"],
+    "additionalProperties": False,
+}
+MB._schema_mode.clear()
+MB.configure_backend(kind="api", base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                     api_key="k", model="gemini-3.5-flash", provider="gemini")
+MB.call_model([{"role": "user", "content": [MB.text_block("transcribe"), MB.audio_block(audio)]}],
+              max_tokens=5, timeout=30, schema=gemini_schema, min_p=0.2,
+              presence_penalty=0.5, frequency_penalty=0.5, seed=42, top_p=0.9, stop=["\n"])
+check("gemini endpoint", _cap["endpoint"].endswith("/openai/chat/completions"))
+check("gemini keeps only supported options",
+      _cap["payload"].get("top_p") == 0.9 and _cap["payload"].get("stop") == ["\n"]
+      and all(k not in _cap["payload"] for k in ("min_p", "presence_penalty", "frequency_penalty", "seed")))
+blocks = _cap["payload"]["messages"][0]["content"]
+check("gemini audio shape", blocks[1].get("type") == "input_audio"
+      and blocks[1].get("input_audio", {}).get("format") == "wav")
+schema_payload = _cap["payload"]["response_format"]["json_schema"]["schema"]
+check("gemini schema relaxed", "additionalProperties" not in json.dumps(schema_payload)
+      and "anyOf" not in json.dumps(schema_payload)
+      and "strict" not in _cap["payload"]["response_format"]["json_schema"])
+shutil.rmtree(_mtmp, ignore_errors=True)
 MB.configure_backend(kind="local")  # restore
 
 # ───────────────────────── summary ─────────────────────────

@@ -154,8 +154,9 @@ start_bridge() {
 # script self-guards with a named mutex, so repeated calls are harmless.
 kill_windows_hotkey() {
   command -v powershell.exe >/dev/null 2>&1 || return 0
-  # match by the window title the script sets — no UNC/cmdline guesswork
-  powershell.exe -NoProfile -Command "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { \$_.CommandLine -like '*GlobalHotkey.ps1*' } | ForEach-Object { Stop-Process -Id \$_.ProcessId -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1 || true
+  # Codex: stop by script path or the title the helper sets, so cleanup still
+  # works when PowerShell hides or rewrites one of those process surfaces.
+  powershell.exe -NoProfile -Command "\$ids = @(); Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { \$_.ProcessId -ne \$PID -and \$_.CommandLine -match '(-File|/File)\s+.*(GlobalHotkey|Register-Hotkey)\.ps1' } | ForEach-Object { \$ids += [int]\$_.ProcessId }; Get-Process -Name powershell -ErrorAction SilentlyContinue | Where-Object { \$_.Id -ne \$PID -and \$_.MainWindowTitle -eq 'LAWRENCE-GlobalHotkey' } | ForEach-Object { \$ids += [int]\$_.Id }; \$ids | Sort-Object -Unique | ForEach-Object { Stop-Process -Id \$_ -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1 || true
 }
 
 ensure_windows_hotkey() {
@@ -399,19 +400,12 @@ doctor() {
       echo "  $p  -       $label"
     fi
   done
-  if ss -tlnp 2>/dev/null | grep -q ":11434 "; then
-    echo "  11434 LISTEN  ollama server (not used by LAWRENCE)"
-  fi
   echo
   echo "== model health (via bridge) =="
   curl -s --max-time 4 "http://127.0.0.1:$LK_UI_PORT/health" 2>/dev/null \
     | python3 -c "import sys,json; d=json.load(sys.stdin); print('  backend:', d.get('backend')); print('  modelHealth:', d.get('modelHealth')); print('  eventsUrl:', d.get('eventsUrl'))" 2>/dev/null \
     || echo "  bridge not answering on 127.0.0.1:$LK_UI_PORT"
   echo
-  if pgrep -x ollama >/dev/null 2>&1; then
-    echo "note: 'ollama serve' is running but LAWRENCE does not use it (it talks to"
-    echo "      llama-server on :8190). Stop it with 'pkill ollama' to free RAM if unused."
-  fi
 }
 
 host_config() {
@@ -494,10 +488,8 @@ payload = {
         "auth": "local-token-planned",
         "note": "Use loopback HTTP/SSE for high-volume UI data; use a Windows host helper or named pipe for privileged lifecycle/control operations."
     },
-    "adjacentServices": {
-        "ollamaUrl": "http://127.0.0.1:11434",
-        "ollamaListening": port_open("11434"),
-        "policy": "warn-only"
+    "removedServices": {
+        "ollama": "not used by LAWRENCE; disable/remove the host ollama.service if present"
     }
 }
 print(json.dumps(payload, indent=2))

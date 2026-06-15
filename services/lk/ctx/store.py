@@ -157,12 +157,18 @@ class ContextStore:
         live_fn:   Callable[[str], None]     | None = None,
         layers:    list[dict] | None = None,
         extractor: Any = None,
+        promote_fn: Callable[[dict], None]   | None = None,
     ) -> None:
         self._mem_dir   = mem_dir
         self._idle      = idle_secs
         self._compact   = compact_fn
         self._live_fn   = live_fn
         self._extractor = extractor   # ctx.extract.Extractor | None (WS-P/B1)
+        # WS-U Track 1b: when a top (archive) layer ages entries out, forward them
+        # here instead of dropping — a per-chat conversation store uses this to
+        # promote its working memory INTO the shared long-term tier. Default None
+        # ⇒ today's behaviour (oldest archived entries are dropped).
+        self._promote_fn = promote_fn
         self._lock      = threading.Lock()
         self._cmplock   = threading.Lock()   # serialises compaction runs
         self._compacting = False             # prevents archive-during-compact race
@@ -394,12 +400,29 @@ class ContextStore:
         # mis-small config (with the default 4K budget this guard never fires).
         if layer.promote_to is None:
             budget = layer.char_budget or int(self._effective_budget() * _L1_FRACTION)
+            dropped: list[str] = []
             with self._lock:
                 lines = self._read_lines(self._path(layer))
                 total = sum(len(l) + 1 for l in lines)
                 while total > budget and len(lines) > 1:
-                    total -= len(lines.pop(0)) + 1
+                    line = lines.pop(0)
+                    total -= len(line) + 1
+                    dropped.append(line)
                 self._sizes[layer.name] = self._write_lines(self._path(layer), lines)
+            # Promotion sink (WS-U Track 1b): forward aged-out entries to the shared
+            # long-term tier rather than dropping them. Done OUTSIDE the lock —
+            # promote_fn writes to a *different* store under its own lock, so the
+            # single-writer-per-file invariant (I1) still holds.
+            if self._promote_fn and dropped:
+                for line in dropped:
+                    try:
+                        ev = json.loads(line)
+                    except Exception:
+                        ev = {"summary": line}
+                    try:
+                        self._promote_fn(ev)
+                    except Exception:
+                        pass
             return False
 
         dest = self._by_name.get(layer.promote_to)
@@ -618,6 +641,42 @@ class ContextStore:
                 self._path(l).write_text("", encoding="utf-8")
                 self._sizes[l.name] = 0
             self._budget = _BUDGET_BASE
+
+    # ── shared long-term ingest (WS-U Track 1b) ─────────────────────────────────
+
+    def ingest_summary(self, summary: str, ts_from: str = "", ts_to: str = "") -> None:
+        """Append a promoted summary into this store's deepest tier (the shared
+        long-term sink for per-chat conversation memory). Appends to the layer
+        named ``l3`` if present, else the deepest non-raw layer, then trims that
+        layer to its budget (archive semantics — oldest dropped, never below one).
+
+        Single lock acquisition (no re-entrant _compact_layer call) so this is
+        safe to invoke from another store's promote_fn callback.
+        """
+        summary = (summary or "").strip()
+        if not summary:
+            return
+        target = self._by_name.get("l3") or next(
+            (l for l in reversed(self.layers) if not l.is_raw), None
+        )
+        if target is None:
+            return
+        entry = json.dumps(
+            {"ts_from": ts_from, "ts_to": ts_to, "level": 99,
+             "summary": summary[:target.summary_cap]},
+            ensure_ascii=False,
+        ) + "\n"
+        with self._lock:
+            with self._path(target).open("a", encoding="utf-8") as f:
+                f.write(entry)
+            budget = target.char_budget or int(self._effective_budget() * _L1_FRACTION)
+            lines = self._read_lines(self._path(target))
+            total = sum(len(l) + 1 for l in lines)
+            while total > budget and len(lines) > 1:
+                total -= len(lines.pop(0)) + 1
+            self._sizes[target.name] = self._write_lines(self._path(target), lines)
+        if self._live_fn:
+            self._live_fn(f"[memory] promoted → {target.name}")
 
     # ── selective rolling-memory management ─────────────────────────────────────
 
