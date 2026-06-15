@@ -30,8 +30,27 @@ SECRETS_PATH = SECRETS_DIR / "secrets.env"
 
 # Background roles route here by default when a fast API is configured; query
 # roles (analysis/response) stay on the default backend unless routed.
-BACKGROUND_ROLES = ("extract", "proactive", "compact", "journal", "study")
+# `compact` is the generic memory-compaction role; `compact-l1/-l2/-l3` are the
+# per-tier roles (WS-M/M2) — a layer can name one so a deep tier compacts on a
+# different/cheaper/longer-context model. They default to the same route as
+# `compact` and are unused unless a memory.layers config opts in.
+BACKGROUND_ROLES = ("extract", "proactive", "refine", "compact",
+                    "compact-l1", "compact-l2", "compact-l3", "journal", "study")
 ALL_ROLES        = ("query", "analysis", "response") + BACKGROUND_ROLES
+
+# One-pick setups. Each writes the default backend + per-role routing in one go,
+# so a user (or the launcher) never has to reason about individual roles. Shared
+# by `lk preset` (CLI) and the launcher menu (UI) — same behaviour either way.
+PRESETS: dict[str, dict[str, Any]] = {
+    "local":  {"label": "Local only — fully offline & private (slowest on CPU)",
+               "backend": "local", "routing": {}},
+    "hybrid": {"label": "Hybrid — you chat locally, Gemini does background work",
+               "backend": "local", "routing": {r: "gemini" for r in BACKGROUND_ROLES}},
+    "gemini": {"label": "Gemini — fast, every role on Gemini 3.1 Flash-Lite",
+               "backend": "gemini", "routing": {r: "gemini" for r in ALL_ROLES}},
+    "claude": {"label": "Claude — every role on the Anthropic API",
+               "backend": "anthropic", "routing": {r: "anthropic" for r in ALL_ROLES}},
+}
 
 # Named providers — base URL + sensible default model + which secret holds the key.
 PROVIDERS: dict[str, dict[str, str]] = {
@@ -59,6 +78,20 @@ _ENV_MAP = {
     "gpu_layers":    "LLAMACPP_GPU_LAYERS",
     "vision":        "LK_VISION",
     "audio":         "LK_AUDIO",
+    "extract":       "LK_EXTRACT",
+    # autonomy: cognitive tick (C1) + graded significance (C2) — all config-driven
+    # so the knobs round-trip through `lk config` and the GUI settings surface.
+    "tick":          "LK_TICK",
+    "tick_floor":    "LK_TICK_FLOOR",
+    "tick_act_tier": "LK_TICK_ACT_TIER",
+    "note_floor":    "LK_NOTE_FLOOR",
+    "sig_warmup":    "LK_SIG_WARMUP",
+    "sig_k":         "LK_SIG_K",
+    "sig_act_floor": "LK_SIG_ACT_FLOOR",
+    # autonomy: reasoning loops (R1 slow loop + R2 elevation gate)
+    "slow_loop":          "LK_SLOW_LOOP",
+    "elevate_delta":      "LK_ELEVATE_DELTA",
+    "elevate_max_per_min": "LK_ELEVATE_MAX_PER_MIN",
     "thinking":      "LK_THINKING",
     "searxng_url":   "LK_SEARXNG_URL",
     "ui_port":       "LK_UI_PORT",
@@ -81,6 +114,23 @@ def save(cfg: dict[str, Any]) -> Path:
     CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     CONFIG_PATH.write_text(json.dumps(cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     return CONFIG_PATH
+
+
+def memory_layers() -> list[dict] | None:
+    """Custom memory-tier shape from lk.json, or None to use the default 3 tiers.
+
+    Shape: ``{"memory": {"layers": [ {layer}, … ]}}`` where each layer is
+    ``{"name", "file"?, "compact_ratio", "promote_to"|null, "header"?,
+       "summary_cap"?, "char_budget"?, "compact_role"?, "is_raw"?}`` ordered
+    bottom→top (first = raw). The store validates and falls back to its
+    DEFAULT_LAYERS on anything malformed, so a bad config never wedges memory.
+    """
+    mem = load().get("memory")
+    if isinstance(mem, dict):
+        layers = mem.get("layers")
+        if isinstance(layers, list) and layers:
+            return layers
+    return None
 
 
 def set_value(key: str, value: str) -> dict[str, Any]:
@@ -249,6 +299,46 @@ def apply_to_env() -> dict[str, str]:
     except Exception:
         pass
     return applied
+
+
+def provider_secret_status(provider: str) -> tuple[str, bool]:
+    """For a named provider → (env var it needs, is that key available now).
+    Providers that need no key (local/lmstudio) report ("", True)."""
+    p = PROVIDERS.get(str(provider).strip().lower(), {})
+    key_env = str(p.get("key_env", "") or "")
+    if p.get("kind") == "local" or not key_env:
+        return "", True
+    # secrets file is loaded into os.environ by load_secrets(); also peek the file
+    have = bool(os.environ.get(key_env)) or key_env in _parse_env_file(SECRETS_PATH)
+    return key_env, have
+
+
+def apply_preset(name: str) -> tuple[dict[str, Any], list[str]]:
+    """Write a named preset into lk.json. Returns (cfg, missing) where ``missing``
+    lists provider names whose API key isn't set yet (the preset still saves —
+    routed calls fall back to local until the key is added)."""
+    preset = PRESETS.get(str(name).strip().lower())
+    if not preset:
+        raise KeyError(name)
+    cfg = load()
+    backend = preset["backend"]
+    if backend == "local":
+        cfg.pop("backend", None)          # local is the built-in default
+    else:
+        cfg["backend"] = backend
+    routing = preset.get("routing") or {}
+    if routing:
+        cfg["routing"] = dict(routing)
+    else:
+        cfg.pop("routing", None)
+    save(cfg)
+    # which providers does this preset rely on, and which lack a key?
+    needed = {backend, *routing.values()}
+    missing = sorted({
+        prov for prov in needed
+        if not provider_secret_status(prov)[1]
+    })
+    return cfg, missing
 
 
 def configured_summary() -> dict[str, Any]:

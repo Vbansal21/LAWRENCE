@@ -60,18 +60,18 @@ class SpoolReader(threading.Thread):
         self._ctx      = ctx
         self._on_event = on_event
         self._poll     = poll
-        self._stop     = threading.Event()
+        self._stop_evt     = threading.Event()
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_evt.set()
 
     def run(self) -> None:
-        while not self._stop.is_set():
+        while not self._stop_evt.is_set():
             try:
                 self._drain()
             except Exception:
                 pass
-            self._stop.wait(self._poll)
+            self._stop_evt.wait(self._poll)
 
     def _drain(self) -> None:
         for p in sorted(self._dir.glob("*.json")):

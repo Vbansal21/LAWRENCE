@@ -8,6 +8,7 @@ import copy
 import json
 import os
 import re
+import signal
 import sys
 import tempfile
 import threading
@@ -25,9 +26,12 @@ sys.path.insert(0, str(ROOT / "services"))
 from lk import model as _model, server as _server  # noqa: E402
 from lk.admin import list_journals, list_logs, show_journal, show_log  # noqa: E402
 from lk.converters import convert as _convert  # noqa: E402
-from lk.ctx import ContextStore  # noqa: E402
+from lk.ctx import ContextStore, Extractor, NoteStore  # noqa: E402
 from lk.config import apply_to_env as _apply_config_env  # noqa: E402
-from lk.kernel import TurnConfig, run_compaction, run_proactive, run_turn  # noqa: E402
+from lk.kernel import (  # noqa: E402
+    CognitiveTick, Elevator, TurnConfig,
+    run_compaction, run_extract, run_proactive, run_turn, tick_enabled,
+)
 from lk.lock import acquire_writer_lock  # noqa: E402
 from lk.notify import notify as _notify  # noqa: E402
 from lk.retrieval.ingest import ingest as _ingest  # noqa: E402
@@ -138,11 +142,16 @@ class DesktopBridge:
         self.ui = UIConnector(port=ui_port)
         # Wire compaction/background events through the SSE connector so they appear
         # on the event stream even between turns.
+        self.db = SemanticDB()
+        self.notes = NoteStore(
+            index_fn=lambda nid, title, body: self.db.upsert(f"note://{nid}", title, [body]),
+        )
+        self.extractor = Extractor(run_extract, note_store=self.notes)  # WS-P/B1 + M3
         self.ctx = ContextStore(
             compact_fn=run_compaction,
             live_fn=lambda msg: self.ui.push_context_event("memory", msg),
+            extractor=self.extractor,
         )
-        self.db = SemanticDB()
         self.retrieval = RetrievalPipeline(self.db)
         self.vision: VisionObserver | None = None
         self.audio: AudioObserver | None = None
@@ -160,6 +169,20 @@ class DesktopBridge:
         # Shared bullet journal, persisted with the CLI via memory/tasks.json.
         self.tasks = TaskStore()
         self._voice_lock = threading.Lock()
+        # WS-R/R2 elevation gate — one rate-limited, dedup'd channel shared by the
+        # slow loop (R1, refined answers) and tick findings.
+        self.elevator = Elevator()
+        # WS-C/C1 cognitive tick — the heartbeat / spine. Drains the B1 perception
+        # buffer on an adaptive cadence and drives the (throttled) proactive pathway
+        # even when no sensor on_event is firing. Idle beats make zero model calls.
+        self.tick: CognitiveTick | None = None
+        if tick_enabled():
+            self.tick = CognitiveTick(
+                self.extractor.drain,
+                lambda events: self._maybe_proactive(),
+                on_log=lambda msg: self.ui.push_context_event("tick", msg),
+            )
+            self.tick.start()
 
     def _profile(self) -> ModelProfile:
         if _model.backend_from_env():
@@ -381,6 +404,19 @@ class DesktopBridge:
         self.ui._push({"type": "finding", **finding})
         _notify(finding.get("headline", "LAWRENCE noticed something"),
                 finding.get("insight", ""))
+
+    def _on_refine(self, verdict: dict[str, Any]) -> None:
+        """Surface an elevated slow-loop refinement into the in-flight turn (R1/R2)."""
+        answer = str(verdict.get("refined", "")).strip()
+        if not answer:
+            return
+        self.events.append("[refine] elevated a better answer")
+        self.ui.push_refined(
+            answer=answer,
+            turn_id=str(verdict.get("turn_id", "")),
+            critique=str(verdict.get("critique", "")),
+            confidence=float(verdict.get("confidence", 0.0) or 0.0),
+        )
 
     # ── document ingestion (NotebookLM-style knowledge base) ────────────────────
     def ingest_document(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -690,6 +726,8 @@ class DesktopBridge:
                 live_fn=_live_fn,
                 tasks_fn=self._tasks_fn,
                 stream_fn=self.ui.push_delta,   # live answer tokens → SSE "delta"
+                on_refine=self._on_refine,      # WS-R/R1 slow loop (no-op unless slow_loop:on)
+                elevator=self.elevator,
             )
             answer = _process_answer(answer)
             answer = _append_once(answer, forced_suffix)
@@ -1563,11 +1601,29 @@ def main() -> int:
 
     Handler.bridge = DesktopBridge()
     server = ThreadingHTTPServer((args.host, args.port), Handler)
+    server.daemon_threads = True   # in-flight request threads die with us, no hang
+
+    # Graceful shutdown: `desktopctl stop` sends SIGTERM. Without a handler the
+    # process is killed mid-serve and the listening socket lingers, which can slow
+    # an immediate restart. Trigger an orderly serve_forever() exit instead (from
+    # another thread — shutdown() must not be called from the serving thread).
+    def _graceful(_signum, _frame):
+        threading.Thread(target=server.shutdown, daemon=True).start()
+    for _sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            signal.signal(_sig, _graceful)
+        except (ValueError, OSError):
+            pass
+
     print(f"[bridge] http://{args.host}:{args.port} -> {Handler.bridge.health()['backend']}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         pass
+    finally:
+        if Handler.bridge.tick:
+            Handler.bridge.tick.stop()
+        server.server_close()       # release the socket promptly for a clean restart
     return 0
 
 

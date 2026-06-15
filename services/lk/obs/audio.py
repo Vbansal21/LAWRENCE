@@ -230,24 +230,24 @@ class AudioObserver(threading.Thread):
         self._ctx      = ctx
         self._on_event = on_event
         self._on_query = on_query   # when set: audio → full turn, not just context
-        self._stop     = threading.Event()
+        self._stop_evt     = threading.Event()
         self._idx      = 0
         self._recent_transcripts: list[str] = []   # for dedup gate
         self.active       = False
         self.recording_ok = True   # False when mic/recorder unavailable
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_evt.set()
         self.active = False
 
     def run(self) -> None:
         self.active = True
-        while not self._stop.is_set():
+        while not self._stop_evt.is_set():
             try:
                 self._tick()
             except Exception:
                 pass
-            self._stop.wait(POLL_INTERVAL)
+            self._stop_evt.wait(POLL_INTERVAL)
 
     def _tick(self) -> None:
         self._idx += 1

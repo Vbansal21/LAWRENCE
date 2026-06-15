@@ -57,9 +57,12 @@ from pathlib import Path
 from . import server as _server
 from . import admin  as _admin
 from . import model  as _model
-from .ctx        import ContextStore
+from .ctx        import ContextStore, Extractor, NoteStore
 from .ctx.gate   import gate_config
-from .kernel     import run_turn, run_proactive, run_compaction, write_journal_entry, TurnConfig
+from .kernel     import (
+    run_turn, run_proactive, run_compaction, run_extract, write_journal_entry, TurnConfig,
+    CognitiveTick, tick_enabled, Elevator,
+)
 from .lock       import acquire_writer_lock
 from .obs        import VisionObserver, AudioObserver, capture_now, record_now, SpoolReader
 from .tasks      import TaskStore
@@ -1400,8 +1403,10 @@ def main() -> int:
         print("  Stop it first — the REPL and the UI bridge are mutually exclusive kernels.")
         return 1
 
-    ctx       = ContextStore(compact_fn=run_compaction, live_fn=_ctx_live)
     db        = SemanticDB()
+    notes     = NoteStore(index_fn=lambda nid, title, body: db.upsert(f"note://{nid}", title, [body]))
+    extractor = Extractor(run_extract, note_store=notes)
+    ctx       = ContextStore(compact_fn=run_compaction, live_fn=_ctx_live, extractor=extractor)
     pipeline  = RetrievalPipeline(db)
     ui        = UIConnector()
     tasks     = TaskStore()   # self-curated TODO + remember (shared with desktop UI)
@@ -1467,6 +1472,32 @@ def main() -> int:
     on_proactive = _make_proactive_trigger(
         ctx, pipeline, cfg, state, live_fn=live_q.put, present_fn=_present_finding,
     )
+
+    # WS-R/R2 elevation gate (shared by the slow loop + findings) and the R1 hook
+    # that surfaces an elevated refinement through the live feed (no-op unless
+    # slow_loop:on). Routed via live_q so prints stay off the background thread.
+    elevator = Elevator()
+
+    def _on_refine(verdict: dict) -> None:
+        ans = str(verdict.get("refined", "")).strip()
+        if not ans:
+            return
+        crit = str(verdict.get("critique", "")).strip()
+        head = "[refine ↑] a better answer" + (f" — {crit[:100]}" if crit else "")
+        live_q.put(f"{head}\n{ans}")
+
+    # WS-C/C1 cognitive tick — the heartbeat / spine. Beats on an adaptive cadence,
+    # drains the B1 perception buffer, and drives the (already throttled + locked)
+    # proactive pathway even when no sensor on_event is firing. Idle beats make zero
+    # model calls and back the cadence off. Stopped in the finally below.
+    tick: "CognitiveTick | None" = None
+    if tick_enabled():
+        tick = CognitiveTick(
+            extractor.drain,
+            lambda events: on_proactive("tick", f"{len(events)} perception event(s)"),
+            on_log=live_q.put,
+        )
+        tick.start()
 
     # Ingest events captured by an out-of-process sensor (lk.sensor) — keeps
     # vision/audio working when this kernel is headless (e.g. in a container).
@@ -1770,6 +1801,7 @@ def main() -> int:
                         cfg=cfg, images=images, audios=audios, ui=ui,
                         capture_fn=capture_fn, live_fn=live_q.put,
                         tasks_fn=_tasks_fn,
+                        on_refine=_on_refine, elevator=elevator,
                     )
                     elapsed = int((time.monotonic() - t0) * 1000)
                     sys.stdout.write(f"\r  done ({elapsed}ms)      \n")
@@ -1791,6 +1823,8 @@ def main() -> int:
                 sys.stdout.flush()
 
         finally:
+            if tick:
+                tick.stop()
             if vision:
                 vision.stop()
             if audio:

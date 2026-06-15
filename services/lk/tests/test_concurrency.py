@@ -7,10 +7,10 @@ from lk.ctx.store import ContextStore
 
 tmp = Path(tempfile.mkdtemp())
 ccalls = {"l1":0,"l2":0}
-def slow_compact(text, level):
-    ccalls[level]+=1
+def slow_compact(text, layer):
+    ccalls[layer.name]+=1
     time.sleep(random.uniform(0.005, 0.03))  # simulate model latency
-    return f"S[{level}] {len(text)}c"
+    return f"S[{layer.name}] {len(text)}c"
 ctx = ContextStore(mem_dir=tmp/"m", compact_fn=slow_compact)
 ctx._min_compact_secs = 0
 ctx.l2_budget = 1200

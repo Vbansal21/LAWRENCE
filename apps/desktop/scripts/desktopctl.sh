@@ -28,6 +28,24 @@ fi
 LK_UI_PORT="${LK_UI_PORT:-8765}"
 LAWRENCE_HOTKEY="${LAWRENCE_HOTKEY:-Ctrl+Shift+L}"
 LAWRENCE_HIDE_ON_BLUR="${LAWRENCE_HIDE_ON_BLUR:-0}"
+LIFECYCLE_LOCK="$RUNTIME/desktopctl.lock"
+
+# Serialize mutating lifecycle ops (start/stop/restart/build/reset/show/toggle) so
+# concurrent or rapid-fire invocations can't race into duplicate or half-started
+# processes. Reentrant across the process tree via an env guard, so `restart`
+# (which re-invokes `$0 stop` / `$0 start`) does not deadlock on itself.
+with_lifecycle_lock() {
+  [[ "${LK_LIFECYCLE_LOCKED:-}" == "1" ]] && return 0
+  if ! command -v flock >/dev/null 2>&1; then
+    return 0   # flock absent (rare) → best-effort, no serialization
+  fi
+  exec 9>"$LIFECYCLE_LOCK"
+  if ! flock -w 30 9; then
+    echo "desktopctl: another lifecycle operation is in progress (waited 30s)" >&2
+    exit 1
+  fi
+  export LK_LIFECYCLE_LOCKED=1
+}
 
 pid_alive() {
   local file="$1"
@@ -238,6 +256,27 @@ stop_bridge_processes() {
   for pid in $(bridge_pids); do
     kill -9 "$pid" 2>/dev/null || true
   done
+}
+
+# Force a clean slate from ANY state: kill tracked + untracked popup and bridge
+# instances (every ui_bridge.py, not just our port), stop the hotkey listener,
+# and clear stale pidfiles. `--all`/`--server` also stops the warm llama-server.
+# After this, a plain `start` always works. flock auto-releases on the dead PIDs,
+# so the writer lock frees itself.
+force_reset() {
+  echo "reset: forcing a clean slate"
+  stop_app_processes >/dev/null 2>&1 || true
+  local pid
+  for pid in $(all_bridge_pids); do kill "$pid" 2>/dev/null || true; done
+  sleep 0.5
+  for pid in $(all_bridge_pids); do kill -9 "$pid" 2>/dev/null || true; done
+  kill_windows_hotkey
+  rm -f "$APP_PID" "$BRIDGE_PID"
+  if [[ "${1:-}" == "--all" || "${1:-}" == "--server" ]]; then
+    pkill -9 -f "llama-server" 2>/dev/null || true
+    echo "reset: llama-server stopped"
+  fi
+  echo "reset: cleared popup + bridge + hotkey + stale pidfiles"
 }
 
 services_start() {
@@ -590,32 +629,48 @@ PY
 
 case "${1:-status}" in
   start)
+    with_lifecycle_lock
     start_bridge
     start_app
     ;;
   stop|kill)
+    with_lifecycle_lock
     stop_pid "popup" "$APP_PID"
     stop_pid "bridge" "$BRIDGE_PID"
     kill_windows_hotkey
     echo "hotkey: Windows listener stopped"
     ;;
+  reset|force-reset)
+    with_lifecycle_lock
+    force_reset "${2:-}"
+    ;;
   services-start)
+    with_lifecycle_lock
     services_start
     ;;
   services-stop)
+    with_lifecycle_lock
     services_stop
     ;;
   services-restart)
-    services_restart
+    with_lifecycle_lock
+    services_stop
+    services_start
     ;;
   restart)
-    "$0" stop
-    "$0" start
+    with_lifecycle_lock
+    stop_pid "popup" "$APP_PID"
+    stop_pid "bridge" "$BRIDGE_PID"
+    kill_windows_hotkey
+    start_bridge
+    start_app
     ;;
   show|open)
+    with_lifecycle_lock
     show_app
     ;;
   toggle)
+    with_lifecycle_lock
     toggle_app
     ;;
   status)
@@ -637,6 +692,7 @@ case "${1:-status}" in
     tail -n 80 "$APP_LOG" 2>/dev/null || true
     ;;
   build)
+    with_lifecycle_lock
     npm run build
     ;;
   hotkey)
@@ -647,7 +703,7 @@ case "${1:-status}" in
     [[ -f "$ENV_FILE" ]] && cat "$ENV_FILE" || status
     ;;
   *)
-    echo "usage: $0 start|show|stop|restart|services-start|services-stop|services-restart|status|doctor|host-config [--write]|host-install-plan [--write]|logs|build|hotkey VALUE|config"
+    echo "usage: $0 start|show|stop|restart|reset [--all]|services-start|services-stop|services-restart|status|doctor|host-config [--write]|host-install-plan [--write]|logs|build|hotkey VALUE|config"
     exit 2
     ;;
 esac

@@ -403,7 +403,7 @@ class VisionObserver(threading.Thread):
         self.tmp_dir        = tmp_dir
         self._ctx           = ctx
         self._on_event      = on_event
-        self._stop          = threading.Event()
+        self._stop_evt          = threading.Event()
         self._prev_bytes:   bytes | None = None
         self._prev_ocr:     str  = ""
         self._prev_written_ocr: str = ""
@@ -443,7 +443,7 @@ class VisionObserver(threading.Thread):
         self._regions_ok      = True   # flips False after a fallback, retried periodically
 
     def stop(self) -> None:
-        self._stop.set()
+        self._stop_evt.set()
         self.active = False
 
     def consume_pending_hi(self) -> Path | None:
@@ -460,12 +460,12 @@ class VisionObserver(threading.Thread):
 
     def run(self) -> None:
         self.active = True
-        while not self._stop.is_set():
+        while not self._stop_evt.is_set():
             try:
                 self._tick()
             except Exception:
                 pass
-            self._stop.wait(self.poll_interval)   # live-patchable interval
+            self._stop_evt.wait(self.poll_interval)   # live-patchable interval
 
     def _tick(self) -> None:
         self._idx += 1

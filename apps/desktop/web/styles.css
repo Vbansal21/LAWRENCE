@@ -143,6 +143,18 @@ button {
   border-left: 2px solid rgba(214, 173, 85, 0.6);
 }
 
+/* A slow-loop (WS-R/R1) refinement that elevated over the fast answer. */
+.message.refined {
+  margin-left: 10px;
+  padding-left: 10px;
+  border-left: 2px solid rgba(120, 200, 140, 0.75);
+}
+
+.message.refined .meta span:first-child {
+  color: #8fd6a3;
+  font-weight: 720;
+}
+
 .message.user.voice .message-head strong {
   color: var(--amber);
 }

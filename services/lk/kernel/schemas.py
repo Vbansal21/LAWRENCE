@@ -91,6 +91,20 @@ PROACTIVE = {
     "additionalProperties": False,
 }
 
+# Extraction (WS-P/B1): one raw sensor slice → a clean, self-contained entry.
+# `clean` first so a streaming/partial parse still yields the useful field. Lean:
+# only `clean` is required so the call stays cheap on slow local hardware.
+EXTRACT = {
+    "type": "object",
+    "properties": {
+        "clean":        {"type": "string"},
+        "significance": {"type": "number"},
+        "tags":         {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["clean"],
+    "additionalProperties": False,
+}
+
 PROACTIVE_BRIEF = {
     "type": "object",
     "properties": {
@@ -99,5 +113,20 @@ PROACTIVE_BRIEF = {
         "insight":  {"type": "string"},
     },
     "required": ["surface"],
+    "additionalProperties": False,
+}
+
+# Slow loop (WS-R/R1): the alter-ego critiques the fast answer and decides whether
+# a better one is available. `better` first (cheap verdict streams first); only
+# `better` is required so a "no improvement" verdict is one tiny token.
+REFINE = {
+    "type": "object",
+    "properties": {
+        "better":     {"type": "boolean"},
+        "confidence": {"type": "number"},
+        "critique":   {"type": "string"},
+        "refined":    {"type": "string"},
+    },
+    "required": ["better"],
     "additionalProperties": False,
 }

@@ -19,6 +19,7 @@ import json
 import os
 import shutil
 import subprocess
+import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,6 +27,11 @@ REPO_ROOT    = Path(__file__).resolve().parents[2]
 _MEM_DIR     = REPO_ROOT / "memory"
 _JOURNAL_DIR = _MEM_DIR / "journal"
 _LOGS_DIR    = _MEM_DIR / "logs"
+
+# Serialises the journal read-modify-write so a tick-driven entry (C3) can never
+# race a user /journal and tear the file. Atomic os.replace also makes the write
+# crash-safe — a reader sees either the old or new file, never a half-written one.
+_journal_lock = threading.Lock()
 
 
 # ── date helpers ──────────────────────────────────────────────────────────────
@@ -222,24 +228,28 @@ def append_journal_entry(
     path    = _JOURNAL_DIR / f"{date}.mdx"
     section = _render_entry(time_str, entry)
 
-    if path.exists():
-        fm, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
-        fm["entries"] = int(fm.get("entries", 1)) + 1
-        fm["updated"] = when.isoformat()
-        fm["tags"]    = sorted(set(fm.get("tags", [])) | set(tags))
-        new = _render_frontmatter(fm) + body.rstrip() + "\n\n---\n\n" + section
-        path.write_text(new, encoding="utf-8")
-    else:
-        fm = {
-            "title":   f"Journal {date}",
-            "date":    date,
-            "type":    "journal",
-            "tags":    tags,
-            "entries": 1,
-            "updated": when.isoformat(),
-        }
-        content = _render_frontmatter(fm) + f"# Journal — {_human_date(date)}\n\n" + section
-        path.write_text(content, encoding="utf-8")
+    # The whole read-modify-write runs under the lock and lands via an atomic
+    # temp+replace, so concurrent/tick-driven entries can't tear the file.
+    with _journal_lock:
+        if path.exists():
+            fm, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+            fm["entries"] = int(fm.get("entries", 1)) + 1
+            fm["updated"] = when.isoformat()
+            fm["tags"]    = sorted(set(fm.get("tags", [])) | set(tags))
+            content = _render_frontmatter(fm) + body.rstrip() + "\n\n---\n\n" + section
+        else:
+            fm = {
+                "title":   f"Journal {date}",
+                "date":    date,
+                "type":    "journal",
+                "tags":    tags,
+                "entries": 1,
+                "updated": when.isoformat(),
+            }
+            content = _render_frontmatter(fm) + f"# Journal — {_human_date(date)}\n\n" + section
+        tmp = path.with_suffix(".mdx.tmp")
+        tmp.write_text(content, encoding="utf-8")
+        os.replace(tmp, path)
     return path
 
 

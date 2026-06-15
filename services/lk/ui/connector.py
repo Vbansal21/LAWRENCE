@@ -72,9 +72,18 @@ class UIConnector:
         handler = _make_handler(self)
         try:
             srv = ThreadingHTTPServer(("127.0.0.1", port), handler)
-        except OSError:
-            return   # port in use → fall back to no-op silently
+        except OSError as exc:
+            # Don't fail silently: a running bridge with no event stream looks
+            # "up" but loses live streaming/findings. Almost always an orphaned
+            # bridge still holding the port — `desktopctl reset` clears it.
+            import sys
+            print(f"[ui] SSE events port {port} unavailable ({exc}); live events "
+                  f"DISABLED — run `lk reset` if a stale bridge is holding it",
+                  file=sys.stderr, flush=True)
+            return
+        srv.daemon_threads = True
         self.port = port
+        self._server = srv
         t = threading.Thread(target=srv.serve_forever, name="ui-sse-server", daemon=True)
         t.start()
 
@@ -120,6 +129,18 @@ class UIConnector:
             "note_compact": note_compact,
             "confidence":   confidence,
             "latency_ms":   latency_ms,
+        })
+
+    def push_refined(self, *, answer: str, turn_id: str = "",
+                     critique: str = "", confidence: float = 0.0) -> None:
+        """A slow-loop (WS-R/R1) refinement that elevated over the fast answer for an
+        in-flight turn — the UI replaces that turn's answer in place (same turn-id)."""
+        self._push({
+            "type":       "refined",
+            "answer":     answer,
+            "turn_id":    turn_id,
+            "critique":   critique,
+            "confidence": confidence,
         })
 
     def push_context_event(self, kind: str, compact: str) -> None:
@@ -222,8 +243,12 @@ def _make_handler(connector: UIConnector) -> type:
                         pass
 
         def _read_json(self) -> dict[str, Any]:
-            n = int(self.headers.get("Content-Length") or 0)
-            return json.loads(self.rfile.read(n)) if n > 0 else {}
+            # A malformed body must be a no-op query, never a 500 / reset.
+            try:
+                n = int(self.headers.get("Content-Length") or 0)
+                return json.loads(self.rfile.read(n)) if n > 0 else {}
+            except (ValueError, json.JSONDecodeError):
+                return {}
 
         def _json(self, status: int, payload: dict[str, Any]) -> None:
             raw = b"" if status == 204 else json.dumps(payload).encode()

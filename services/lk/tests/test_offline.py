@@ -46,9 +46,9 @@ from lk.ctx.store import ContextStore, _BUDGET_BASE, _BUDGET_GROW, _BUDGET_MAX, 
 tmp = Path(tempfile.mkdtemp())
 # stub compactor that always returns a summary
 calls = {"l1": 0, "l2": 0}
-def stub_compact(text, level):
-    calls[level] += 1
-    return f"SUMMARY[{level}] of {len(text)} chars"
+def stub_compact(text, layer):
+    calls[layer.name] += 1
+    return f"SUMMARY[{layer.name}] of {len(text)} chars"
 ctx = ContextStore(mem_dir=tmp/"m", compact_fn=stub_compact)
 ctx._min_compact_secs = 0  # disable cooldown for the test
 b0 = ctx.working_budget()

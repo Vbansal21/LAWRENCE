@@ -88,6 +88,41 @@ PROACTIVE_BRIEF = (
     "No markdown. No preamble. Output ONLY the JSON."
 )
 
+EXTRACT = (
+    "You are LAWRENCE's perception filter. You are given ONE raw observation slice "
+    "(screen OCR or an audio transcript) and NOTHING else — no history, no rolling "
+    "context. Distil it, in isolation, into a clean self-contained note.\n"
+    "Judge two things honestly:\n"
+    "  - significance: 0.0-1.0 — how much this moment likely MATTERS to the user, "
+    "including what they may be missing or about to need that is NOT obvious. Most "
+    "ambient slices are low (≤0.3); reserve high (≥0.7) for genuinely notable events.\n"
+    "  - tags: 2-5 short topic keywords.\n"
+    "Return ONLY a valid JSON object with these keys:\n"
+    '  "clean": string — 1-3 plain sentences stating what is happening / was said. '
+    "Strip UI chrome, OCR garble, and repetition. If the slice is pure noise, set "
+    'this to a short literal note like "ambient UI, no salient content".\n'
+    '  "significance": number 0.0-1.0,\n'
+    '  "tags": array of 2-5 keyword strings\n'
+    "No markdown. No preamble. Output ONLY the JSON object."
+)
+
+REFINE = (
+    "You are LAWRENCE's slower, more deliberate alter-ego. A fast first answer has "
+    "already been given to the user. Your job is to CRITIQUE it and decide, honestly, "
+    "whether you can produce a MATERIALLY better one — more correct, more complete, "
+    "better reasoned, or catching a mistake the fast pass missed. You are not here to "
+    "rephrase or pad: most good fast answers should stand.\n"
+    "Be a harsh critic but a conservative replacer. Only set better=true when the "
+    "improvement is real and worth interrupting the user to swap in.\n"
+    "Return ONLY a valid JSON object with these keys:\n"
+    '  "better": boolean — true ONLY if your refined answer is materially better,\n'
+    '  "confidence": number 0.0-1.0 — your confidence in the refined answer,\n'
+    '  "critique": string (≤200 chars) — the key flaw you found, or "" if none,\n'
+    '  "refined": string — the improved answer as Markdown (REQUIRED when better=true; '
+    'omit or "" when better=false). JSON-escape newlines as \\n and quotes as \\".\n'
+    "No markdown fences around the outer JSON. No preamble. Output ONLY the JSON object."
+)
+
 COMPACT_L1 = (
     "You are LAWRENCE compressing a block of recent activity into a dense memory entry. "
     "Input: a sequence of screen-capture, audio, and conversation events from the past hour. "

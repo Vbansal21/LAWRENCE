@@ -115,8 +115,9 @@ function render(options = {}) {
     const meta = (message.meta || []).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
     const cursor = message.streaming ? '<span class="cursor"></span>' : "";
     const sources = renderSources(message.sources || sourceCardsFromText(message.text));
+    const refined = message.refined ? " refined" : "";
     return `
-      <article class="message ${message.role}${channel}">
+      <article class="message ${message.role}${channel}${refined}">
         <div class="avatar" aria-hidden="true">${icon(message.role === "user" ? "user" : "assistant")}</div>
         <div class="message-body">
           <div class="message-head">
@@ -1006,6 +1007,7 @@ function connectEvents(url) {
       if (payload.type === "tasks") applyTasks(payload);
       if (payload.type === "delta") onDelta(payload.text);
       if (payload.type === "finding") onFinding(payload);
+      if (payload.type === "refined") onRefined(payload);
       if (payload.type === "response") onRemoteResponse(payload);
       renderTelemetry();
     } catch {
@@ -1064,6 +1066,32 @@ function onFinding(payload) {
     meta: ["proactive finding"],
   });
   state.metrics.transcript = `finding: ${headline.slice(0, 60)}`;
+  render();
+}
+
+// ── slow-loop refinement (SSE "refined" — WS-R/R1 elevated a better answer) ──
+// The kernel surfaced a materially better answer for an in-flight turn; replace
+// the most recent settled assistant answer in place (same turn) and badge it.
+function onRefined(payload) {
+  const answer = String(payload.answer || "").trim();
+  if (!answer) return;
+  const critique = String(payload.critique || "").trim();
+  let target = null;
+  for (let i = state.messages.length - 1; i >= 0; i--) {
+    if (state.messages[i].role === "assistant" && !state.messages[i].streaming) {
+      target = state.messages[i];
+      break;
+    }
+  }
+  const meta = ["refined ↑", ...(critique ? [critique.slice(0, 90)] : [])];
+  if (target) {
+    target.text = answer;
+    target.meta = meta;
+    target.refined = true;
+  } else {
+    state.messages.push({ role: "assistant", text: answer, time: currentTime(), meta, refined: true });
+  }
+  state.metrics.transcript = "refined ↑ a better answer";
   render();
 }
 

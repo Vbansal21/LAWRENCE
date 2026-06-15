@@ -231,6 +231,8 @@ def run_turn(
     live_fn:    Callable[[str], None]     | None = None,
     tasks_fn:   Callable[[dict], None]    | None = None,
     stream_fn:  Callable[[str], None]     | None = None,
+    on_refine:  Callable[[dict], None]    | None = None,
+    elevator:   Any                              = None,
 ) -> tuple[str, dict]:
     turn_id  = f"t-{next(_turn_ctr):04d}"
     ts_start = time.monotonic()
@@ -401,6 +403,21 @@ def run_turn(
         latency_ms=latency_ms,
     )
 
+    # ── WS-R/R1: slow loop ────────────────────────────────────────────────────
+    # The fast answer is now surfaced. Behind slow_loop:on, dispatch a bounded
+    # critique-refine in a daemon thread that may elevate a materially better
+    # answer into THIS turn (R2 gate). Non-blocking; a no-op when slow_loop:off.
+    if on_refine is not None:
+        try:
+            from .refine import dispatch_refine
+            dispatch_refine(
+                user_text, answer, ctx=ctx, retrieval=retrieval,
+                fast_confidence=float(response.get("confidence", 0.0) or 0.0),
+                on_refine=on_refine, elevator=elevator, turn_id=turn_id, live_fn=live_fn,
+            )
+        except Exception:
+            pass
+
     return answer, controls
 
 
@@ -487,26 +504,75 @@ def run_proactive(
     )
 
 
+# ── perception: extraction (called from the observer/spool path) ───────────────
+
+def run_extract(slice_text: str, kind: str = "event") -> dict | None:
+    """Distil ONE raw sensor slice into a clean entry — WS-P/B1, the keystone.
+
+    Deliberately context-free (no rolling memory) so the model focuses purely on
+    the slice (clean focus), and **droppable** (PRI_PROACTIVE): if the local slot
+    is busy it returns empty and we yield — extraction must NEVER block a user
+    turn or the capture loop. Returns ``{clean, significance, tags}`` or ``None``
+    on skip/failure, so the caller falls back to logging the raw slice (the
+    degraded path — perception keeps working without the model).
+    """
+    slice_text = (slice_text or "").strip()
+    if not slice_text:
+        return None
+    try:
+        raw = call_model(
+            _build_messages(prompts.EXTRACT, slice_text[:4000], [], []),
+            max_tokens=320, temperature=0.1,
+            schema=schemas.EXTRACT, priority=PRI_PROACTIVE, role="extract",
+        )
+    except Exception:
+        return None
+    parsed = _extract_json(raw.get("text", ""))
+    if not parsed or not str(parsed.get("clean", "")).strip():
+        return None
+    try:
+        sig = float(parsed.get("significance", 0.0) or 0.0)
+    except (TypeError, ValueError):
+        sig = 0.0
+    return {
+        "clean":        str(parsed.get("clean", "")).strip(),
+        "significance": max(0.0, min(1.0, sig)),
+        "tags":         [str(t) for t in (parsed.get("tags") or []) if t][:8],
+    }
+
+
 # ── memory compaction (called by ContextStore background thread) ───────────────
 
-def run_compaction(events_text: str, level: str) -> str:
+def run_compaction(events_text: str, layer: Any) -> str:
     """
-    Compress a block of context events into a denser summary.
-    level="l1" → compress raw events into an hourly session summary (L2 entry).
-    level="l2" → compress session summaries into a long-range summary (L3 entry).
-    Returns empty string on failure so the store leaves its file unchanged.
+    Compress a block of context events into a denser summary (one tier → next).
+
+    The store passes the source ``Layer`` (M2): we route on ``layer.compact_role``
+    (so a deep tier can use a different/cheaper/longer-context model purely via
+    config), size the summary to ``layer.compact_target_tokens``, and pick the
+    raw vs. summary prompt from ``layer.is_raw``. A bare string name is also
+    accepted for backward-compat / direct callers ("l1" ⇒ raw prompt).
+
+    Returns empty string on failure so the store leaves its file bounded but
+    un-summarised (the degraded path — memory never depends on one model).
     """
-    prompt  = prompts.COMPACT_L1 if level == "l1" else prompts.COMPACT_L2
+    if isinstance(layer, str):
+        role, is_raw, target = "compact", (layer == "l1"), 0
+    else:
+        role   = getattr(layer, "compact_role", "compact") or "compact"
+        is_raw = bool(getattr(layer, "is_raw", False))
+        target = int(getattr(layer, "compact_target_tokens", 0) or 0)
+    prompt = prompts.COMPACT_L1 if is_raw else prompts.COMPACT_L2
     # Headroom for the thinking block before the summary (same reason as the
     # journal): with too small a ceiling the budget is spent thinking and the
-    # summary comes back empty, so no L2/L3 entry is ever stored. The model
-    # stops at EOS once the (short) summary is done.
-    max_tok = 768 if level == "l1" else 512
+    # summary comes back empty, so no entry is ever stored. The model stops at
+    # EOS once the (short) summary is done, so a high ceiling is not wasteful.
+    max_tok = target if target > 0 else (768 if is_raw else 512)
     try:
         raw = call_model(
             _build_messages(prompt, events_text, [], []),
             max_tokens=max_tok, temperature=0.1,
-            priority=PRI_COMPACT, role="compact",
+            priority=PRI_COMPACT, role=role,
         )
         return raw.get("text", "").strip()
     except Exception:

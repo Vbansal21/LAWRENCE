@@ -19,6 +19,10 @@ class GateConfig:
     vision_high:        float = 0.50   # at or above → always write (layout change)
     audio_min_words:    int   = 3
     audio_dedup_max:    float = 0.60   # Jaccard sim above → near-duplicate, skip
+    # extraction (WS-P/B1) info-gain: distil only when a slice is novel enough vs.
+    # the last extracted one — keeps the (droppable) model call off near-duplicates.
+    extract_min_words:   int   = 4
+    extract_novelty_min: float = 0.25  # Jaccard distance vs last extracted slice
 
 
 gate_config = GateConfig()
@@ -59,3 +63,14 @@ def audio_gate(transcript: str, recent_transcripts: Sequence[str]) -> bool:
         if _jaccard(curr, _words(prev)) > gate_config.audio_dedup_max:
             return False
     return True
+
+
+def extract_gate(prev_slice: str, curr_slice: str) -> bool:
+    """Info-gain gate for the extraction layer (B1): only distil a slice that adds
+    enough novelty over the last one extracted, so the droppable model call is
+    never spent on near-duplicate ambient frames."""
+    curr = _words(curr_slice)
+    if len(curr) < gate_config.extract_min_words:
+        return False
+    novelty = 1.0 - _jaccard(_words(prev_slice), curr)
+    return novelty >= gate_config.extract_novelty_min

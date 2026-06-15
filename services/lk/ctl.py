@@ -4,8 +4,16 @@ This is the control CLI (plan P2): the interface you use *before* the model or
 UI loads. It never imports the kernel — it inspects state over HTTP and the
 writer-lock file, and delegates real work to the existing entry points:
 
+    lk                  open the launcher (interactive gateway menu)
+    lk launcher         the launcher menu — set up / start / config / stop
+    lk preset use NAME  apply a backend+routing preset (local/hybrid/gemini/claude)
     lk start            bridge + llama-server + popup  (the normal way to run)
+    lk restart [--all]  stop then start  (--all also restarts llama-server)
+    lk rebuild          recompile the desktop popup (Tauri) and relaunch it
+    lk reset [--all]    force a clean slate from any wedged state (--all: + server)
     lk stop [--all]     stop popup+bridge  (--all also stops llama-server)
+    lk memory [...]     inspect/back up/clear memory (stats|clear-cache|clear-all)
+    lk notes [...]      browse the zettelkasten (list | show <id> | search <q>)
     lk status           who is running, who owns memory/, model health
     lk repl [flags...]  the terminal REPL (mutually exclusive with the UI kernel)
     lk ui               popup only (bridge must be running / will be started)
@@ -204,6 +212,12 @@ def cmd_doctor(_args: list[str]) -> int:
             print(f"  {mod:<14} OK (python)")
         except ImportError:
             print(f"  {mod:<14} MISSING — pip install -e '.[{extra}]'")
+    try:
+        __import__("tkinter")
+        print(f"  {'tkinter':<14} OK (GUI launcher)")
+    except ImportError:
+        print(f"  {'tkinter':<14} MISSING — GUI launcher falls back to console menu"
+              " (apt: python3-tk)")
     bin_ = REPO_ROOT / "third_party/llama.cpp/build/bin/llama-server"
     print(f"  llama-server {'OK ' + str(bin_) if bin_.exists() else 'MISSING — build third_party/llama.cpp'}")
     models = list((REPO_ROOT / "models").rglob("*.gguf"))
@@ -353,17 +367,230 @@ def cmd_ingest(args: list[str]) -> int:
     return rc
 
 
+def cmd_launcher(args: list[str]) -> int:
+    """The gateway. A separate GUI window when a display exists; a console menu
+    otherwise. `lk launcher --tui` forces the console; `--gui` forces the window;
+    `--here` runs the GUI in the foreground instead of detaching it."""
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    force_tui = "--tui" in args
+    force_gui = "--gui" in args
+    foreground = "--here" in args or "--foreground" in args
+    has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
+
+    use_gui = force_gui or (not force_tui and has_display and _tk_available())
+    if not use_gui:
+        from lk.launcher import run
+        return run()
+
+    if foreground:
+        from lk.launcher_gui import run as run_gui
+        return run_gui()
+    # Detach: a window you summon and walk away from — not tied to this terminal.
+    # A second `lk launcher` raises the existing window instead of opening a new one.
+    log = REPO_ROOT / ".runtime" / "launcher.log"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with open(log, "ab") as fh:
+        subprocess.Popen(
+            [sys.executable, str(REPO_ROOT / "lk"), "launcher", "--gui", "--here"],
+            stdout=fh, stderr=fh, stdin=subprocess.DEVNULL,
+            start_new_session=True, cwd=str(REPO_ROOT),
+        )
+    print("  launcher window opened (summon again with `lk` to raise it).")
+    return 0
+
+
+def _tk_available() -> bool:
+    try:
+        import tkinter  # noqa: F401
+        return True
+    except Exception:
+        return False
+
+
+def cmd_reset(args: list[str]) -> int:
+    """Force a clean slate from any state: kill every tracked/untracked popup +
+    bridge, the hotkey listener, and stale pidfiles. `--all` also stops the warm
+    llama-server. Use when something is wedged and a normal stop won't take."""
+    return _desktopctl("reset", "--all") if "--all" in args else _desktopctl("reset")
+
+
+def cmd_restart(args: list[str]) -> int:
+    """Stop then start. `--force` hard-resets first (recovers a wedged state);
+    `--all` also cycles the model server."""
+    if "--force" in args:
+        cmd_reset(["--all"] if "--all" in args else [])
+    else:
+        cmd_stop(["--all"] if "--all" in args else [])
+    return cmd_start([a for a in args if a not in ("--all", "--force")])
+
+
+def cmd_rebuild(args: list[str]) -> int:
+    """Recompile the desktop popup (Tauri release build) and relaunch it.
+
+    The popup's frontend (web/) is embedded into the binary at build time, so a
+    web/Rust edit only takes effect after a rebuild + relaunch. `--no-restart`
+    builds without relaunching."""
+    if not _node_ready():
+        print("  installing desktop dependencies first (npm install)…")
+        if subprocess.call(["npm", "install", "--no-fund", "--no-audit"],
+                           cwd=REPO_ROOT / "apps" / "desktop") != 0:
+            print("  npm install failed — see `lk doctor`")
+            return 1
+    print("  recompiling the popup (cargo release build — first build is slow)…")
+    rc = _desktopctl("build")
+    if rc != 0:
+        print("  build failed — check cargo/node (`lk doctor`), then retry")
+        return rc
+    if "--no-restart" in args:
+        print("  built. `lk start` (or Restart) to run the new binary.")
+        return 0
+    print("  built — relaunching so the new binary takes effect…")
+    return _desktopctl("restart")
+
+
+def cmd_memory(args: list[str]) -> int:
+    """Inspect / back up / clear LAWRENCE memory (see memops.py)."""
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk import memops as M
+    sub = args[0] if args else "stats"
+    if sub in ("stats", "status", "ls"):
+        s = M.stats()
+        owner = s["locked_by"]
+        print(f"  memory: {M.human(s['total_bytes'])} total"
+              + (f"   (LOCKED by {owner.get('role','?')} pid {owner.get('pid','?')})" if owner else "   (unlocked)"))
+        for cat, v in s["categories"].items():
+            print(f"    {cat:<8} {v['files']:>4} files  {M.human(v['bytes'])}")
+        print("\n  clear:  lk memory clear-cache | clear-rolling | clear-logs | clear-all")
+        return 0
+    if sub == "backup":
+        print(f"  backed up → {M.backup()}")
+        return 0
+    mapping = {
+        "clear-cache":   ["cache"],   "clear-rolling": ["rolling"],
+        "clear-logs":    ["log"],     "clear-journal": ["journal"],
+        "clear-notes":   ["notes"],   "clear-all":     ["all"],
+    }
+    if sub in mapping:
+        force = "--force" in args
+        res = M.clear(mapping[sub], force=force)
+        if res.get("skipped"):
+            print(f"  skipped: {res['skipped']}")
+            print(f"  (re-run with --force to override, e.g. `lk memory {sub} --force`)")
+            return 1
+        print(f"  cleared {res['cleared']}: removed {res['removed']} item(s)")
+        if res.get("backup"):
+            print(f"  backup: {res['backup']}")
+        return 0
+    print("usage: lk memory [stats | backup | clear-cache | clear-rolling | clear-logs | clear-journal | clear-notes | clear-all] [--force]")
+    return 2
+
+
+def cmd_notes(args: list[str]) -> int:
+    """Browse the zettelkasten — atomic, addressable notes (see ctx/notes.py).
+
+    lk notes [list [N] | show <id> | search <query…>]
+    Read-only and model-free: works against the same memory/ from any process,
+    whether or not the kernel is running (the GUI/REPL share the identical store).
+    """
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk.ctx.notes import NoteStore
+    ns = NoteStore()
+    sub = args[0] if args else "list"
+
+    if sub in ("list", "ls"):
+        n = int(args[1]) if len(args) > 1 and args[1].isdigit() else 20
+        recs = ns.list_notes(n)
+        if not recs:
+            print("  (no notes yet — they accrue from significant observations)")
+            return 0
+        print(f"  {len(recs)} note(s), most recent first:")
+        for r in recs:
+            tags = (" #" + " #".join(r.get("tags", []))) if r.get("tags") else ""
+            print(f"    {r['id']}  [{r.get('kind','?')}]{tags}")
+        print("\n  show one:  lk notes show <id>")
+        return 0
+
+    if sub == "show":
+        if len(args) < 2:
+            print("usage: lk notes show <id>")
+            return 2
+        note = ns.read_note(args[1])
+        if not note:
+            print(f"  no note with id {args[1]}")
+            return 1
+        print(f"  id      {note['id']}")
+        print(f"  ts      {note.get('ts','')}")
+        print(f"  kind    {note.get('kind','')}")
+        if note.get("tags"):    print(f"  tags    {', '.join(note['tags'])}")
+        if note.get("links"):   print(f"  links   {', '.join(note['links'])}")
+        if note.get("backlinks"): print(f"  ↩ from  {', '.join(note['backlinks'])}")
+        if note.get("source"):  print(f"  source  {note['source']}")
+        print(f"\n{note.get('body','')}\n")
+        return 0
+
+    if sub == "search":
+        q = " ".join(args[1:]).strip()
+        if not q:
+            print("usage: lk notes search <query…>")
+            return 2
+        hits = ns.search(q, limit=15)
+        if not hits:
+            print(f"  no notes match {q!r}")
+            return 0
+        print(f"  {len(hits)} match(es) for {q!r}:")
+        for r in hits:
+            tags = (" #" + " #".join(r.get("tags", []))) if r.get("tags") else ""
+            print(f"    {r['id']}  [{r.get('kind','?')}]{tags}")
+        return 0
+
+    print("usage: lk notes [list [N] | show <id> | search <query…>]")
+    return 2
+
+
+def cmd_preset(args: list[str]) -> int:
+    """Apply a one-pick backend + per-role routing setup."""
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk import config as C
+    if not args or args[0] in ("list", "ls"):
+        print("presets (lk preset use <name>):")
+        for name, p in C.PRESETS.items():
+            print(f"  {name:<8} {p['label']}")
+        cur = C.load()
+        print(f"\ncurrent: backend={cur.get('backend','local')} routing={cur.get('routing',{}) or '—'}")
+        return 0
+    if args[0] in ("use", "set") and len(args) >= 2:
+        try:
+            _cfg, missing = C.apply_preset(args[1])
+        except KeyError:
+            print(f"  unknown preset: {args[1]} (try: {', '.join(C.PRESETS)})")
+            return 2
+        print(f"  applied '{args[1]}' → {C.CONFIG_PATH}")
+        if missing:
+            print(f"  needs a key for: {', '.join(missing)}  →  lk secrets set {missing[0]}")
+        print("  takes effect on the next `lk start`.")
+        return 0
+    print("usage: lk preset [list | use <name>]")
+    print(f"names: {', '.join(C.PRESETS)}")
+    return 2
+
+
 _COMMANDS = {
     "status": cmd_status, "start": cmd_start, "stop": cmd_stop,
     "repl": cmd_repl, "ui": cmd_ui, "attach": cmd_attach,
     "logs": cmd_logs, "doctor": cmd_doctor, "config": cmd_config,
     "secrets": cmd_secrets, "wizard": cmd_wizard, "ingest": cmd_ingest,
+    "launcher": cmd_launcher, "menu": cmd_launcher, "preset": cmd_preset,
+    "restart": cmd_restart, "rebuild": cmd_rebuild, "reset": cmd_reset,
+    "memory": cmd_memory, "mem": cmd_memory, "notes": cmd_notes,
 }
 
 
 def main(argv: list[str] | None = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
-    cmd = args.pop(0) if args else "status"
+    # Bare `lk` in a terminal opens the launcher gateway; piped/non-TTY → status.
+    if not args:
+        return cmd_launcher([]) if sys.stdin.isatty() and sys.stdout.isatty() else cmd_status([])
+    cmd = args.pop(0)
     if cmd in ("-h", "--help", "help"):
         print(__doc__.strip())
         return 0

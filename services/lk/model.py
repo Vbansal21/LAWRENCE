@@ -187,7 +187,10 @@ def fallback_parses() -> int:
 
 # ── priority gate (local single-slot inference) ───────────────────────────────
 
-PRI_TURN, PRI_COMPACT, PRI_PROACTIVE = 0, 1, 2
+# Lower number wins. PRI_REFINE (the slow loop, WS-R/R1) sits just below a live
+# turn and above background work: non-droppable (it queues, never starved) but
+# always yields a fresh turn ahead of it. PRI_PROACTIVE stays the droppable floor.
+PRI_TURN, PRI_REFINE, PRI_COMPACT, PRI_PROACTIVE = 0, 1, 2, 3
 
 
 class _PriorityGate:
