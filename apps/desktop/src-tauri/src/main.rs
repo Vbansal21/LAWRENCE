@@ -172,6 +172,22 @@ fn bridge_post(path: String, body: serde_json::Value) -> Result<serde_json::Valu
 }
 
 #[tauri::command]
+fn bridge_delete(path: String) -> Result<serde_json::Value, String> {
+    eprintln!("[ui→bridge] DELETE {path}");
+    let url = format!("{}{}", bridge_url().trim_end_matches('/'), path);
+    match ureq::delete(&url)
+        .timeout(std::time::Duration::from_secs(15))
+        .call()
+    {
+        Ok(resp) => resp
+            .into_json::<serde_json::Value>()
+            .map_err(|e| format!("parse: {e}")),
+        Err(ureq::Error::Status(code, resp)) => Err(_bridge_err(code, resp)),
+        Err(e) => Err(format!("bridge unreachable: {e}")),
+    }
+}
+
+#[tauri::command]
 fn open_url(url: String) -> Result<(), String> {
     if !(url.starts_with("http://") || url.starts_with("https://")) {
         return Err("only http(s) URLs can be opened".to_string());
@@ -554,6 +570,7 @@ fn main() {
             set_kernel_observer,
             bridge_get,
             bridge_post,
+            bridge_delete,
             open_url,
             dismiss_window,
             open_panel,

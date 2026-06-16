@@ -11,6 +11,40 @@ kernel logic.
 
 ---
 
+## Update — 2026-06-15 (what shipped since this audit)
+
+This 2026-06-13 scan predates the autonomy build. Re-verified 2026-06-15:
+
+**Now REAL (was "NOT built" / open above):**
+- **Slow loop** — WS-R R1/R2 (`kernel/refine.py` + `elevate.py`): critique→refine on a
+  background thread, gated `slow_loop`, elevates a better answer via SSE `refined` (same
+  turn-id, in-place swap). No longer "designed, not implemented".
+- **Extraction layer** (V3.T3) — WS-P/B1 (`ctx/extract.py`); **graded proactive** (V3.T5) —
+  WS-C/C2 (`ctx/significance.py`); **cognitive tick** (C1, `kernel/tick.py`); **N-tier memory +
+  zettelkasten** (M1–M3).
+- **Journal** — WS-J: autonomous first-person rolling-revision durable episodic memory
+  (`kernel/journal.py`), tick-driven.
+- **Chat workspace + cross-chat graph** — WS-U Track 1/2 (`ctx/chats.py`, `NoteStore` edges,
+  `/chats`+`/links`, `lk chats`/`lk links`). **This satisfies FR-002 (canonical MDX session
+  restore)** — durable per-chat transcript with stable ids, not localStorage.
+
+**Still accurate gaps (the cleanup backlog):**
+- **HOLLOW** reminders panel (localStorage) — needs the scheduler backend (FR-007 / WS-T).
+- **DEAD** `/ingest` (no UI button), **mic PTT** `/voice` (no button), `/context-pack` (0 UI
+  calls) — all backends work; wire or fold per NEXT_WORK_CHECKLIST §6/§7/§11.
+- **3 unsupported sampling knobs** — to be reframed by the **capability resolver** (active /
+  inactive / unavailable markers, NEXT_WORK_CHECKLIST §4 / AUTONOMY §10d/WS-K), not just deleted.
+- **P3.T6 job cancel/timeout — DONE 2026-06-16**: `DELETE /jobs/{id}` cooperative cancel +
+  local non-streaming wall-clock deadline (NEXT_WORK_CHECKLIST §3; `tests/test_cancel.py`).
+- Not built: **TTS**, **deep-study/artifacts** (V3.T8 / WS-A), V3.T4 audio→extraction, V3.T6
+  terse prompts, V3.T7 no-stale-image.
+- Doc drift: README **`crates/system-hooks/`** line still references an absent dir — fix it.
+
+**Pointers:** near-term order = `docs/NEXT_WORK_CHECKLIST.md`; full cross-plan map + FR-001..011
+status = `docs/AUTONOMY.md` §10.
+
+---
+
 ## ✅ Real and verified working
 
 - **Kernel turn:** analysis → retrieval → response, real token streaming

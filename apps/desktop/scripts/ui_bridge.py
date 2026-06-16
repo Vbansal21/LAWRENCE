@@ -283,6 +283,7 @@ class DesktopBridge:
                 "running": sum(1 for job in jobs if job.get("state") == "running"),
                 "done": sum(1 for job in jobs if job.get("state") == "done"),
                 "error": sum(1 for job in jobs if job.get("state") == "error"),
+                "cancelled": sum(1 for job in jobs if job.get("state") == "cancelled"),
             },
             "context": self._context_metrics(),
             "system": _system_metrics(),
@@ -789,6 +790,7 @@ class DesktopBridge:
         source       = str(request.get("source") or turn.get("source") or "")
         transcript   = str(request.get("transcript") or turn.get("transcript") or "")
         job_id       = str(request.get("jobId") or request.get("job_id") or "")
+        should_stop  = request.get("should_stop")   # cooperative cancel probe (set by the job runner)
 
         images, audios, notes = self._media_for_turn(turn, mode)
         if not visual_ctx:
@@ -904,6 +906,7 @@ class DesktopBridge:
                 live_fn=_live_fn,
                 tasks_fn=self._tasks_fn,
                 stream_fn=self.ui.push_delta,   # live answer tokens → SSE "delta"
+                should_stop=should_stop,        # DELETE /jobs/{id} flips this → TurnCancelled
                 on_refine=self._on_refine,      # WS-R/R1 slow loop (no-op unless slow_loop:on)
                 elevator=self.elevator,
             )
@@ -1077,6 +1080,7 @@ class DesktopBridge:
                 "transcript": transcript,
                 "textPreview": text_preview,
                 "createdAt": datetime.now(timezone.utc).isoformat(),
+                "_cancel": threading.Event(),   # set by DELETE /jobs/{id}; stripped from views
             }
         thread = threading.Thread(
             target=self._run_turn_job,
@@ -1094,9 +1098,19 @@ class DesktopBridge:
         }
 
     def _run_turn_job(self, job_id: str, request: dict[str, Any]) -> None:
+        cancel = self._job_cancel(job_id)
+        if cancel is not None and cancel.is_set():
+            # Cancelled while still queued — never start; release nothing, write nothing.
+            self._update_job(job_id, state="cancelled",
+                             finishedAt=datetime.now(timezone.utc).isoformat())
+            return
         self._update_job(job_id, state="running", startedAt=datetime.now(timezone.utc).isoformat())
         with self._turn_count_lock:
             self._turns_in_flight += 1
+        # Cooperative cancel probe threaded down to run_turn → call_model streaming.
+        if cancel is not None:
+            request = dict(request)
+            request["should_stop"] = cancel.is_set
         try:
             result = self.turn(request)
             self._update_job(
@@ -1105,25 +1119,65 @@ class DesktopBridge:
                 finishedAt=datetime.now(timezone.utc).isoformat(),
                 result=result,
             )
+        except _model.TurnCancelled:
+            self.ui.push_status("cancelled")
+            self.ui.push_context_event("turn", "[cancelled] turn stopped by user")
+            self._update_job(job_id, state="cancelled",
+                             finishedAt=datetime.now(timezone.utc).isoformat())
         except BridgeError as exc:
-            self._update_job(
-                job_id,
-                state="error",
-                finishedAt=datetime.now(timezone.utc).isoformat(),
-                error=exc.message,
-                status=exc.status,
-            )
+            if cancel is not None and cancel.is_set():
+                self._update_job(job_id, state="cancelled",
+                                 finishedAt=datetime.now(timezone.utc).isoformat())
+            else:
+                self._update_job(
+                    job_id,
+                    state="error",
+                    finishedAt=datetime.now(timezone.utc).isoformat(),
+                    error=exc.message,
+                    status=exc.status,
+                )
         except Exception as exc:
-            self._update_job(
-                job_id,
-                state="error",
-                finishedAt=datetime.now(timezone.utc).isoformat(),
-                error=str(exc),
-                status=500,
-            )
+            if cancel is not None and cancel.is_set():
+                self._update_job(job_id, state="cancelled",
+                                 finishedAt=datetime.now(timezone.utc).isoformat())
+            else:
+                self._update_job(
+                    job_id,
+                    state="error",
+                    finishedAt=datetime.now(timezone.utc).isoformat(),
+                    error=str(exc),
+                    status=500,
+                )
         finally:
             with self._turn_count_lock:
                 self._turns_in_flight -= 1
+
+    def _job_cancel(self, job_id: str) -> threading.Event | None:
+        with self.job_lock:
+            job = self.jobs.get(job_id)
+            return job.get("_cancel") if job else None
+
+    def cancel_job(self, job_id: str) -> dict[str, Any]:
+        """DELETE /jobs/{id}: cooperatively cancel a queued or running turn.
+        Idempotent — cancelling a finished job returns its current view."""
+        with self.job_lock:
+            job = self.jobs.get(job_id)
+            if not job:
+                raise BridgeError(404, f"unknown job: {job_id}")
+            state = job.get("state")
+            if state in ("done", "error", "cancelled"):
+                return _job_view(job)          # already terminal — no-op
+            ev = job.get("_cancel")
+            if ev is not None:
+                ev.set()
+            if state == "queued":
+                # Not yet running: mark cancelled now; the runner will see the
+                # flag and skip without touching memory or the inference gate.
+                job.update(state="cancelled",
+                           finishedAt=datetime.now(timezone.utc).isoformat())
+            else:
+                job["cancelRequested"] = True  # running: runner transitions on TurnCancelled
+            return _job_view(job)
 
     def _update_job(self, job_id: str, **values: Any) -> None:
         with self.job_lock:
@@ -1410,7 +1464,7 @@ def _append_once(text: str, suffix: str) -> str:
 
 
 def _job_view(job: dict[str, Any]) -> dict[str, Any]:
-    view = dict(job)
+    view = {k: v for k, v in job.items() if not k.startswith("_")}  # drop _cancel etc.
     started = str(job.get("startedAt") or job.get("createdAt") or "")
     try:
         started_at = datetime.fromisoformat(started)
@@ -1806,6 +1860,8 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 2 and parts[0] == "chats":
                 hard = "hard=1" in parsed.query or "hard=true" in parsed.query
                 self._send(200, self.bridge.chat_delete(unquote(parts[1]), {"hard": hard}))
+            elif len(parts) == 2 and parts[0] == "jobs":
+                self._send(200, self.bridge.cancel_job(unquote(parts[1])))
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:

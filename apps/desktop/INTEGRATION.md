@@ -104,6 +104,22 @@ Possible states:
 - `running`
 - `done`
 - `error`
+- `cancelled`
+
+Cancel a turn (Stop / Escape):
+
+```http
+DELETE /jobs/turn-abc123
+```
+
+Cooperative cancellation. A queued job never starts; a running job stops
+streaming deltas and transitions to `cancelled`. It is idempotent — cancelling a
+finished job returns its current view. A cancelled turn writes **nothing** to
+rolling memory or the chat transcript and never fabricates an answer; the kernel
+emits a short `status: "cancelled"` SSE event only. Local non-streaming model
+calls also obey a wall-clock deadline (`decoding.timeout`), so a runaway CPU
+generation can no longer wedge the single inference slot. The Tauri shell proxies
+this through the `bridge_delete` command (alongside `bridge_get`/`bridge_post`).
 
 Done response:
 

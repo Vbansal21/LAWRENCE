@@ -416,7 +416,9 @@ check("local endpoint", _cap["endpoint"].endswith(":8190/v1/chat/completions"))
 check("local cache_prompt on", _cap["payload"].get("cache_prompt") is True)
 check("local keeps llama.cpp sampling", _cap["payload"].get("min_p") == 0.1)
 check("local no model field", "model" not in _cap["payload"])
-check("local blocks (timeout None)", _cap["timeout"] is None)
+# Local non-streaming now carries a wall-clock deadline (= timeout) so a runaway
+# CPU gen can't wedge the single inference slot forever (NEXT_WORK_CHECKLIST §3).
+check("local non-streaming has wall-clock deadline", _cap["timeout"] == 300)
 MB.configure_backend(kind="api", base_url="https://x.test/v1/", api_key="k", model="m1")
 MB.call_model([{"role":"user","content":"hi"}], max_tokens=5, timeout=99, min_p=0.1, seed=7)
 check("api endpoint", _cap["endpoint"]=="https://x.test/v1/chat/completions")

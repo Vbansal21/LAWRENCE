@@ -55,6 +55,12 @@ from typing import Any, Callable
 from . import server as _server
 
 
+class TurnCancelled(Exception):
+    """Raised through the call stack when a running turn is cancelled by the
+    user (cooperative cancellation). Distinct from errors so callers never turn
+    it into a fallback answer or a durable memory write."""
+
+
 # ── backend selection ─────────────────────────────────────────────────────────
 
 @dataclass
@@ -305,6 +311,16 @@ def _post(payload: dict[str, Any], timeout: float | None) -> dict[str, Any]:
     except urllib.error.HTTPError as e:
         body = e.read().decode(errors="replace")[:400]
         raise RuntimeError(f"{_current_backend().kind} backend HTTP {e.code}: {body}") from None
+    except (TimeoutError, urllib.error.URLError) as e:
+        # Read timeout == wall-clock deadline for a non-streaming gen (the server
+        # is idle while generating). urllib may surface it bare or URLError-wrapped;
+        # the distinct "timeout after" message tells the retry logic to skip it.
+        reason = getattr(e, "reason", e)
+        if isinstance(e, TimeoutError) or isinstance(reason, TimeoutError):
+            raise RuntimeError(
+                f"{_current_backend().kind} backend timeout after {timeout}s"
+            ) from None
+        raise RuntimeError(f"{_current_backend().kind} backend error: {reason}") from None
 
 
 _RETRY_DELAYS = (1.0, 2.0, 4.0)
@@ -326,6 +342,8 @@ def _post_with_retry(
         try:
             return _post(payload, timeout)
         except RuntimeError as exc:
+            if "timeout after" in str(exc):
+                raise  # wall-clock deadline hit — don't multiply it by retrying
             m = re.search(r"HTTP (\d+)", str(exc))
             code = int(m.group(1)) if m else 0
             if 400 <= code < 500 and code not in _RETRYABLE_CODES:
@@ -343,6 +361,7 @@ def _post_stream(
     req_timeout: float | None,
     wall_timeout: float | None,
     stream_fn: Callable[[str], None],
+    should_stop: Callable[[], bool] | None = None,
 ) -> str:
     """Streaming chat completion over SSE (`data:` lines). Returns the full
     accumulated text; stream_fn receives each delta. A wall-clock deadline
@@ -359,6 +378,8 @@ def _post_stream(
     try:
         with urllib.request.urlopen(req, timeout=sock_timeout) as resp:
             for raw_line in resp:
+                if should_stop and should_stop():
+                    raise TurnCancelled()
                 if deadline and time.monotonic() > deadline:
                     raise RuntimeError(
                         f"{_current_backend().kind} backend: generation exceeded {wall_timeout}s wall-clock timeout"
@@ -508,15 +529,22 @@ def _generate(
     stream_fn: Callable[[str], None] | None,
     req_timeout: float | None,
     wall_timeout: float | None,
+    should_stop: Callable[[], bool] | None = None,
 ) -> str:
     """One generation against local/api, attaching the schema in whichever
     response_format shape this backend accepts (probed once, then cached)."""
     b = _current_backend()
     key = _schema_key(b)
+    # Non-streaming socket timeout: APIs already pass req_timeout; local passes
+    # None, so fall back to the wall-clock deadline. The local server is idle
+    # (no bytes flow) while generating, so a read timeout bounds total gen time.
+    sock_timeout = req_timeout if req_timeout is not None else wall_timeout
+    if should_stop and should_stop():
+        raise TurnCancelled()
     if schema is None:
         if stream_fn:
-            return _post_stream(payload, req_timeout, wall_timeout, stream_fn)
-        resp = _post_with_retry(payload, req_timeout)
+            return _post_stream(payload, req_timeout, wall_timeout, stream_fn, should_stop)
+        resp = _post_with_retry(payload, sock_timeout)
         return resp["choices"][0]["message"]["content"] or ""
 
     modes = _schema_modes_for(b)
@@ -529,11 +557,11 @@ def _generate(
         p = _apply_schema(payload, schema, mode)
         try:
             if stream_fn:
-                text = _post_stream(p, req_timeout, wall_timeout, stream_fn)
+                text = _post_stream(p, req_timeout, wall_timeout, stream_fn, should_stop)
             else:
                 # Schema-shape probes use _post directly (no retry storm on a
                 # rejected shape); the final plain mode gets normal retries.
-                resp = _post(p, req_timeout) if mode != "none" else _post_with_retry(p, req_timeout)
+                resp = _post(p, sock_timeout) if mode != "none" else _post_with_retry(p, sock_timeout)
                 text = resp["choices"][0]["message"]["content"] or ""
             if _schema_mode.get(key) != mode:
                 _schema_mode[key] = mode
@@ -652,8 +680,9 @@ def _call_anthropic(
     timeout: float | None,
     schema: dict[str, Any] | None,
     stream_fn: Callable[[str], None] | None,
-    stop: list[str] | None,
-    top_p: float | None,
+    should_stop: Callable[[], bool] | None = None,
+    stop: list[str] | None = None,
+    top_p: float | None = None,
 ) -> dict[str, Any]:
     client = _anthropic_client(timeout)
     model = _current_backend().model or _ANTHROPIC_DEFAULT_MODEL
@@ -678,6 +707,8 @@ def _call_anthropic(
         if stream_fn:
             with client.messages.stream(**params) as s:
                 for piece in s.text_stream:
+                    if should_stop and should_stop():
+                        raise TurnCancelled()
                     try:
                         stream_fn(piece)
                     except Exception:
@@ -687,7 +718,7 @@ def _call_anthropic(
         else:
             resp = client.messages.create(**params)
             text = "".join(b.text for b in resp.content if getattr(b, "type", "") == "text")
-    except RuntimeError:
+    except (RuntimeError, TurnCancelled):
         raise
     except Exception as exc:                      # typed SDK errors → uniform RuntimeError
         status = getattr(exc, "status_code", None)
@@ -711,6 +742,7 @@ def call_model(
     timeout:           int         = 600,
     schema:            dict[str, Any] | None = None,
     stream_fn:         Callable[[str], None] | None = None,
+    should_stop:       Callable[[], bool] | None = None,
     priority:          int         = PRI_TURN,
     top_p:              float | None = None,
     min_p:              float | None = None,
@@ -745,7 +777,7 @@ def call_model(
             return _call_anthropic(
                 messages, max_tokens=max_tokens, temperature=temperature,
                 timeout=timeout, schema=schema, stream_fn=stream_fn,
-                stop=stop, top_p=top_p,
+                should_stop=should_stop, stop=stop, top_p=top_p,
             )
 
         payload: dict[str, Any] = {
@@ -789,8 +821,12 @@ def call_model(
             else:
                 _gate.acquire(priority)
         try:
+            # A wall-clock deadline bounds runaway generations on EVERY path now —
+            # streaming and non-streaming alike — so a slow local CPU gen can't
+            # wedge the single inference slot forever. timeout=0 / very large
+            # disables it (callers set 86_400 for "no timeout").
             raw = _generate(payload, schema, stream_fn, req_timeout,
-                            wall_timeout=timeout if stream_fn else None)
+                            wall_timeout=timeout or None, should_stop=should_stop)
         finally:
             if gated:
                 _gate.release()

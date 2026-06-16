@@ -51,6 +51,7 @@ const state = {
   liveEvents: [],
   followedJobs: new Map(),
   seenRemoteJobs: new Set(),
+  activeJobId: null,        // in-flight turn job; target for Escape / Stop cancellation
   seenRemoteAnswers: new Set(),
   seenVoiceTurns: new Set(),
   startedAt: Date.now(),
@@ -693,8 +694,19 @@ async function sendTurn(text) {
     try {
       streamState.textContent = "Queued";
       const queued = await postBridge("/turn/async", { turn, source: "typed" });
+      state.activeJobId = queued.jobId;
       rememberBridgeJob(queued.jobId, { source: "typed", text });
-      const result = await waitForBridgeJob(queued.jobId, config);
+      let result;
+      try {
+        result = await waitForBridgeJob(queued.jobId, config);
+      } finally {
+        if (state.activeJobId === queued.jobId) state.activeJobId = null;
+      }
+      if (result.cancelled) {
+        state.seenRemoteJobs.add(queued.jobId);
+        state.followedJobs.delete(queued.jobId);
+        return { text: "_Turn cancelled._", meta: ["kernel bridge", "cancelled"], cancelled: true };
+      }
       if (result.pending) {
         return {
           text: result.answer,
@@ -773,6 +785,28 @@ async function getBridge(path) {
   return fetchJson("GET", path, null);
 }
 
+async function deleteBridge(path) {
+  if (tauri?.core?.invoke) {
+    return tauri.core.invoke("bridge_delete", { path });
+  }
+  return fetchJson("DELETE", path, null);
+}
+
+// Cancel the in-flight turn (Escape / Stop). Cooperative: the bridge flips the
+// job's cancel flag; run_turn raises TurnCancelled and the job ends 'cancelled'
+// with no fabricated answer and no memory write.
+async function cancelActiveTurn() {
+  const jobId = state.activeJobId;
+  if (!jobId) return false;
+  try {
+    streamState.textContent = "Cancelling";
+    await deleteBridge(`/jobs/${encodeURIComponent(jobId)}`);
+    return true;
+  } catch {
+    return false;   // bridge down or already gone — Escape falls through to other handlers
+  }
+}
+
 async function fetchJson(method, path, payload) {
   const base = bridgeBaseUrl();
   if (!base || typeof window.fetch !== "function") {
@@ -806,6 +840,7 @@ async function waitForBridgeJob(jobId, config) {
     polls += 1;
     const job = await getBridge(`/jobs/${encodeURIComponent(jobId)}`);
     if (job.state === "done") return job.result || {};
+    if (job.state === "cancelled") return { cancelled: true, jobId };
     if (job.state === "error") throw new Error(job.error || "bridge job failed");
     streamState.textContent = job.state === "running" ? "Thinking" : "Queued";
     const elapsed = Date.now() - started;
@@ -1303,6 +1338,13 @@ promptInput.addEventListener("keydown", (event) => {
 
 document.querySelector("#refresh-context").addEventListener("click", ensureSelectedContext);
 
+// Stop action: clicking the status pill while a turn is in flight cancels it
+// (same path as Escape). When idle it does nothing.
+streamState.title = "Click or press Esc to stop a running turn";
+streamState.addEventListener("click", async () => {
+  if (state.activeJobId) await cancelActiveTurn();
+});
+
 function closeOptionDrawer() {
   optionDrawer.hidden = true;
   drawerToggle.setAttribute("aria-expanded", "false");
@@ -1796,6 +1838,12 @@ document.addEventListener("keydown", async (event) => {
     return;
   }
   if (event.key !== "Escape") return;
+  // A running turn takes priority: Escape stops generation (cooperative cancel)
+  // before it falls through to closing panels or dismissing the window.
+  if (state.activeJobId) {
+    event.preventDefault();
+    if (await cancelActiveTurn()) return;
+  }
   if (PANEL_MODE) {
     await closeCurrentPanel();
     return;

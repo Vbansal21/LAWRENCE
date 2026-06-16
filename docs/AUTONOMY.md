@@ -950,6 +950,15 @@ gap **without** a re-prompt; the UI feels like a command palette, not a form.
   dedup/stale-guard/interleave, P5 audio, P6.T1/T3 retrieval, P7 UI, P8 polish, P9 stretch,
   V3.T4/T6/T7/T8). Stale checkboxes corrected 2026-06-15 (see its §11). Invariants I1–I9
   there are authoritative and consistent with §4 here.
+- **`docs/NEXT_WORK_CHECKLIST.md`** (user, 2026-06-15) — the **near-term execution order**:
+  a detailed, prioritized merge of the open foundation items + AUDIT cleanup + desktop FRs,
+  each with goal / discrete functionality / interaction rules / tests / self-alignment /
+  correction method. **Use this for *what to build next and in what order*.** Its priority
+  order: (1) job cancel+timeouts ✅ **DONE 2026-06-16** (`DELETE /jobs/{id}` cooperative cancel
+  + local non-streaming wall-clock deadline; `tests/test_cancel.py`; gate 23 suites) → (2)
+  **config capability routing** [new, see §10d/WS-K — next base item] → (3) UI truth cleanup →
+  (4) ingest UI → (5) PTT voice → (6) scheduler → (7) proactive dedup/stale-guard → (8)
+  retrieval dedup → (9) artifacts/deep-study → (10) interleave harness.
 - **`docs/AUDIT.md`** (2026-06-13 + 2026-06-15 update) — honest is-it-real scan. The
   "HOLLOW/DEAD" list is the near-term cleanup backlog.
 - **`apps/desktop/MANAGER_FEATURE_REQUESTS.mdx`** — the desktop UI↔kernel contract wishlist
@@ -988,8 +997,12 @@ gap **without** a re-prompt; the UI feels like a command palette, not a form.
   events not yet → ties to FR-008).
 - **FR-005 Converter-aware ingest** — ✅ backend DONE (`converters.convert` + `/ingest` +
   `lk ingest`); ⛔ **no UI button** (DEAD path in AUDIT — add in WS-U Track A/B).
-- **FR-006 Sampling & agent-control mapping** — ✅ DONE (per-turn decoding map +
-  `uiAppliedConfig`/`uiUnsupportedConfig`; never mutates globals).
+- **FR-006 Sampling & agent-control mapping** — ✅ baseline DONE (per-turn decoding map +
+  `uiAppliedConfig`/`uiUnsupportedConfig`; never mutates globals). ⏫ **EXTENDED** by the new
+  **capability-routing** design (NEXT_WORK_CHECKLIST §4 ⇒ WS-K, §10d): from a 2-state
+  applied/unsupported into a data-driven 3-bucket active / inactive / unavailable resolver
+  per backend+model-family, covering sampling · grammar/schema · prefill/continuation ·
+  tools/MCP/skills · modalities.
 - **FR-007 Active reminder scheduler** — ⛔ OPEN ⇒ **WS-T/D1** (real schedule store + tick
   `due_fn`/`fire_fn`). The hollow `localStorage` reminders panel is waiting on this backend.
 - **FR-008 Response evidence & asset cards** — 🟡 PARTIAL (Markdown citations done; typed
@@ -1011,5 +1024,22 @@ Near-term cleanup (AUDIT): wire **/ingest** + **mic PTT** + decide **/context-pa
 remove or wire the **reminders panel** (⇒ FR-007/WS-T) and the 3 unsupported sampling knobs;
 fix README `crates/system-hooks/` line (dir absent). Autonomy: **WS-U UI** (Track 0/A/B) ·
 **WS-T** scheduler (FR-007) · **WS-A** artifacts incl. asset cards (FR-008) · **WS-X**
-effectors · V3.T4 audio→extraction · V3.T6 terse prompts · V3.T7 no-stale-image · P3.T6
-timeout/cancel · P5 audio e2e · P6 retrieval dedup. Strategic: **WS-H** host-native UI (FR-011).
+effectors · V3.T4 audio→extraction · V3.T6 terse prompts · V3.T7 no-stale-image · ~~P3.T6
+timeout/cancel~~ ✅ DONE 2026-06-16 · P5 audio e2e · P6 retrieval dedup. Strategic: **WS-H**
+host-native UI (FR-011).
+
+**New workstream — WS-K capability resolver** (from NEXT_WORK_CHECKLIST §4; near-term
+priority #2). A **data-driven** backend/model **capability registry + resolver** that takes UI
+config + active backend/model-family profile and returns three explicit buckets —
+`active` (applied this request) / `inactive` (valid key, unsupported here, kept persisted but
+NEVER sent) / `unavailable` (no provider path; suggest an alternative e.g. "use llama.cpp for
+grammar" or tool-JSON fallback). Dimensions: sampling · grammar/schema · prefill &
+continuation (`prefill_assistant`/`continue_final_message`/`raw_completion`) · tools/MCP/skills ·
+modalities · prompt-cache/seed/timeout. Surfaced in `/health` (capability summary) + per-turn
+`controls.uiAppliedConfig`/`uiInactiveConfig`/`uiUnavailableConfig`; UI renders active/inactive/
+unavailable markers (never removes advanced options). **Invariant-critical (I3):** the map is
+*data*, not scattered `if provider==`, and all provider-shape logic stays in `model.py`/the
+adapter. Build order (its §4 correction method): static maps → resolver+payload filtering for
+llama.cpp + current API → UI markers → grammar/schema → prefill/continuation → tools/MCP/skills
+→ probe/cache for providers that reject fields dynamically. Unknown backend ⇒ conservative
+mode (only common fields active). Generalises FR-006 + today's `uiUnsupportedConfig`.

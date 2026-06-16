@@ -28,7 +28,7 @@ from ..ctx      import ContextStore
 from ..ctx      import distill as D
 from ..logger   import write_turn
 from ..model    import (
-    PRI_COMPACT, PRI_PROACTIVE,
+    PRI_COMPACT, PRI_PROACTIVE, TurnCancelled,
     audio_block, call_model, image_block, note_fallback_parse, text_block,
 )
 from ..retrieval import RetrievalPipeline, format_snippets, format_for_model, format_citations
@@ -231,6 +231,7 @@ def run_turn(
     live_fn:    Callable[[str], None]     | None = None,
     tasks_fn:   Callable[[dict], None]    | None = None,
     stream_fn:  Callable[[str], None]     | None = None,
+    should_stop: Callable[[], bool]       | None = None,
     on_refine:  Callable[[dict], None]    | None = None,
     elevator:   Any                              = None,
 ) -> tuple[str, dict]:
@@ -258,11 +259,13 @@ def run_turn(
             raw = call_model(
                 _build_messages(prompts.ANALYSIS, body, images, audios),
                 max_tokens=768, temperature=0.1, timeout=cfg.timeout,
-                schema=schemas.ANALYSIS, role="analysis",
+                schema=schemas.ANALYSIS, role="analysis", should_stop=should_stop,
             )
             parsed = _extract_json(raw.get("text", ""))
             if parsed and "needs_retrieval" in parsed:
                 analysis = parsed
+        except TurnCancelled:
+            raise
         except Exception:
             pass
 
@@ -308,12 +311,15 @@ def run_turn(
     # Live answer streaming: deltas are raw JSON fragments; the streamer
     # extracts only the answer_text value (schemas.RESPONSE puts it first).
     answer_stream = AnswerTextStreamer(stream_fn) if stream_fn else None
+    if should_stop and should_stop():           # cancelled before the first token
+        raise TurnCancelled()
     try:
         raw_resp = call_model(
             _build_messages(prompts.RESPONSE, "\n\n".join(parts), images, audios),
             max_tokens=cfg.max_tokens, temperature=cfg.temperature, timeout=cfg.timeout,
             schema=schemas.RESPONSE, role="response",
             stream_fn=answer_stream.feed if answer_stream else None,
+            should_stop=should_stop,
             **_sampling,
         )
         resp_text = raw_resp.get("text", "")
@@ -321,6 +327,8 @@ def run_turn(
         if response is None:
             note_fallback_parse()
             response = _fallback_response(resp_text)
+    except TurnCancelled:
+        raise   # never fabricate an answer or write memory for a cancelled turn
     except Exception as e:
         response = _fallback_response(str(e))
 
@@ -345,10 +353,13 @@ def run_turn(
                 raw2 = call_model(
                     _build_messages(prompts.RESPONSE, "\n\n".join(parts2), images, audios),
                     max_tokens=cfg.max_tokens, temperature=cfg.temperature,
-                    timeout=cfg.timeout, schema=schemas.RESPONSE, role="response", **_sampling,
+                    timeout=cfg.timeout, schema=schemas.RESPONSE, role="response",
+                    should_stop=should_stop, **_sampling,
                 )
                 t2 = raw2.get("text", "")
                 response = _extract_json(t2) or response
+            except TurnCancelled:
+                raise
             except Exception:
                 pass   # keep first-pass response if expansion fails
 

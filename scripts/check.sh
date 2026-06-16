@@ -32,6 +32,7 @@ step "significance suite"   python3 services/lk/tests/test_significance.py
 step "slow-loop suite"      python3 services/lk/tests/test_refine.py
 step "elevation suite"      python3 services/lk/tests/test_elevate.py
 step "journal suite"        python3 services/lk/tests/test_journal.py
+step "cancellation suite"   python3 services/lk/tests/test_cancel.py
 step "kernel stress"        python3 services/lk/tests/stress_kernel.py
 step "memory stress"        python3 services/lk/tests/stress_memory.py
 step "logs stress"          python3 services/lk/tests/stress_logs.py

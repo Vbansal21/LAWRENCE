@@ -444,14 +444,16 @@ chatbot. Decisions confirmed with the user:
   `ctl.py` `lk secrets`. Default config: query=local, background=gemini.
 - [x] **V3.T2 Gemini live** *(done 2026-06-13)* — user adds `GEMINI_API_KEY` via `lk secrets set`;
   verify a routed background call hits Gemini and a query stays local.
-- [ ] **V3.T3 Extraction layer** — `run_extract(slice)` in invoke.py: terse
+- [x] **V3.T3 Extraction layer** *(done as WS-P/B1 — `ctx/extract.py` + kernel `run_extract`,
+  no rolling context, droppable, degraded-safe.)* — `run_extract(slice)` in invoke.py: terse
   EXTRACT prompt, no rolling context, role="extract". Observers buffer raw
   OCR/transcript; on info-gain gate, run extract → clean L1 entry (replaces raw
   distill dump). New EXTRACT prompt + schema.
 - [ ] **V3.T4 Audio loop fix** — stop auto-queuing a turn per chunk. Audio →
   preprocessing → extraction. Voice→model only via intent-classification +
   wake word + PTT. Accumulate utterances; transcribe larger windows.
-- [ ] **V3.T5 Graded proactive** — significance scoring (grammar JSON) → mean±σ
+- [x] **V3.T5 Graded proactive** *(done as WS-C/C2 — `ctx/significance.py` Grader, running
+  mean±k·σ → LOG/NOTE/STUDY tiers; conservative clamps.)* — significance scoring (grammar JSON) → mean±σ
   tiers (log / brief / dense). Config: thresholds + per-domain.
 - [ ] **V3.T6 Terse prompts** — shorten ANALYSIS/RESPONSE system prompts (schema
   enforces structure, so drop per-field prose). Cuts ~400 tok/pass on CPU.
@@ -460,8 +462,10 @@ chatbot. Decisions confirmed with the user:
   on CPU is the turn-latency killer).
 - [ ] **V3.T8 Deep-study export** — `run_study()` + `lk study` + UI button +
   model-proposes-when-deep. Iterative fetch+study+compact → cited MD/MDX export.
-- [ ] **V3.T9 Memory-split crispness** — verify Log vs Rolling vs Journal are
-  cleanly separated and each is inspectable/exportable.
+- [x] **V3.T9 Memory-split crispness** *(verified — five distinct, inspectable kinds now:
+  daily Log · Rolling L1/L2/L3 · Journal (WS-J) · Notes/zettelkasten (M3) · per-chat
+  conversation stores (WS-U Track 1). Each has its own files + `lk`/GUI surface.)* — verify
+  Log vs Rolling vs Journal are cleanly separated and each is inspectable/exportable.
 
 ### Diagnosis that drove this (2026-06-13)
 
@@ -502,3 +506,30 @@ small context + background routing to Gemini.
 | 2026-06-12 | P4.T2 core | done | bridge now triggers run_proactive on sensor events (was REPL-only!) + finding SSE + notify.py (notify-send/PS balloon); dedup vs recent findings still open |
 | 2026-06-12 | P6.T2 | done | retrieval/ingest.py + POST /ingest + ./lk ingest; offline test (md fixture searchable via FTS5) |
 | 2026-06-12 | P7.T3 | done | app.js renders finding SSE as a card-message; REBUILD frontend (npm run popup:restart) |
+| 2026-06-15 | status reconciliation | done | flipped stale checkboxes (P3.T7=V3.T1, P4.T2, P4.T6=WS-R, V3.T3=B1, V3.T5=C2, V3.T9); added §11 (below). Autonomy build (WS-M/P/C/R/J/U) tracked in docs/AUTONOMY.md; near-term execution order in docs/NEXT_WORK_CHECKLIST.md |
+
+## 11. Status reconciliation (2026-06-15)
+
+This v2/V3 plan is the **foundation-hardening** lineage. Since it was written, the
+**autonomy build** (`docs/AUTONOMY.md`, workstreams WS-M/P/C/R/J/U) shipped several
+items that overlap here — now reflected in the checkboxes above:
+
+- **P3.T7 per-role routing** ⇐ V3.T1 (config.py routing + model.configure_routing).
+- **P4.T2 finding notifications** ⇐ `notify.py`.
+- **P4.T6 slow-loop** ⇐ WS-R R1/R2 (`kernel/refine.py`+`elevate.py`; SSE type `refined`).
+- **V3.T3 extraction** ⇐ WS-P/B1 · **V3.T5 graded proactive** ⇐ WS-C/C2 · **V3.T9** verified.
+- New since: **WS-J** journal redesign, **WS-U Track 1/2** chat workspace + cross-chat graph
+  (`ctx/chats.py`, `NoteStore` edges, `/chats`+`/links`, `lk chats`/`lk links`) — also
+  satisfies **FR-002** (canonical session restore).
+
+**Still open here** (foundation): P3.T6 timeout/cancel · P3.T8 provider smoke · P4.T1/T4/T5
+dedup/stale-guard/interleave · P5 audio e2e · P6.T1/T3 retrieval · P7.T2/T4/T5 UI · P8 polish
+· P9 stretch · V3.T4 audio→extraction · V3.T6 terse prompts · V3.T7 no-stale-image.
+
+**Near-term execution order** is consolidated in **`docs/NEXT_WORK_CHECKLIST.md`** (user,
+2026-06-15) — a detailed, prioritized merge of the open items above + the AUDIT cleanup + the
+desktop FRs, plus one genuinely new design: **Config Capability Routing** (§4 there) — a
+data-driven backend/model capability registry resolving config into active / inactive /
+unavailable buckets surfaced in `/health` + per-turn controls (generalises FR-006 and today's
+`uiUnsupportedConfig`; must stay data-driven behind the I3 model.py seam, not scattered ifs).
+See `docs/AUTONOMY.md` §10 for the full cross-plan map + FR-001..011 status.

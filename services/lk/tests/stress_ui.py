@@ -137,6 +137,21 @@ check("every emitted SSE type has an app.js handler (no orphan events)", not mis
 check("app.js handles the core stream types",
       {"status", "response", "refined", "delta", "context", "finding"} <= handled, f"handled={handled}")
 
+# ─────────────────────── E. cancellation wiring parity (static) ───────────────────────
+section("E. DELETE /jobs/{id} cancellation is wired end-to-end (bridge ↔ UI ↔ shell)")
+bridge_src = Path("apps/desktop/scripts/ui_bridge.py").read_text(encoding="utf-8")
+check("bridge has cancel_job", "def cancel_job(" in bridge_src)
+check("bridge routes DELETE /jobs", 'parts[0] == "jobs"' in bridge_src and "cancel_job(" in bridge_src)
+check("bridge CORS allows DELETE", "DELETE" in bridge_src and "Access-Control-Allow-Methods" in bridge_src)
+check("bridge threads should_stop into run_turn", "should_stop=should_stop" in bridge_src)
+check("_job_view drops private keys", 'startswith("_")' in bridge_src)
+check("app.js has deleteBridge transport", "function deleteBridge(" in app and "bridge_delete" in app)
+check("app.js cancels active turn", "function cancelActiveTurn(" in app and "/jobs/" in app)
+check("app.js Escape cancels in-flight turn", "state.activeJobId" in app and "cancelActiveTurn()" in app)
+check("app.js treats cancelled job honestly (no fake answer)", 'job.state === "cancelled"' in app)
+rust_src = Path("apps/desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
+check("tauri shell exposes bridge_delete", "fn bridge_delete(" in rust_src and "bridge_delete," in rust_src)
+
 stop.set()
 try: ui.close()
 except Exception: pass
