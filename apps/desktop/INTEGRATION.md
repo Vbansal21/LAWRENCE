@@ -55,10 +55,26 @@ Response:
   "ok": true,
   "modelHealth": true,
   "backend": "local: http://127.0.0.1:8190",
+  "capabilities": {
+    "backend": "local", "provider": "local", "model": "",
+    "sampling": ["frequencyPenalty", "minP", "mirostat", "topK", "topP", "..."],
+    "schema": "grammar", "prefill": true,
+    "unavailable": ["epsilonCutoff", "etaCutoff", "grammarSchema"]
+  },
   "modalities": "text+vision+audio",
   "observers": { "vision": false, "audio": false }
 }
 ```
+
+`capabilities` (WS-K) describes which decoding families the **live** backend can
+honor, so the UI can mark options active/inactive/unavailable before a turn runs.
+`sampling` lists the active sampler families (camelCase); `schema` is the
+structured-output strategy (`grammar`/`native`/`json_schema`/`prompt`); `prefill`
+is assistant-prefill/continuation support; `unavailable` keys have no direct
+provider config on any current backend. Per turn, `controls` carries
+`uiAppliedConfig`, `uiInactiveConfig` (`[{key, reason}]`), and
+`uiUnavailableConfig` (`[{key, reason, suggestion}]`): inactive options stay
+saved in config but are **never sent** to a backend that cannot honor them.
 
 Submit a turn:
 

@@ -32,8 +32,11 @@ This 2026-06-13 scan predates the autonomy build. Re-verified 2026-06-15:
 - **HOLLOW** reminders panel (localStorage) — needs the scheduler backend (FR-007 / WS-T).
 - **DEAD** `/ingest` (no UI button), **mic PTT** `/voice` (no button), `/context-pack` (0 UI
   calls) — all backends work; wire or fold per NEXT_WORK_CHECKLIST §6/§7/§11.
-- **3 unsupported sampling knobs** — to be reframed by the **capability resolver** (active /
-  inactive / unavailable markers, NEXT_WORK_CHECKLIST §4 / AUTONOMY §10d/WS-K), not just deleted.
+- **3 unsupported sampling knobs** — reframed by the **capability resolver** (WS-K, CORE DONE
+  2026-06-16): `services/lk/capabilities.py` buckets every decoding option active/inactive/
+  unavailable per live backend; epsilon/eta/grammar now report as `unavailable` with a
+  suggestion instead of a flat "unsupported". `/health.capabilities` + per-turn
+  `controls.uiInactiveConfig`/`uiUnavailableConfig`; `tests/test_capabilities.py`.
 - **P3.T6 job cancel/timeout — DONE 2026-06-16**: `DELETE /jobs/{id}` cooperative cancel +
   local non-streaming wall-clock deadline (NEXT_WORK_CHECKLIST §3; `tests/test_cancel.py`).
 - Not built: **TTS**, **deep-study/artifacts** (V3.T8 / WS-A), V3.T4 audio→extraction, V3.T6

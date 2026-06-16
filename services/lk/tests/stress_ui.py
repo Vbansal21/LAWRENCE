@@ -152,6 +152,30 @@ check("app.js treats cancelled job honestly (no fake answer)", 'job.state === "c
 rust_src = Path("apps/desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
 check("tauri shell exposes bridge_delete", "fn bridge_delete(" in rust_src and "bridge_delete," in rust_src)
 
+# ─────────────────────── F. capability routing wiring (static) ───────────────────────
+section("F. WS-K config capability routing is wired end-to-end (registry → bridge → UI)")
+check("capability registry exists as data (capabilities.py)",
+      Path("services/lk/capabilities.py").exists())
+caps_src = Path("services/lk/capabilities.py").read_text(encoding="utf-8")
+check("registry holds per-provider sampling support as data, not scattered ifs",
+      "SAMPLING_SUPPORT" in caps_src and "def resolve_config(" in caps_src)
+model_src = Path("services/lk/model.py").read_text(encoding="utf-8")
+check("model re-exports the resolver (I3: provider logic in model layer)",
+      "resolve_config" in model_src and "capability_summary" in model_src
+      and "active_capability_summary" in model_src)
+check("model payload filter shares the registry (single source of truth)",
+      "_API_OPTION_KEYS = _caps.SAMPLING_SUPPORT" in model_src)
+check("bridge routes decoding config through the resolver",
+      "resolve_active_config(" in bridge_src)
+check("bridge emits active/inactive/unavailable buckets per turn",
+      "uiInactiveConfig" in bridge_src and "uiUnavailableConfig" in bridge_src)
+check("bridge /health advertises backend capabilities",
+      "active_capability_summary(" in bridge_src and '"capabilities"' in bridge_src)
+check("old hardcoded _unsupported_config is gone (no scattered provider list)",
+      "_unsupported_config" not in bridge_src)
+check("app.js surfaces inactive/unavailable config to the user",
+      "configMarkerMeta(" in app and "uiInactiveConfig" in app)
+
 stop.set()
 try: ui.close()
 except Exception: pass

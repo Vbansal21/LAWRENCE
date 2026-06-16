@@ -269,6 +269,8 @@ class DesktopBridge:
             "ok": True,
             "modelHealth": _model.health(),
             "backend": _model.describe_backend(),
+            # WS-K: which decoding families the live backend can honor (UI markers).
+            "capabilities": _model.active_capability_summary(),
             "modalities": self.profile.modalities,
             "observers": {
                 "vision": bool(self.vision and self.vision.active),
@@ -926,10 +928,15 @@ class DesktopBridge:
             if applied:
                 controls["applied"] = applied
             controls["uiAppliedConfig"] = _applied_config_summary(config, cfg, deep_search)
-            unsupported = _unsupported_config(config)
+            # WS-K capability routing: split the requested decoding config into
+            # active/inactive/unavailable for the live backend (data-driven, I3).
+            caps = _model.resolve_active_config(config.get("decoding") or {})
+            controls["uiInactiveConfig"] = caps.inactive
+            controls["uiUnavailableConfig"] = caps.unavailable
+            unsupported = [c["key"] for c in caps.inactive] + [c["key"] for c in caps.unavailable]
             if unsupported:
-                controls["uiUnsupportedConfig"] = unsupported
-                self.events.append("[config] unsupported by current backend: " + ", ".join(unsupported))
+                controls["uiUnsupportedConfig"] = unsupported   # back-compat flat list
+                self.events.append("[config] not applied for current backend: " + ", ".join(unsupported))
             if deep_search:
                 src_count = sum(1 for e in self.events if "[retrieval]" in e)
                 self.events.append(f"deep-search: {src_count} sources considered")
@@ -1662,18 +1669,6 @@ def _applied_config_summary(config: dict[str, Any], cfg: TurnConfig, deep_search
         "seed": cfg.seed,
         "stopSequences": dec.get("stopSequences") or [],
     }
-
-
-def _unsupported_config(config: dict[str, Any]) -> list[str]:
-    dec = config.get("decoding") or {}
-    unsupported = []
-    if _opt_float(dec.get("epsilonCutoff")):
-        unsupported.append("epsilonCutoff")
-    if _opt_float(dec.get("etaCutoff")):
-        unsupported.append("etaCutoff")
-    if str(dec.get("grammarSchema") or "").strip():
-        unsupported.append("grammarSchema")
-    return unsupported
 
 
 def _ui_directives(config: dict[str, Any]) -> str:

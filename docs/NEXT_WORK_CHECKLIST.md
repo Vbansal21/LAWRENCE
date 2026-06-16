@@ -158,6 +158,24 @@ Do not solve cancellation by terminating the whole bridge.
 
 ## 4. Config Capability Routing
 
+> **STATUS: CORE DONE 2026-06-16 (layers 1–3).** Data-driven capability registry
+> `services/lk/capabilities.py` (`SAMPLING_SUPPORT`/`SCHEMA_STRATEGY`/`PREFILL_SUPPORT`
+> + `UNAVAILABLE_KEYS`) is the single source of truth — `model._API_OPTION_KEYS`
+> now *is* `capabilities.SAMPLING_SUPPORT`, so the outgoing payload filter and the
+> UI markers cannot drift. `resolve_config()` returns active/inactive/unavailable
+> buckets; re-exported through `model` (`resolve_active_config`,
+> `active_capability_summary`, `active_backend_ident`) so the bridge calls the
+> model layer only (I3). Bridge emits per-turn `controls.uiInactiveConfig` /
+> `uiUnavailableConfig` and `/health.capabilities`; the old hardcoded
+> `_unsupported_config` is gone. app.js shows a compact "N inactive / N unavailable"
+> meta marker (full per-control red/gray rendering rides with the WS-U settings
+> rework). Tests: `tests/test_capabilities.py` (resolver buckets per provider +
+> resolver↔payload single-source agreement) and `stress_ui.py` §F. Gate green (24
+> suites). **DEFERRED (layers 4–7):** active grammar/schema *routing* of a
+> user-supplied schema, continuation/prefill *enforcement*, tools/MCP/skills
+> routing, and dynamic field-rejection probe→cache. The registry already carries
+> the schema/prefill *data* and `/health` reports it.
+
 ### Goal
 
 The config surface can stay exhaustive, but each option must be routed only to

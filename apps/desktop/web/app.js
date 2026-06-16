@@ -718,7 +718,7 @@ async function sendTurn(text) {
       return {
         text: result.answer || "Kernel returned an empty answer.",
         sources: result.sources || result.citations || result.assets || [],
-        meta: ["kernel bridge", ...(result.events || []).slice(0, 2)]
+        meta: ["kernel bridge", ...configMarkerMeta(result.controls), ...(result.events || []).slice(0, 2)]
       };
     } catch (error) {
       const native = await invokeTauriTurn(turn);
@@ -823,6 +823,18 @@ async function fetchJson(method, path, payload) {
     throw new Error(data.error || `HTTP ${response.status}`);
   }
   return data;
+}
+
+// WS-K capability routing: surface decoding options the live backend could not
+// honor as a compact, honest meta marker — saved in config, never silently dropped.
+function configMarkerMeta(controls) {
+  if (!controls) return [];
+  const inactive = controls.uiInactiveConfig || [];
+  const unavailable = controls.uiUnavailableConfig || [];
+  const out = [];
+  if (inactive.length) out.push(`${inactive.length} option${inactive.length > 1 ? "s" : ""} inactive for this backend`);
+  if (unavailable.length) out.push(`${unavailable.length} unavailable`);
+  return out;
 }
 
 async function waitForBridgeJob(jobId, config) {

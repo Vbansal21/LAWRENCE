@@ -35,6 +35,7 @@ test: test-fast      ## full offline regression suite (no model/server needed)
 	@python3 services/lk/tests/test_elevate.py
 	@python3 services/lk/tests/test_journal.py
 	@python3 services/lk/tests/test_cancel.py
+	@python3 services/lk/tests/test_capabilities.py
 	@python3 services/lk/tests/stress_kernel.py
 	@python3 services/lk/tests/stress_memory.py
 	@python3 services/lk/tests/stress_logs.py

@@ -956,7 +956,9 @@ gap **without** a re-prompt; the UI feels like a command palette, not a form.
   correction method. **Use this for *what to build next and in what order*.** Its priority
   order: (1) job cancel+timeouts ✅ **DONE 2026-06-16** (`DELETE /jobs/{id}` cooperative cancel
   + local non-streaming wall-clock deadline; `tests/test_cancel.py`; gate 23 suites) → (2)
-  **config capability routing** [new, see §10d/WS-K — next base item] → (3) UI truth cleanup →
+  **config capability routing** ✅ **CORE DONE 2026-06-16** (WS-K: data-driven `capabilities.py`
+  registry+resolver, `/health.capabilities`, per-turn `uiInactiveConfig`/`uiUnavailableConfig`;
+  `tests/test_capabilities.py`; gate 24 suites; layers 4–7 deferred) → (3) UI truth cleanup →
   (4) ingest UI → (5) PTT voice → (6) scheduler → (7) proactive dedup/stale-guard → (8)
   retrieval dedup → (9) artifacts/deep-study → (10) interleave harness.
 - **`docs/AUDIT.md`** (2026-06-13 + 2026-06-15 update) — honest is-it-real scan. The
@@ -1028,8 +1030,16 @@ effectors · V3.T4 audio→extraction · V3.T6 terse prompts · V3.T7 no-stale-i
 timeout/cancel~~ ✅ DONE 2026-06-16 · P5 audio e2e · P6 retrieval dedup. Strategic: **WS-H**
 host-native UI (FR-011).
 
-**New workstream — WS-K capability resolver** (from NEXT_WORK_CHECKLIST §4; near-term
-priority #2). A **data-driven** backend/model **capability registry + resolver** that takes UI
+**New workstream — WS-K capability resolver** ✅ **CORE DONE 2026-06-16** (layers 1–3:
+`services/lk/capabilities.py` registry+resolver is the single source of truth —
+`model._API_OPTION_KEYS` *is* `capabilities.SAMPLING_SUPPORT`, so the payload filter and UI
+markers can't drift; re-exported via `model.resolve_active_config`/`active_capability_summary`;
+bridge emits per-turn `uiInactiveConfig`/`uiUnavailableConfig` + `/health.capabilities`; old
+hardcoded `_unsupported_config` removed; app.js shows a compact inactive/unavailable meta
+marker; `tests/test_capabilities.py` + `stress_ui.py` §F; gate 24 suites. **Deferred layers
+4–7:** active grammar/schema routing of a user schema, prefill/continuation enforcement,
+tools/MCP/skills routing, dynamic field-rejection probe→cache). (from NEXT_WORK_CHECKLIST §4;
+near-term priority #2). A **data-driven** backend/model **capability registry + resolver** that takes UI
 config + active backend/model-family profile and returns three explicit buckets —
 `active` (applied this request) / `inactive` (valid key, unsupported here, kept persisted but
 NEVER sent) / `unavailable` (no provider path; suggest an alternative e.g. "use llama.cpp for

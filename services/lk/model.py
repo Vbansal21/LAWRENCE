@@ -53,6 +53,10 @@ from pathlib import Path
 from typing import Any, Callable
 
 from . import server as _server
+from . import capabilities as _caps
+# Re-export the capability resolver so the bridge/CLI call through the model layer
+# only (invariant I3: provider logic stays here, never scattered across UI/bridge).
+from .capabilities import ResolvedConfig, capability_summary, resolve_config  # noqa: F401
 
 
 class TurnCancelled(Exception):
@@ -196,6 +200,24 @@ def describe_backend() -> str:
     if _backend.kind == "anthropic":
         return f"anthropic: {_backend.model or _ANTHROPIC_DEFAULT_MODEL} @ api.anthropic.com"
     return f"local: {_server.server_url()}"
+
+
+def active_backend_ident() -> dict[str, Any]:
+    """Identity of the default (query) backend, for the capability resolver —
+    kwargs for resolve_config()/capability_summary() (kind/provider/model)."""
+    b = _backend
+    model = b.model or (_ANTHROPIC_DEFAULT_MODEL if b.kind == "anthropic" else "")
+    return {"kind": b.kind, "provider": b.provider, "model": model}
+
+
+def resolve_active_config(decoding: dict[str, Any] | None) -> ResolvedConfig:
+    """resolve_config() against the current default (query) backend."""
+    return resolve_config(decoding, **active_backend_ident())
+
+
+def active_capability_summary() -> dict[str, Any]:
+    """capability_summary() for the current default (query) backend (for /health)."""
+    return capability_summary(**active_backend_ident())
 
 
 # ── diagnostics ───────────────────────────────────────────────────────────────
@@ -441,14 +463,10 @@ def health(timeout: float = 4.0) -> bool:
 
 # ── constrained decoding (local + OpenAI-compatible) ──────────────────────────
 
-_API_OPTION_KEYS = {
-    "api":        {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
-    "openai":     {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
-    "openrouter": {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
-    "lmstudio":   {"top_p", "presence_penalty", "frequency_penalty", "seed", "stop"},
-    "poe":        {"top_p", "stop"},
-    "gemini":     {"top_p", "stop"},
-}
+# Per-provider sampling support is the capability registry (capabilities.py) —
+# one source of truth shared with the resolver so the outgoing payload and the
+# UI's active/inactive markers can never drift.
+_API_OPTION_KEYS = _caps.SAMPLING_SUPPORT
 
 _SCHEMA_MODES = ("json_schema", "json_object", "none")
 _schema_mode: dict[str, str] = {}   # provider key → first shape that worked
