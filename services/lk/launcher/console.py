@@ -1,18 +1,18 @@
-"""lk launcher — the one screen you open first.
+"""lk launcher — the stdlib console gateway (no-display / fallback surface).
 
-The launcher is the *gateway*: a tiny, instant, stdlib-only console menu to set
-up, start, configure, inspect and stop LAWRENCE without remembering any command.
-It is deliberately separate from the kernel, the llama-server, the chat REPL and
-the desktop popup — it only *drives* them, by shelling out to the very same
-`lk` front-door commands the CLI exposes. So everything the menu can do, you can
-also type as `lk <command>`; there is no launcher-only behaviour.
+A tiny, instant, stdlib-only menu to set up, start, configure, inspect and stop
+LAWRENCE without remembering any command. It is deliberately separate from the
+kernel, the llama-server, the chat REPL and the desktop popup — it only *drives*
+them, by shelling out to the very same `lk` front-door commands the CLI exposes.
+So everything the menu can do, you can also type as `lk <command>`; there is no
+launcher-only behaviour.
 
-Design goals: launches in milliseconds with nothing running, needs no build and
-no extra dependency, works over SSH/WSL/any terminal, and always returns you to
-the menu (every action runs as a subprocess). An inbuilt shell drops you to a
-terminal in the repo and comes back.
+The menu rows, their labels and their `lk` argv all come from the shared action
+registry (`lk.launcher.actions`), so the Qt window and this console stay in sync.
+Local interactive flows (presets, keys, ingest, memory, notes, an inbuilt shell,
+free-form `lk`) are handled here.
 
-Open it with a bare `./lk` (in a terminal) or `lk launcher`.
+Open it with a bare `./lk` (in a terminal) or `lk launcher --tui`.
 """
 from __future__ import annotations
 
@@ -21,7 +21,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from . import actions
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
 FRONT = REPO_ROOT / "lk"          # the front-door script (this dispatches to ctl)
 
 # ── small terminal helpers (no curses — bulletproof everywhere) ────────────────
@@ -42,8 +44,7 @@ def _clear() -> None:
 
 def _run_front(*args: str) -> int:
     """Run a front-door command as a child so we always return to the menu."""
-    from . import ctl
-    ok, _kind, reason = ctl.claim_launcher_action(list(args))
+    ok, _kind, reason = actions.claim(list(args))
     if not ok:
         # Codex: TUI uses the same no-queue launcher gate as the GUI, so rapid
         # command entry gets a clear refusal instead of overlapping subprocesses.
@@ -63,8 +64,8 @@ def _pause() -> None:
 
 def _status_block() -> str:
     """A compact, honest snapshot — reuses ctl's lightweight probes (no kernel)."""
-    from . import ctl
-    from . import config as C
+    from .. import ctl
+    from .. import config as C
 
     lines: list[str] = []
     owner = ctl._lock_owner()
@@ -91,10 +92,10 @@ def _status_block() -> str:
     return "\n".join(lines)
 
 
-# ── menu actions ───────────────────────────────────────────────────────────────
+# ── local interactive handlers (no fixed argv) ─────────────────────────────────
 
 def _act_presets() -> None:
-    from . import config as C
+    from .. import config as C
     _clear()
     print(_c("1", "  Presets — pick a backend/routing setup\n"))
     names = list(C.PRESETS)
@@ -171,30 +172,38 @@ def _act_key() -> None:
     _pause()
 
 
-# (key, label, callable). Callables either run a front-door command or a local action.
-def _menu() -> list[tuple[str, str, object]]:
-    return [
-        ("1", "Start         — bridge + model + popup",      lambda: _run_front("start")),
-        ("2", "Open popup    — show/focus the UI",           lambda: _run_front("ui")),
-        ("3", "Stop          — leave the model warm",        lambda: _run_front("stop")),
-        ("4", "Stop all      — also stop the model server",  lambda: _run_front("stop", "--all")),
-        ("5", "Processes     — list launcher-managed PIDs",  lambda: _run_front("processes")),
-        ("6", "Restart       — stop then start",             lambda: _run_front("restart")),
-        ("b", "Rebuild popup — recompile the Tauri binary",  lambda: _run_front("rebuild")),
-        ("x", "Force reset   — clean slate from any wedged state", lambda: _run_front("reset", "--all")),
-        ("r", "Chat (REPL)   — talk to it in this terminal", lambda: _run_front("repl")),
-        ("w", "Setup wizard  — first-run detect & write config", lambda: _run_front("wizard")),
-        ("p", "Presets       — backend / routing in one pick", _act_presets),
-        ("k", "API keys      — list or store provider keys",  _act_key),
-        ("c", "Config        — show/edit preferences",        lambda: _run_front("config", "list")),
-        ("g", "Ingest        — add a doc/URL to the KB",      _act_ingest),
-        ("m", "Memory        — stats/backup/clear",           _act_memory),
-        ("n", "Notes         — browse the zettelkasten",      _act_notes),
-        ("d", "Doctor        — diagnose deps & pipelines",    lambda: _run_front("doctor")),
-        ("l", "Logs          — tail bridge/popup/server",     lambda: _run_front("logs")),
-        ("t", "Terminal      — drop into a shell here",       _act_shell),
-        (":", "Run lk …      — type any lk command",          _act_command),
-    ]
+# Local interactive handlers, keyed by Action.handler.
+_HANDLERS = {
+    "presets": _act_presets,
+    "key": _act_key,
+    "ingest": _act_ingest,
+    "memory": _act_memory,
+    "notes": _act_notes,
+    "shell": _act_shell,
+    "command": _act_command,
+}
+
+# The console menu: (hotkey, action id), in display order. Labels and argv come
+# from the shared registry so the GUI and console never drift.
+_CONSOLE_KEYS: list[tuple[str, str]] = [
+    ("1", "start"), ("2", "ui"), ("3", "stop"), ("4", "stop_all"),
+    ("5", "processes"), ("6", "restart"), ("b", "rebuild"), ("x", "reset"),
+    ("r", "repl"), ("w", "wizard"), ("p", "presets"), ("k", "keys"),
+    ("c", "config"), ("g", "ingest"), ("m", "memory"), ("n", "notes"),
+    ("d", "doctor"), ("l", "logs"), ("t", "shell"), (":", "command"),
+]
+# Keys whose action prints and returns immediately (front-door commands): pause
+# so the output is readable. Interactive handlers pause themselves.
+_PAUSE_KEYS = {"1", "2", "3", "4", "5", "6", "b", "x", "w", "c", "d", "l"}
+
+
+def _dispatch(action) -> None:
+    if action.handler:
+        fn = _HANDLERS.get(action.handler)
+        if fn:
+            fn()
+    elif action.argv:
+        _run_front(*action.argv)
 
 
 def run() -> int:
@@ -203,16 +212,17 @@ def run() -> int:
         # Non-interactive (piped/cron): the launcher makes no sense — show status.
         return _run_front("status")
 
-    menu = _menu()
-    actions = {key: fn for key, _, fn in menu}
+    menu = [(key, actions.get(aid)) for key, aid in _CONSOLE_KEYS]
+    menu = [(key, a) for key, a in menu if a is not None]
+    dispatch_map = {key: a for key, a in menu}
     while True:
         _clear()
         print(_c("1;36", "  L A W R E N C E") + _c("2", "   launcher · gateway"))
         print(_c("2", "  ─────────────────────────────────────────────"))
         print(_status_block())
         print(_c("2", "  ─────────────────────────────────────────────"))
-        for key, label, _ in menu:
-            print(f"   {_c('1;33', key)}  {label}")
+        for key, a in menu:
+            print(f"   {_c('1;33', key)}  {a.label}")
         print(f"   {_c('1;33', 'q')}  Quit launcher (LAWRENCE keeps running)")
         try:
             choice = input(_c("1", "\n  > ")).strip()
@@ -221,13 +231,13 @@ def run() -> int:
             return 0
         if choice in ("q", "quit", "exit"):
             return 0
-        fn = actions.get(choice)
-        if fn is None:
+        action = dispatch_map.get(choice)
+        if action is None:
             continue
         try:
-            fn()
+            _dispatch(action)
             # front-door commands already printed; give a beat unless they paused.
-            if choice in {"1", "2", "3", "4", "5", "6", "b", "x", "w", "c", "d", "l"}:
+            if choice in _PAUSE_KEYS:
                 _pause()
         except KeyboardInterrupt:
             pass

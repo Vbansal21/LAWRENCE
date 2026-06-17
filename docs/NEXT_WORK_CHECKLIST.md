@@ -422,6 +422,13 @@ and current `llama.cpp`/API behavior.
 
 ## 5. UI Truth Cleanup
 
+> **STATUS: launcher surface DONE 2026-06-17 (popup app.js cleanup still tracked).**
+> The reworked launcher (§15) renders only kernel-backed state: the front view's
+> Detailed metrics read a new honest `/metrics` aggregator and show `n/a` for any
+> subsystem that publishes no number (never a fabricated value); subsystem dots and
+> the config chip come from `/health` + the writer-lock + config, polled off the GUI
+> thread. The desktop popup's own `localDraft`/control cleanup is unchanged here.
+
 ### Goal
 
 The desktop UI should show only state backed by the kernel or explicitly label
@@ -1010,3 +1017,53 @@ The project is past "basic chat" when these are true:
 
 When these pass, the next planning document should shift from "make it real" to
 "make it pleasant, fast, and dependable".
+
+## 15. Launcher Rework
+
+> **STATUS: DONE 2026-06-17 (spine Q0–Q7 + folded §4/§5/§8 + tests).** Replaced the
+> four-surface launcher sprawl (console `launcher.py`, tkinter `launcher_gui.py`,
+> `lk` front door, `desktopctl.sh`) with **two** surfaces over **one** action
+> registry: a native **PySide6 + pyte** window (`services/lk/launcher/qt_*.py`) and
+> the stdlib console fallback (`console.py`), both rendering `actions.py`. Qt6 gives
+> automatic HiDPI scaling (fixes the old tkinter font/scale/tofu-glyph complaints);
+> the tkinter launcher is deleted and `ctl.cmd_launcher` repoints to `qt_app.run_gui`
+> (one window per machine via a QLocalServer single-instance ping). Gate = **30
+> suites**, all green; real GUI verified launching on WSLg.
+
+### What shipped
+
+- **Q0 registry + gate-lift.** `services/lk/launcher/` package. `actions.py` is the
+  single source for both surfaces (id/label/tier/group/argv|handler/confirm) **and**
+  the admission policy (kind/inspect/preempt classifiers + `claim()` flock/cooldown
+  gate). `ctl.py` re-exports `launcher_action_kind/is_inspect/can_preempt/claim_launcher_action`
+  from it — lifted, not duplicated. `pyte`/`PySide6` recorded under the `[gui]` extra.
+- **Q1–Q2 shell + front view.** Dark QSS lifted from the popup tokens; tabbed window;
+  status dots (kernel/bridge/model/sensors: active/processing/blocked/off), Tier-1
+  actions with Tier-2 split-button dropdowns, config chip, and a **Regular⇄Detailed**
+  metrics toggle (per-subsystem rows; `n/a` when unpublished).
+- **Q3 advanced tabs.** Configure (backend + 12-role routing matrix + key names +
+  wizard/doctor), **Sampling** (every sampler marked active/inactive/unavailable from
+  the WS-K capability registry — the §4 per-control markers), Server, Memory,
+  **Knowledge** (notes/chats/links/ingest + a durable **reminders** panel reading
+  `schedule.jsonl` offline — the §8 panel), Diagnostics.
+- **Q4 live state + `/metrics`.** New honest bridge `GET /metrics` subsystem
+  aggregator (null⇒`n/a`, documented in `INTEGRATION.md`); launcher polls `/health`
+  + `/metrics` off the GUI thread (`metrics.py` pure `build_snapshot` + threaded
+  poller). This is the §5 launcher-surface truth fold-in.
+- **Q5 consoles + Tier-4 editor.** `qt_terminal.py`: read-only `LogView` tails
+  (server/bridge), a real **PTY** (`ptyprocess` + `pyte`) for the REPL and a streaming
+  Output console (read-only by default, per-console Interactive toggle + indicator),
+  and a guided `$EDITOR` flow (banner + Cancel guard rails → capture→validate→apply).
+- **Q6 consolidation.** Deleted `launcher_gui.py`; `_tk_available`→`_qt_available`;
+  `cmd_launcher` → `qt_app.run_gui`.
+- **Q7 tests.** `test_converters.py` (the previously-untested ingest engine, offline
+  paths), `test_recent_findings.py` (§9 dedup reader), `test_launcher.py`
+  (registry/console parity + gate re-exports + `/metrics` contract + offscreen Qt +
+  pyte unit, all skipped-not-failed without the `[gui]` extra). Registered in
+  `scripts/check.sh` + `Makefile`.
+
+### Deferred (unchanged scope)
+
+- R (refactor/opt incl. `store.recent_findings` tail-read), A (agentic robustness
+  A1–A4), R3 (schedule in-memory fold) — not started, by design.
+- Popup-only items §6 (attachment persistence) and §7 (push-to-talk) — untouched.

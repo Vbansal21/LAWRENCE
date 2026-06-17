@@ -34,6 +34,10 @@ full = [
   "faster-whisper>=1.0.0",
   "trafilatura>=1.8.0",
 ]
+gui = [
+  "PySide6>=6.8",            # native Qt6 launcher window (automatic HiDPI; no build step)
+  "pyte>=0.8.2",             # pure-Python VT100 emulator for the embedded PTY consoles
+]
 dev = [
   "pytest>=8.2.0",
 ]

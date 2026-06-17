@@ -37,6 +37,9 @@ step "capability suite"     python3 services/lk/tests/test_capabilities.py
 step "proactive dedup"      python3 services/lk/tests/test_proactive_dedup.py
 step "retrieval rank"       python3 services/lk/tests/test_retrieval_rank.py
 step "schedule suite"       python3 services/lk/tests/test_schedule.py
+step "converters suite"     python3 services/lk/tests/test_converters.py
+step "recent-findings suite" python3 services/lk/tests/test_recent_findings.py
+step "launcher suite"       python3 services/lk/tests/test_launcher.py
 step "kernel stress"        python3 services/lk/tests/stress_kernel.py
 step "memory stress"        python3 services/lk/tests/stress_memory.py
 step "logs stress"          python3 services/lk/tests/stress_logs.py

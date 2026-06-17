@@ -319,6 +319,44 @@ class DesktopBridge:
             used = 0
         return {"used": used, "limit": self.profile.ctx_size}
 
+    def metrics(self) -> dict[str, Any]:
+        """Per-subsystem aggregation for the launcher's Detailed view (§5).
+
+        Honest by construction: a subsystem reports ``null`` when it has no cheap,
+        already-published number, and the launcher renders that as ``n/a`` instead
+        of fabricating a value. Cheap only — no model probe, no DB scan; readiness
+        comes from ``/health``. New subsystems can be filled in later without
+        breaking the contract (the shape is fixed; values may turn from null→data).
+        """
+        cm = self._context_metrics()
+
+        def _tier_lines(level: str):
+            try:
+                text = self.ctx.show_layer(level)
+                return len(text.splitlines()) if text.strip() else 0
+            except Exception:
+                return None
+
+        return {
+            "ok": True,
+            "subsystems": {
+                "model": {"backend": _model.describe_backend(),
+                          "modalities": self.profile.modalities},
+                "context": {"used": cm.get("used"), "limit": cm.get("limit"),
+                            "l1": _tier_lines("l1"), "l2": _tier_lines("l2"),
+                            "l3": _tier_lines("l3")},
+                "preprocess": {"pendingImages": len(self.pending_images),
+                               "pendingAudio": len(self.pending_audios)},
+                "web": _web_search_stats(),
+                "doc": None,        # no cheap published count yet → n/a in the UI
+                "log": None,
+                "journal": None,
+                "mem": None,
+                "sensors": {"vision": bool(self.vision and self.vision.active),
+                            "audio": bool(self.audio and self.audio.active)},
+            },
+        }
+
     def request_context(self, request: dict[str, Any]) -> dict[str, Any]:
         action = str(request.get("action", ""))
         if action == "capture_screenshot":
@@ -1806,6 +1844,8 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._send(200, self.bridge.health())
+        elif path == "/metrics":
+            self._send(200, self.bridge.metrics())
         elif path == "/tasks":
             self._send(200, self.bridge.tasks_state())
         elif path == "/reminders":

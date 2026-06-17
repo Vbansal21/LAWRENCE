@@ -249,126 +249,18 @@ def terminate_processes(rows: list[dict], *, force: bool = False) -> None:
 
 
 # ── launcher action gate ─────────────────────────────────────────────────────
+# The launcher action *registry* and its admission *policy* now live in one place,
+# lk.launcher.actions, so the Qt window and the stdlib console render and gate from
+# a single source. These names are re-exported for back-compat with existing
+# callers (the launcher surfaces and the stress tests). The gate lazy-imports the
+# live probes below (_get_json / active_jobs / UI_PORT / LAUNCHER_*), so importing
+# the registry stays stdlib-cheap and never forms a circular import.
+from .launcher import actions as _launcher_actions  # noqa: E402
 
-def launcher_action_kind(args: list[str]) -> str:
-    cmd = args[0] if args else ""
-    if cmd in ("status", "processes", "ps", "logs", "doctor"):
-        return "inspect"
-    if cmd == "ui":
-        return "open"
-    if cmd == "stop":
-        return "stop-all" if "--all" in args else "stop"
-    if cmd in ("start", "restart", "rebuild", "reset", "wizard", "ingest"):
-        return cmd
-    if cmd in ("config", "secrets", "preset", "memory", "mem", "notes", "chats", "links", "remind"):
-        return "tool"
-    return "custom"
-
-
-def launcher_action_is_inspect(kind: str) -> bool:
-    return kind == "inspect"
-
-
-def launcher_action_can_preempt(kind: str) -> bool:
-    return kind in {"stop", "stop-all", "reset"}
-
-
-def _launcher_state() -> dict:
-    try:
-        return json.loads(LAUNCHER_STATE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return {"last": {}}
-
-
-def _save_launcher_state(state: dict) -> None:
-    LAUNCHER_STATE.parent.mkdir(parents=True, exist_ok=True)
-    LAUNCHER_STATE.write_text(json.dumps(state, indent=2, sort_keys=True), encoding="utf-8")
-
-
-def _project_process_busy() -> str:
-    """Return a coarse reason when a project build/lifecycle command is active."""
-    try:
-        out = subprocess.run(["ps", "-eo", "pid=,args="],
-                             capture_output=True, text=True, timeout=5).stdout
-    except Exception:
-        return ""
-    for line in out.splitlines():
-        parts = line.strip().split(None, 1)
-        if len(parts) != 2:
-            continue
-        pid, cmd = int(parts[0]), parts[1]
-        if pid == os.getpid() or str(REPO_ROOT) not in cmd:
-            continue
-        if "desktopctl.sh" in cmd and any(a in cmd for a in (" build", " rebuild")):
-            return "desktop build is already running"
-        if any(token in cmd for token in ("npm run build", "tauri build", "cargo build")):
-            return "desktop build is already running"
-        if "desktopctl.sh" in cmd and any(a in cmd for a in (" start", " stop", " reset", " restart", " show")):
-            return "desktop lifecycle command is already running"
-    return ""
-
-
-def _launcher_action_block(args: list[str], state: dict) -> str:
-    kind = launcher_action_kind(args)
-    busy = _project_process_busy()
-    if busy and kind in {"start", "open", "restart", "rebuild", "wizard", "custom"}:
-        return f"{busy}; skipped {kind}"
-
-    health = _get_json(f"http://127.0.0.1:{UI_PORT}/health", timeout=0.8)
-    model_loading = bool(health) and not bool(health.get("modelHealth"))
-    if model_loading and kind in {"start", "restart", "rebuild"}:
-        return "bridge/model is still loading; wait, Stop all, or Force reset"
-
-    if kind in {"restart", "rebuild"}:
-        active, _jobs = active_jobs()
-        if active:
-            return f"active work is running ({active} queued/running job(s)); stop/reset first"
-
-    cooldowns = {
-        # Codex: launcher buttons are not queued. These per-action cooldowns
-        # absorb double-clicks while live state checks handle long build/load work.
-        "open": 0.8,
-        "start": 2.0,
-        "restart": 3.0,
-        "rebuild": 8.0,
-        "wizard": 2.0,
-        "ingest": 1.0,
-        "tool": 0.5,
-        "custom": 1.5,
-    }
-    wait = cooldowns.get(kind, 0.0)
-    last = float((state.get("last") or {}).get(kind) or 0)
-    remaining = wait - (time.time() - last)
-    if remaining > 0:
-        return f"{kind} was just requested; try again in {remaining:.1f}s"
-    return ""
-
-
-def claim_launcher_action(args: list[str]) -> tuple[bool, str, str]:
-    """Shared GUI/TUI admission check. It rejects, never queues, unsafe repeats."""
-    kind = launcher_action_kind(args)
-    if launcher_action_is_inspect(kind):
-        return True, kind, ""
-    try:
-        import fcntl
-        LAUNCHER_LOCK.parent.mkdir(parents=True, exist_ok=True)
-        with open(LAUNCHER_LOCK, "a+", encoding="utf-8") as lock:
-            fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
-            state = _launcher_state()
-            reason = _launcher_action_block(args, state)
-            if reason:
-                return False, kind, reason
-            state.setdefault("last", {})[kind] = time.time()
-            _save_launcher_state(state)
-            return True, kind, ""
-    except Exception:
-        state = _launcher_state()
-        reason = _launcher_action_block(args, state)
-        if reason:
-            return False, kind, reason
-        state.setdefault("last", {})[kind] = time.time()
-        _save_launcher_state(state)
-        return True, kind, ""
+launcher_action_kind = _launcher_actions.action_kind
+launcher_action_is_inspect = _launcher_actions.is_inspect
+launcher_action_can_preempt = _launcher_actions.can_preempt
+claim_launcher_action = _launcher_actions.claim
 
 
 # ── commands ──────────────────────────────────────────────────────────────────
@@ -698,13 +590,13 @@ def cmd_launcher(args: list[str]) -> int:
     foreground = "--here" in args or "--foreground" in args
     has_display = bool(os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
 
-    use_gui = force_gui or (not force_tui and has_display and _tk_available())
+    use_gui = force_gui or (not force_tui and has_display and _qt_available())
     if not use_gui:
         from lk.launcher import run
         return run()
 
     if foreground:
-        from lk.launcher_gui import run as run_gui
+        from lk.launcher.qt_app import run_gui
         return run_gui()
     # Detach: a window you summon and walk away from — not tied to this terminal.
     # A second `lk launcher` raises the existing window instead of opening a new one.
@@ -720,9 +612,9 @@ def cmd_launcher(args: list[str]) -> int:
     return 0
 
 
-def _tk_available() -> bool:
+def _qt_available() -> bool:
     try:
-        import tkinter  # noqa: F401
+        import PySide6  # noqa: F401
         return True
     except Exception:
         return False

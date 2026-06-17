@@ -76,6 +76,40 @@ provider config on any current backend. Per turn, `controls` carries
 `uiUnavailableConfig` (`[{key, reason, suggestion}]`): inactive options stay
 saved in config but are **never sent** to a backend that cannot honor them.
 
+## Subsystem metrics (§5)
+
+Cheap, **honest** per-subsystem aggregation for the launcher's Detailed metrics
+view. No model probe, no DB scan — readiness still comes from `/health`. A
+subsystem reports `null` when it has no published number, and the launcher renders
+that as `n/a` rather than fabricating a value. The shape is fixed; individual
+values may turn from `null` → data as subsystems learn to report, without breaking
+the contract.
+
+```http
+GET /metrics
+```
+
+```json
+{
+  "ok": true,
+  "subsystems": {
+    "model":      { "backend": "local: …", "modalities": "text+vision+audio" },
+    "context":    { "used": 1234, "limit": 8192, "l1": 3, "l2": 1, "l3": 0 },
+    "preprocess": { "pendingImages": 0, "pendingAudio": 0 },
+    "web":        { "providers": { } },
+    "doc":        null,
+    "log":        null,
+    "journal":    null,
+    "mem":        null,
+    "sensors":    { "vision": false, "audio": false }
+  }
+}
+```
+
+Every key under `subsystems` is always present; its value is either an object of
+already-published counters or `null` (⇒ `n/a`). The launcher polls this off its
+GUI thread alongside `/health` and never blocks on a slow bridge.
+
 Submit a turn:
 
 ```http
