@@ -612,6 +612,25 @@ Then run manual live checks separately and log the environment facts.
 
 ## 8. Scheduler And Real Reminders
 
+> **STATUS: BACKEND DONE 2026-06-17 (panel UI deferred to WS-U).** New
+> `services/lk/schedule.py` `Schedule` — a durable **append-only event log** at
+> `memory/schedule.jsonl` (events `add`/`fired`/`done`/`remove`, folded on load,
+> fsync'd so a fire/creation record survives a crash). Reminders fire **exactly
+> once** and **survive restarts without double-firing** (`mark_fired` is durable +
+> idempotent; `due()` only returns pending intents). Time is timezone-aware and
+> explicit (`parse_when`: ISO-8601 or `+<n>[smhd]`; naive → local tz; bad input →
+> `ScheduleError`). It is **model-free** (no `call_model`/model import): wired into
+> the cognitive tick's existing cheap `due_fn`/`fire_fn` hooks in BOTH `ui_bridge.py`
+> and `cli.py`, so a due reminder surfaces as a context-feed SSE event + desktop
+> notification with **no model call**. Bridge routes `GET/POST/DELETE /reminders`
+> (badge count from `/health.reminders` — backend truth, not localStorage); CLI
+> `lk remind add/list/done/rm`. Tests: `tests/test_schedule.py` (add/list/done,
+> fire-once, past-due-on-startup, restart no-double-fire, invalid time, **tick fires
+> with zero model calls**) + `stress_ui.py` §H. Gate = 27 suites. **DEFERRED:** the
+> reminders *panel/badge* wiring (replace the localStorage panel) rides with the
+> WS-U UI tracks per "keep UI for last"; the backend it will read is done.
+> Recurrence intentionally **cut** (one-shot first, per the Correction Method).
+
 ### Goal
 
 Replace the decorative reminders panel with temporal agency: durable scheduled
@@ -672,6 +691,19 @@ ISO/local datetime first, then add parsing later.
 
 ## 9. Proactive Dedup And Stale Guard
 
+> **STATUS: DONE 2026-06-17.** `ContextStore` now carries a monotone `_version`
+> bumped at the three content chokepoints (`append`/`clear_rolling`/`_archive_l1`),
+> exposed via `version()`, plus `recent_findings(limit)` that parses resident
+> `kind="finding"` raw-layer entries back into `{headline, insight}`. `run_proactive`
+> snapshots `start_ver = ctx.version()` before realizing/retrieving/briefing, then
+> before surfacing: drops the finding if `version() - start_ver >
+> LK_PROACTIVE_STALE_DELTA` (default 3, DB stays warmed) and dedups against
+> `recent_findings()` via stdlib `difflib.SequenceMatcher` ≥ `LK_FINDING_DEDUP_RATIO`
+> (default 0.85) or exact normalised headline. Both drops are silent (no `present_fn`,
+> no error, no context write). Single-flight was already enforced by the caller
+> (`_proactive_busy` in the bridge; serial REPL loop). Tests:
+> `tests/test_proactive_dedup.py` + `stress_ui.py` §G. Gate = 25 suites.
+
 ### Goal
 
 The proactive loop should surface useful findings without repeating itself or
@@ -727,6 +759,20 @@ If context versioning touches too much at once, first implement dedup in
 chokepoints.
 
 ## 10. Retrieval Dedup, Caps, And Recency
+
+> **STATUS: DONE 2026-06-17.** All in `retrieval/pipeline.py` (the rank/assembly
+> chokepoint) + a small `db.py` plumb. (a) `_norm_chunk()` (lowercase, strip
+> punctuation, collapse whitespace) replaces the old exact-text dedup, so
+> near-duplicate chunks collapse. (b) `_dedup_and_cap()` caps candidates per URL
+> at `self.max_chunks_per_url` (default 3, instance attr → inherited by the
+> deep-search `copy.copy`) **before** ranking, so one page/file can't crowd the
+> corpus; the existing one-citation-per-URL assembly is preserved. (c)
+> `_recency_factor()` gives web rows with a known `ts_fetched` a mild boost
+> (≤ +15%, half-life 14d) that never penalises; `file://` ingested rows are
+> never stale (neutral 1.0). `StoredChunk.ts_fetched` is now selected in both the
+> FTS and LIKE search paths. Stable 1..k citation numbering kept. Tests:
+> `tests/test_retrieval_rank.py` (FakeDB + stubbed `search_and_fetch`). Gate = 26
+> suites.
 
 ### Goal
 

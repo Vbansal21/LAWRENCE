@@ -41,6 +41,7 @@ from lk.obs.audio import transcribe as _transcribe  # noqa: E402
 from lk.profile import ModelProfile  # noqa: E402
 from lk.retrieval import RetrievalPipeline, SemanticDB, format_citations, format_snippets  # noqa: E402
 from lk.retrieval.web import search_stats as _web_search_stats  # noqa: E402
+from lk.schedule import Schedule, ScheduleError  # noqa: E402
 from lk.tasks import TaskStore  # noqa: E402
 from lk.ui import UIConnector  # noqa: E402
 
@@ -214,6 +215,9 @@ class DesktopBridge:
         self._turn_count_lock = threading.Lock()
         # Shared bullet journal, persisted with the CLI via memory/tasks.json.
         self.tasks = TaskStore()
+        # WS-T §8 durable scheduler — reminders that fire exactly once via the tick
+        # (no model call), survive restarts, and surface as a feed event + OS notify.
+        self.schedule = Schedule()
         self._voice_lock = threading.Lock()
         # WS-R/R2 elevation gate — one rate-limited, dedup'd channel shared by the
         # slow loop (R1, refined answers) and tick findings.
@@ -233,6 +237,8 @@ class DesktopBridge:
             self.tick = CognitiveTick(
                 self.extractor.drain,
                 lambda events: self._maybe_proactive(),
+                due_fn=self.schedule.due,        # §8: cheap, model-free due check
+                fire_fn=self._fire_reminder,     # §8: durable fire → feed + OS notify
                 reflect_fn=(self.journal_trigger.beat if self.journal_trigger else None),
                 on_log=lambda msg: self.ui.push_context_event("tick", msg),
             )
@@ -280,6 +286,8 @@ class DesktopBridge:
             "activeChat": self.active_chat_id,
             "chats": len(self.chats.list_chats()),
             "tasks": self.tasks.snapshot()["counts"],
+            "reminders": self.schedule.counts(),   # §8: badge count comes from backend
+
             "jobs": {
                 "queued": sum(1 for job in jobs if job.get("state") == "queued"),
                 "running": sum(1 for job in jobs if job.get("state") == "running"),
@@ -464,6 +472,20 @@ class DesktopBridge:
         _notify(finding.get("headline", "LAWRENCE noticed something"),
                 finding.get("insight", ""))
 
+    def _fire_reminder(self, intent: dict[str, Any]) -> None:
+        """Fire one due reminder (§8) — the tick's `fire_fn`. Mark fired DURABLY
+        first (idempotent; the guard against double-firing across beats/restarts),
+        then surface it: a context-feed SSE event + an OS notification. No model
+        call. The reminders panel/badge wiring rides with WS-U (keep UI for last);
+        it reads the truth from GET /reminders."""
+        rid  = str(intent.get("id", ""))
+        text = str(intent.get("text", "")).strip() or "Reminder"
+        if rid and self.schedule.mark_fired(rid) is None:
+            return   # already fired/dismissed elsewhere — do not re-notify
+        self.events.append(f"[reminder] {text}")
+        self.ui.push_context_event("reminder", f"⏰ {text}")
+        _notify("Reminder", text)
+
     def _on_refine(self, verdict: dict[str, Any]) -> None:
         """Surface an elevated slow-loop refinement into the in-flight turn (R1/R2)."""
         answer = str(verdict.get("refined", "")).strip()
@@ -533,6 +555,33 @@ class DesktopBridge:
         snap = self.tasks.snapshot()
         self.ui.push_tasks(snap)
         return {"ok": True, **snap}
+
+    # ── reminders / scheduler (§8) ──────────────────────────────────────────────
+    def reminders_state(self) -> dict[str, Any]:
+        """GET /reminders — list + counts (the panel badge reads the count here)."""
+        return {"ok": True, **self.schedule.snapshot()}
+
+    def reminders_command(self, request: dict[str, Any]) -> dict[str, Any]:
+        """POST /reminders — create or complete a reminder. The scheduler is the
+        system's, not the model's: creation is an explicit user action."""
+        op = str(request.get("op", "add")).lower()
+        if op == "add":
+            text = str(request.get("text", ""))
+            when = request.get("when") or request.get("due") or ""
+            try:
+                self.schedule.add(text, when, source="user")
+            except ScheduleError as exc:
+                raise BridgeError(422, str(exc))
+        elif op in ("done", "complete", "dismiss"):
+            self.schedule.done(str(request.get("id", "")))
+        else:
+            raise BridgeError(400, f"unsupported reminders op: {op or '(missing)'}")
+        return {"ok": True, **self.schedule.snapshot()}
+
+    def reminder_delete(self, rid: str) -> dict[str, Any]:
+        """DELETE /reminders/{id} — remove a reminder outright."""
+        self.schedule.remove(rid)
+        return {"ok": True, **self.schedule.snapshot()}
 
     # ── previous chats / journals ──────────────────────────────────────────────
     def history_index(self) -> dict[str, Any]:
@@ -1759,6 +1808,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, self.bridge.health())
         elif path == "/tasks":
             self._send(200, self.bridge.tasks_state())
+        elif path == "/reminders":
+            self._send(200, self.bridge.reminders_state())
         elif path == "/history":
             self._send(200, self.bridge.history_index())
         elif path == "/jobs":
@@ -1815,6 +1866,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.set_observer(body))
             elif self.path == "/tasks":
                 self._send(200, self.bridge.tasks_command(body))
+            elif self.path == "/reminders":
+                self._send(200, self.bridge.reminders_command(body))
             elif self.path == "/voice":
                 self._send(202, self.bridge.voice_once(body))
             elif self.path == "/voice/listen":
@@ -1857,6 +1910,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.chat_delete(unquote(parts[1]), {"hard": hard}))
             elif len(parts) == 2 and parts[0] == "jobs":
                 self._send(200, self.bridge.cancel_job(unquote(parts[1])))
+            elif len(parts) == 2 and parts[0] == "reminders":
+                self._send(200, self.bridge.reminder_delete(unquote(parts[1])))
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:

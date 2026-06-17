@@ -34,6 +34,9 @@ step "elevation suite"      python3 services/lk/tests/test_elevate.py
 step "journal suite"        python3 services/lk/tests/test_journal.py
 step "cancellation suite"   python3 services/lk/tests/test_cancel.py
 step "capability suite"     python3 services/lk/tests/test_capabilities.py
+step "proactive dedup"      python3 services/lk/tests/test_proactive_dedup.py
+step "retrieval rank"       python3 services/lk/tests/test_retrieval_rank.py
+step "schedule suite"       python3 services/lk/tests/test_schedule.py
 step "kernel stress"        python3 services/lk/tests/stress_kernel.py
 step "memory stress"        python3 services/lk/tests/stress_memory.py
 step "logs stress"          python3 services/lk/tests/stress_logs.py

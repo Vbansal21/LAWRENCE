@@ -14,8 +14,10 @@ run_proactive():
 """
 from __future__ import annotations
 
+import difflib
 import itertools
 import json
+import os
 import re
 import time
 from collections.abc import Callable
@@ -39,6 +41,52 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 # Journal files live under memory/journal/ — assembled by lk.admin (MDX writer).
 
 _turn_ctr = itertools.count(1)
+
+
+# ── §9 proactive dedup / stale-guard tunables ─────────────────────────────────
+# How many context-version advances (new appends/archives from concurrent user or
+# sensor activity) are tolerated between the start of a proactive run and the
+# moment it would surface, before the finding is judged stale and dropped.
+def _proactive_stale_delta() -> int:
+    try:
+        return max(0, int(os.getenv("LK_PROACTIVE_STALE_DELTA", "3")))
+    except ValueError:
+        return 3
+
+
+# Similarity ratio (0..1) at/above which a candidate finding is treated as a
+# duplicate of a recent one and dropped. difflib.SequenceMatcher on normalised
+# headline+insight — reuse the stdlib rather than a fuzzy-match dependency.
+def _finding_dedup_ratio() -> float:
+    try:
+        return min(1.0, max(0.0, float(os.getenv("LK_FINDING_DEDUP_RATIO", "0.85"))))
+    except ValueError:
+        return 0.85
+
+
+def _norm_finding(headline: str, insight: str) -> str:
+    """Collapse a finding to a comparison key: lowercased, whitespace-normalised
+    headline+insight. Compares meaning, not exact bytes (§9 interaction rule)."""
+    text = f"{headline}\n{insight}".lower()
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _is_duplicate_finding(headline: str, insight: str, recent: list[dict]) -> bool:
+    """True if this finding repeats a recent one — by exact normalised headline or
+    by SequenceMatcher ratio over the combined headline+insight."""
+    if not recent:
+        return False
+    cand = _norm_finding(headline, insight)
+    cand_head = re.sub(r"\s+", " ", headline.lower()).strip()
+    ratio = _finding_dedup_ratio()
+    for prev in recent:
+        p_head = re.sub(r"\s+", " ", str(prev.get("headline", "")).lower()).strip()
+        if cand_head and cand_head == p_head:
+            return True
+        prev_norm = _norm_finding(str(prev.get("headline", "")), str(prev.get("insight", "")))
+        if difflib.SequenceMatcher(None, cand, prev_norm).ratio() >= ratio:
+            return True
+    return False
 
 
 # ── JSON helpers ──────────────────────────────────────────────────────────────
@@ -452,6 +500,11 @@ def run_proactive(
 
     With present_fn=None it behaves as before: warm the cache, surface nothing.
     """
+    # §9 stale guard: snapshot the context version BEFORE we spend time realizing
+    # + retrieving + briefing. If the user (or sensors) move the context on too far
+    # while we work, the conclusion we are about to surface is about an old state —
+    # we drop it at the end instead of surfacing it late.
+    start_ver = ctx.version()
     tail = ctx.tail_for_model()
     if tail == "(no context yet)":
         return
@@ -496,6 +549,17 @@ def run_proactive(
     headline = str(brief.get("headline", "")).strip()[:120]
     insight  = str(brief.get("insight", "")).strip()
     if not insight:
+        return
+
+    # §9 stale guard: the DB is already warmed (kept), but if the context advanced
+    # past the tolerance while we were working, this conclusion is about an old
+    # state — drop it silently rather than surface a late, possibly-irrelevant card.
+    if ctx.version() - start_ver > _proactive_stale_delta():
+        return
+
+    # §9 dedup: don't repeat a finding we recently surfaced. Compares headline +
+    # insight by meaning (normalised + SequenceMatcher), not exact text.
+    if _is_duplicate_finding(headline, insight, ctx.recent_findings()):
         return
 
     finding = {

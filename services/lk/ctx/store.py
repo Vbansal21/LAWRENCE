@@ -172,6 +172,11 @@ class ContextStore:
         self._lock      = threading.Lock()
         self._cmplock   = threading.Lock()   # serialises compaction runs
         self._compacting = False             # prevents archive-during-compact race
+        # WS-K §9 freshness marker: a monotone counter bumped at every content
+        # chokepoint (append / clear / archive). The proactive loop captures it at
+        # start and drops a finding whose context has moved on too far. Cheap, in
+        # memory, advisory — not persisted (a restart restarts the proactive race).
+        self._version: int = 0
         self._last_compact: float = 0.0      # monotonic time of last compaction finish
         self._budget: float = _BUDGET_BASE   # dynamic working-context budget (chars)
         self._min_compact_secs: int = _MIN_COMPACT_SECS   # live-patchable via /set
@@ -338,6 +343,7 @@ class ContextStore:
                 f.write(entry)
             self._sizes[raw.name] += len(entry)
             self._grow_budget()   # fresh activity expands the working context
+            self._version += 1    # §9 freshness: context advanced by one entry
 
         if self._live_fn:
             self._live_fn(compact)
@@ -534,6 +540,7 @@ class ContextStore:
         except OSError:
             pass
         self._sizes[self._raw.name] = 0
+        self._version += 1   # §9 freshness: working set restructured by archive
         self._budget = _BUDGET_BASE   # new session starts at the base budget
 
     def _maybe_archive_on_startup(self) -> None:
@@ -641,6 +648,36 @@ class ContextStore:
                 self._path(l).write_text("", encoding="utf-8")
                 self._sizes[l.name] = 0
             self._budget = _BUDGET_BASE
+            self._version += 1   # §9 freshness: rolling memory wiped
+
+    # ── §9 proactive freshness / dedup support ──────────────────────────────────
+
+    def version(self) -> int:
+        """Monotone content-version counter (see ``self._version``). The proactive
+        loop snapshots this at start and compares against it before surfacing, so a
+        finding computed against a stale context is dropped instead of shown."""
+        return self._version
+
+    def recent_findings(self, limit: int = 8) -> list[dict]:
+        """Most-recent proactive findings still resident in the raw layer, parsed
+        back into ``{headline, insight}`` so ``run_proactive`` can deduplicate
+        against them. Reads only the raw layer (no model call, no lock): findings
+        compacted upward have already aged out of the dedup window, which is the
+        intended behaviour — we only guard against *recent* repeats."""
+        out: list[dict] = []
+        for line in self._read_lines(self._path(self._raw)):
+            try:
+                ev = json.loads(line)
+            except Exception:
+                continue
+            if ev.get("kind") != "finding":
+                continue
+            detailed = str(ev.get("detailed", ""))
+            # Stored as "[PROACTIVE FINDING] {headline}\n{insight}" (see invoke.py).
+            body = detailed.split("]", 1)[1].strip() if "]" in detailed else detailed
+            head, _, insight = body.partition("\n")
+            out.append({"headline": head.strip(), "insight": insight.strip()})
+        return out[-limit:]
 
     # ── shared long-term ingest (WS-U Track 1b) ─────────────────────────────────
 

@@ -69,6 +69,7 @@ from .tasks      import TaskStore
 from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS, REGION_EMA, REGION_CHANGE_MIN
 from .profile    import ModelProfile
 from .retrieval  import SemanticDB, RetrievalPipeline
+from .schedule   import Schedule, ScheduleError
 from .ui         import UIConnector
 
 
@@ -1499,11 +1500,26 @@ def main() -> int:
         if journal_enabled() else None
     )
 
+    # WS-T §8 durable scheduler — reminders that fire exactly once via the tick
+    # (no model call) and survive restarts, shared with the desktop via
+    # memory/schedule.jsonl. Firing prints to the live feed + OS notification.
+    schedule = Schedule()
+
+    def _fire_reminder(intent: dict) -> None:
+        rid  = str(intent.get("id", ""))
+        text = str(intent.get("text", "")).strip() or "Reminder"
+        if rid and schedule.mark_fired(rid) is None:
+            return   # already fired/dismissed — no double-fire
+        live_q.put(f"[reminder] ⏰ {text}")
+        _notify("Reminder", text)
+
     tick: "CognitiveTick | None" = None
     if tick_enabled():
         tick = CognitiveTick(
             extractor.drain,
             lambda events: on_proactive("tick", f"{len(events)} perception event(s)"),
+            due_fn=schedule.due,           # §8: cheap, model-free due check
+            fire_fn=_fire_reminder,        # §8: durable fire → feed + OS notify
             reflect_fn=(journal_trigger.beat if journal_trigger else None),
             on_log=live_q.put,
         )

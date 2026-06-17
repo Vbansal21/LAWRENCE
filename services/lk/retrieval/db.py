@@ -28,6 +28,7 @@ class StoredChunk:
     title: str
     text: str
     score: float = 0.0
+    ts_fetched: float = 0.0   # epoch seconds; 0 = unknown (recency-neutral)
 
 
 class SemanticDB:
@@ -103,14 +104,14 @@ class SemanticDB:
             safe_q = query.replace('"', '""')
             try:
                 rows = cur.execute(
-                    """SELECT c.url, c.title, c.text, -bm25(chunks_fts)
+                    """SELECT c.url, c.title, c.text, -bm25(chunks_fts), c.ts_fetched
                        FROM chunks_fts f JOIN chunks c ON f.rowid = c.id
                        WHERE chunks_fts MATCH ?
                        ORDER BY bm25(chunks_fts)
                        LIMIT ?""",
                     (safe_q, top_k),
                 ).fetchall()
-                return [StoredChunk(url=r[0], title=r[1], text=r[2], score=r[3]) for r in rows]
+                return [StoredChunk(url=r[0], title=r[1], text=r[2], score=r[3], ts_fetched=r[4]) for r in rows]
             except sqlite3.OperationalError:
                 pass  # malformed query — fall through to LIKE
 
@@ -121,9 +122,9 @@ class SemanticDB:
         conditions = " OR ".join("text LIKE ?" for _ in words)
         params = tuple(f"%{w}%" for w in words) + (top_k,)
         rows = cur.execute(
-            f"SELECT url, title, text FROM chunks WHERE {conditions} LIMIT ?", params
+            f"SELECT url, title, text, ts_fetched FROM chunks WHERE {conditions} LIMIT ?", params
         ).fetchall()
-        return [StoredChunk(url=r[0], title=r[1], text=r[2]) for r in rows]
+        return [StoredChunk(url=r[0], title=r[1], text=r[2], ts_fetched=r[3]) for r in rows]
 
     def url_known(self, url: str) -> bool:
         cur = self._con.cursor()

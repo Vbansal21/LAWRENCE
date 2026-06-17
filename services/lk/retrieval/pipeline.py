@@ -14,6 +14,8 @@ The caller (kernel/invoke.py) receives a list of CitedResult with:
 """
 from __future__ import annotations
 
+import re
+import time
 from dataclasses import dataclass
 
 from .db     import SemanticDB, StoredChunk
@@ -23,6 +25,41 @@ from .web    import WebChunk, search_and_fetch
 DB_MIN_HITS  = 3    # if DB has fewer than this for a query, hit the web too
 FRESH_PER_Q  = 3    # max web results to fetch per query when DB insufficient
 TOP_K        = 6    # final chunks returned to the model
+
+# §10 diversity controls
+MAX_CHUNKS_PER_URL    = 3      # candidate-pool cap so one page can't crowd the corpus
+RECENCY_WEIGHT        = 0.15   # mild: a just-fetched web row scores up to +15%
+RECENCY_HALFLIFE_DAYS = 14.0   # boost fades to ~0 after this many days
+
+_WS    = re.compile(r"\s+")
+_PUNCT = re.compile(r"[^\w\s]")
+
+
+def _norm_chunk(text: str) -> str:
+    """Normalise chunk text for near-duplicate detection: lowercase, drop
+    punctuation, collapse whitespace. Two chunks differing only in casing,
+    spacing, or punctuation collapse to the same key. Structured comparison on
+    the text field — not a fragile substring hack."""
+    return _WS.sub(" ", _PUNCT.sub(" ", text.lower())).strip()
+
+
+def _is_local(url: str) -> bool:
+    """Ingested local documents (``file://``) are durable, not web-stale."""
+    return url.startswith("file://")
+
+
+def _recency_factor(is_local: bool, ts: float, now: float, *,
+                    weight: float = RECENCY_WEIGHT,
+                    halflife_days: float = RECENCY_HALFLIFE_DAYS) -> float:
+    """Multiplicative ranking nudge. Local ingested files are never stale (1.0,
+    no decay). Web rows with a known fetch timestamp get a small boost that fades
+    to 0 with age; unknown-timestamp rows are neutral. Never penalises (>= 1.0),
+    so a relevant old source is nudged, not buried."""
+    if is_local or ts <= 0:
+        return 1.0
+    age_days = max(0.0, (now - ts) / 86400.0)
+    fresh01 = max(0.0, 1.0 - age_days / halflife_days)
+    return 1.0 + weight * fresh01
 
 
 @dataclass
@@ -44,6 +81,29 @@ class RetrievalPipeline:
         self.top_k       = TOP_K
         self.fresh_per_q = FRESH_PER_Q
         self.db_min_hits = DB_MIN_HITS
+        # §10 per-URL candidate cap — an instance attr so the deep-search shallow
+        # copy inherits it (deep search widens breadth but still obeys the cap).
+        self.max_chunks_per_url = MAX_CHUNKS_PER_URL
+
+    def _dedup_and_cap(
+        self, cands: list[tuple[WebChunk, float, bool]],
+    ) -> list[tuple[WebChunk, float, bool]]:
+        """Collapse near-duplicate chunks (normalised text) and cap chunks per
+        URL. Order-preserving: the first occurrence of a normalised text and the
+        first ``max_chunks_per_url`` chunks of any URL survive. §10a + §10b."""
+        seen_norm: set[str] = set()
+        per_url: dict[str, int] = {}
+        out: list[tuple[WebChunk, float, bool]] = []
+        for chunk, ts, local in cands:
+            key = _norm_chunk(chunk.text)
+            if not key or key in seen_norm:
+                continue
+            if per_url.get(chunk.url, 0) >= self.max_chunks_per_url:
+                continue
+            seen_norm.add(key)
+            per_url[chunk.url] = per_url.get(chunk.url, 0) + 1
+            out.append((chunk, ts, local))
+        return out
 
     def retrieve(self, queries: list[str], top_k: int | None = None) -> list[CitedResult]:
         """
@@ -56,8 +116,8 @@ class RetrievalPipeline:
         if top_k is None:
             top_k = self.top_k
 
-        all_chunks: list[WebChunk] = []
-        seen_texts: set[str] = set()
+        # candidate = (chunk, ts_fetched, is_local); DB rows first, then fresh web
+        db_cands: list[tuple[WebChunk, float, bool]] = []
         hits_by_query: dict[str, int] = {}
 
         # 1. Check DB — collect hits and track per-query count in one pass
@@ -65,16 +125,17 @@ class RetrievalPipeline:
             db_hits = self._db.search(q, top_k=self.db_min_hits * 2)
             hits_by_query[q] = len(db_hits)
             for sc in db_hits:
-                if sc.text not in seen_texts:
-                    seen_texts.add(sc.text)
-                    all_chunks.append(_db_to_chunk(sc, q))
+                db_cands.append((_db_to_chunk(sc, q), sc.ts_fetched, _is_local(sc.url)))
 
         # 2. Decide what needs a web fetch — trigger for any query below the threshold,
-        # not just zero-hit queries (1–2 cached hits is still "insufficient context")
+        # not just zero-hit queries (1–2 cached hits is still "insufficient context").
+        # The secondary count uses NORMALISED text so near-dup cache rows don't
+        # masquerade as sufficient breadth.
         needs_web = [q for q, n in hits_by_query.items() if n < self.db_min_hits]
-        if not needs_web and len(all_chunks) < self.db_min_hits:
+        if not needs_web and len({_norm_chunk(c.text) for c, _, _ in db_cands}) < self.db_min_hits:
             needs_web = queries
 
+        web_cands: list[tuple[WebChunk, float, bool]] = []
         if needs_web:
             fresh = search_and_fetch(needs_web, max_per_query=self.fresh_per_q)
             # 3. Store new chunks
@@ -83,23 +144,29 @@ class RetrievalPipeline:
                 by_url.setdefault(c.url, []).append(c)
             for url, chunks in by_url.items():
                 self._db.upsert(url, chunks[0].title, [c.text for c in chunks])
-            # add to candidate pool
-            for c in fresh:
-                if c.text not in seen_texts:
-                    seen_texts.add(c.text)
-                    all_chunks.append(c)
+            now = time.time()   # just fetched → maximally fresh
+            web_cands = [(c, now, _is_local(c.url)) for c in fresh]
 
-        if not all_chunks:
+        # 3b. Collapse near-duplicate chunks + cap per URL BEFORE ranking (§10a/b)
+        cands = self._dedup_and_cap(db_cands + web_cands)
+        if not cands:
             return []
 
-        # 4. Re-rank
-        texts  = [c.text for c in all_chunks]
-        ranked = rank(queries, texts)   # [(index, score), ...]
+        all_chunks = [c for c, _, _ in cands]
+        metas      = [(ts, local) for _, ts, local in cands]
 
-        # 5. Build CitedResult list (top_k, URL-deduplicated)
+        # 4. Re-rank, then apply a mild recency nudge (§10c)
+        ranked = rank(queries, [c.text for c in all_chunks])   # [(index, score), ...]
+        now = time.time()
+        adjusted = sorted(
+            ((i, s * _recency_factor(metas[i][1], metas[i][0], now)) for i, s in ranked),
+            key=lambda x: x[1], reverse=True,
+        )
+
+        # 5. Build CitedResult list (top_k, URL-deduplicated; stable source numbers)
         results: list[CitedResult] = []
         seen_urls: set[str] = set()
-        for idx, _score in ranked:
+        for idx, _score in adjusted:
             if len(results) >= top_k:
                 break
             chunk = all_chunks[idx]

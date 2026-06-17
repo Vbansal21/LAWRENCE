@@ -177,6 +177,37 @@ Payloads:
 { "observer": "audio", "enabled": false }
 ```
 
+## Reminders (§8 scheduler)
+
+Durable reminders that fire exactly once via the cognitive tick (no model call)
+and survive restarts. Storage is an append-only event log at
+`memory/schedule.jsonl`, shared with the CLI (`lk remind …`).
+
+```http
+GET /reminders
+```
+
+```json
+{ "ok": true,
+  "reminders": [ { "id": "rem-…", "text": "stand up", "due": "2026-06-18T09:00:00+05:30",
+                   "status": "pending", "created": "…", "source": "user" } ],
+  "counts": { "pending": 1, "fired": 0, "done": 0, "total": 1 } }
+```
+
+```http
+POST /reminders        { "op": "add", "text": "stand up", "when": "+30m" }
+POST /reminders        { "op": "done", "id": "rem-…" }
+DELETE /reminders/{id}
+```
+
+`when` is ISO-8601 (`2026-06-18T09:00`, naive = host local timezone) or a relative
+offset `+<n>[smhd]`. A bad time returns `422` with a specific message. The badge
+count must come from `/health.reminders` (backend truth), never localStorage. When
+a reminder fires, the bridge marks it fired **durably first** (idempotent — no
+double-fire across restarts), then emits a `context` SSE event (`kind:"reminder"`)
+and an OS notification. The reminders **panel/badge** UI wiring lands with the WS-U
+UI redesign; the backend it reads is complete.
+
 ## Manager Integration Shape
 
 A future kernel/CLI manager should not block on UI work. Suggested loop:

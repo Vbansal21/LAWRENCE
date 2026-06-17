@@ -17,6 +17,7 @@ writer-lock file, and delegates real work to the existing entry points:
     lk notes [...]      browse the zettelkasten (list | show <id> | search <q>)
     lk chats [...]      manage chats (list | show | export | new | switch | rename | delete)
     lk links [...]      cross-chat graph (show <chat> <seq> | add <c> <s> <c> <s>)
+    lk remind [...]     durable reminders (list | add <when> <text> | done | rm)
     lk status           who is running, who owns memory/, model health
     lk repl [flags...]  the terminal REPL (mutually exclusive with the UI kernel)
     lk ui               popup only (bridge must be running / will be started)
@@ -259,7 +260,7 @@ def launcher_action_kind(args: list[str]) -> str:
         return "stop-all" if "--all" in args else "stop"
     if cmd in ("start", "restart", "rebuild", "reset", "wizard", "ingest"):
         return cmd
-    if cmd in ("config", "secrets", "preset", "memory", "mem", "notes", "chats", "links"):
+    if cmd in ("config", "secrets", "preset", "memory", "mem", "notes", "chats", "links", "remind"):
         return "tool"
     return "custom"
 
@@ -996,6 +997,60 @@ def cmd_links(args: list[str]) -> int:
     return 2
 
 
+def cmd_remind(args: list[str]) -> int:
+    """Durable reminders (WS-T §8) — fire exactly once via the running kernel's
+    tick, survive restarts, model-free. Shares memory/schedule.jsonl with the
+    desktop, so adding one here surfaces in a running UI (and vice versa).
+
+    lk remind [list]                    pending + recently fired
+    lk remind add <when> <text…>        when = ISO-8601 or +<n>[smhd] (e.g. +30m)
+    lk remind done <id>                 dismiss a pending reminder
+    lk remind rm <id>                   delete a reminder
+    """
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk.schedule import Schedule, ScheduleError
+    sched = Schedule()
+    sub = args[0] if args else "list"
+
+    if sub in ("list", "ls"):
+        items = sched.list()
+        if not items:
+            print("  (no reminders — add one:  lk remind add +30m \"stretch\")")
+            return 0
+        c = sched.counts()
+        print(f"  {c['pending']} pending · {c['fired']} fired · {c['done']} done")
+        for r in items:
+            mark = {"pending": "○", "fired": "✓", "done": "×"}.get(r.get("status"), "?")
+            print(f"    {mark} {r['id']}  {r.get('due','')[:16]}  {r.get('text','')}")
+        return 0
+
+    if sub == "add":
+        if len(args) < 3:
+            print('usage: lk remind add <when> <text…>   (e.g. lk remind add +1h "call back")')
+            return 2
+        when, text = args[1], " ".join(args[2:]).strip()
+        try:
+            r = sched.add(text, when, source="user")
+        except ScheduleError as exc:
+            print(f"  cannot add reminder: {exc}")
+            return 1
+        print(f"  added {r['id']} — due {r.get('due','')[:16]}: {r.get('text','')}")
+        return 0
+
+    if sub in ("done", "dismiss") and len(args) >= 2:
+        ok = sched.done(args[1])
+        print(f"  {'dismissed' if ok else 'no pending reminder with id'} {args[1]}")
+        return 0 if ok else 1
+
+    if sub in ("rm", "remove", "delete") and len(args) >= 2:
+        ok = sched.remove(args[1])
+        print(f"  {'removed' if ok else 'no reminder with id'} {args[1]}")
+        return 0 if ok else 1
+
+    print("usage: lk remind [list | add <when> <text…> | done <id> | rm <id>]")
+    return 2
+
+
 def cmd_preset(args: list[str]) -> int:
     """Apply a one-pick backend + per-role routing setup."""
     sys.path.insert(0, str(REPO_ROOT / "services"))
@@ -1032,7 +1087,7 @@ _COMMANDS = {
     "launcher": cmd_launcher, "menu": cmd_launcher, "preset": cmd_preset,
     "restart": cmd_restart, "rebuild": cmd_rebuild, "reset": cmd_reset,
     "memory": cmd_memory, "mem": cmd_memory, "notes": cmd_notes,
-    "chats": cmd_chats, "links": cmd_links,
+    "chats": cmd_chats, "links": cmd_links, "remind": cmd_remind,
 }
 
 
