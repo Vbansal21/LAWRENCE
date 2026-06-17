@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/N8N_WORKFLOWS.md`.
+> **What it was:** the 9 n8n CE workflow showcase (intake/web/zettel/llm/tool/journal).
+> **What survives & where:** nothing — n8n is not in `services/lk/`; tool/workflow conception → SOUL paper §"Workflow and Tool Integration" + `docs/PLAN.md` N-25 (effectors).
+> **Status:** fully obsolete.
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # n8n Community Edition Workflow Showcase

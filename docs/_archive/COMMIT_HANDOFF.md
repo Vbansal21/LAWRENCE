@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/COMMIT_HANDOFF.md`.
+> **What it was:** one-time instructions to safely commit the 2026-06-13 working tree (untrack runtime memory, add new modules).
+> **What survives & where:** nothing live — that commit landed long ago; the "don't track `memory/`/`.runtime/`" rule lives in `.gitignore` + the standing invariants.
+> **Status:** obsolete.
+
 # Commit Handoff — read this, then commit
 
 Self-contained instructions to commit the current LAWRENCE working tree safely.

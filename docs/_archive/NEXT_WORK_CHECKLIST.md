@@ -1,5 +1,21 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/NEXT_WORK_CHECKLIST.md`.
+> **What it was:** the near-term prioritized checklist (§1–§15: cancel, capability routing, UI truth, ingest, PTT, scheduler, dedup, retrieval, artifacts, harness, launcher).
+> **What survives & where:** fully consolidated → `docs/DONE.md` + `docs/PLAN.md`; its §3–§12 prose was the source the bipartite split was derived from.
+> **Status:** superseded by DONE.md/PLAN.md.
+
 # LAWRENCE Next Work Checklist
 
+> **⚠️ SUPERSEDED 2026-06-17 — replaced by the bipartite tracker:**
+> **done → [DONE.md](DONE.md)** (constraint surface), **next → [PLAN.md](PLAN.md)**
+> (possibility space), produced under the Planning & TODO Consolidation Protocol
+> (numeric D-/N- node IDs, weighted cross-partition edges, triage-scaled depth,
+> BUILD→AUDIT→REVISE). A full **code+doc audit** behind that revision found several
+> items here marked "done" are degenerate in practice — most importantly **retrieval
+> / web / doc / the retriever loop are a TOTAL REWORK from first principles** (§10
+> "done" was lexical-BM25-web-only with no embeddings and no recall over the agent's
+> own memory). For "what's done / what's next", read DONE.md + PLAN.md. This file is
+> retained only for its original §3–§12 prose, which those reference.
+>
 > Detailed execution checklist derived from the current source review.
 > Use this as an implementation aid, not as a replacement for
 > `AUTONOMY.md` or `IMPLEMENTATION_PLAN.md`. The docs are the conceptual spine;

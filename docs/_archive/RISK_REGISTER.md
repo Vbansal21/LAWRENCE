@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/RISK_REGISTER.md`.
+> **What it was:** conception risk register R1–R10.
+> **What survives & where:** R2 retrieval-irrelevance / R6 web-overuse / R8 memory-graph-drift / R10 slow-loop-recursion → `docs/PLAN.md` self-alignment checks (N-02 / N-05 / N-07); R4 tool-policy → N-25.
+> **Status:** conception risks folded into the relevant PLAN nodes' self-alignment lists.
+
 # Risk Register
 
 ## R1: Parallel Facet Resource Saturation

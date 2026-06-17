@@ -42,4 +42,6 @@ memory/journal/*.*
 memory/logs/*.*
 memory/vault/*.*
 memory/notes/*.*
+memory/chats/*.*
+memory/chats/**/*.*
 !memory/vault/.gitkeep

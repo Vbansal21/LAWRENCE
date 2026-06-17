@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/AGENT_HANDOFF.md`.
+> **What it was:** a cold-start handoff; "non-negotiable project shape", fast/slow loop, "highest-value next work: BM25/ANN/graph rescoring".
+> **What survives & where:** project shape + retrieval ambition → SOUL paper + `docs/PLAN.md` N-02; its stale source-of-truth ORDERING is replaced by DONE.md/PLAN.md.
+> **Status:** stale TECH + stale doc-order; conception preserved in the paper.
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # Agent Handoff

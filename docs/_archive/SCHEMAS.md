@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/SCHEMAS.md`.
+> **What it was:** data schemas + the "Retrieval Bundle (Target)" (lexical+vector+graph+recency+journal+thread) + durable-note frontmatter.
+> **What survives & where:** the retrieval bundle → SOUL paper §"Retrieval Bundle Definition" (formal `B_t`/`S_ret`) + `docs/PLAN.md` N-02 (its north star); frontmatter → `ctx/notes.py`.
+> **Status:** stale TECH, but the Retrieval Bundle is the formal spec the N-02 rework restores.
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # Schemas and Data Conventions

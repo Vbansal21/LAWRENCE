@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/PLAN_COVERAGE.md`.
+> **What it was:** plan-coverage audit of the old FastAPI/n8n kernel.
+> **What survives & where:** the key evidence "Hybrid retrieval (vector+BM25+graph+recency) — BM25/ANN missing" (proof the `lk/` rewrite REGRESSED to BM25-web-only) → `docs/PLAN.md` N-02.
+> **Status:** stale; retained only as regression evidence behind the retrieval rework.
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # Plan Coverage Audit

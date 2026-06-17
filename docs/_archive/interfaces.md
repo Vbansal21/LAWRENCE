@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/interfaces.md`.
+> **What it was:** interface contracts — `TurnContextSnapshot` (screen/audio/thread/app/time/reminder/chat refs), `embed()`, `FacetResult`, zettel/memory API.
+> **What survives & where:** `embed()` → `docs/PLAN.md` N-01; rich `TurnContextSnapshot` → N-06; conception → SOUL paper.
+> **Status:** stale TECH; the snapshot + embed contracts are conception the §0 reworks restore.
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # LAWRENCE Interface Contracts

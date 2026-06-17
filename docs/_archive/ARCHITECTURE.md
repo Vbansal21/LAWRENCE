@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/ARCHITECTURE.md`.
+> **What it was:** current+target architecture; the `memory` facet that "recalls prior notes"; "audio/text primary, screen secondary — to contextualize, not replace".
+> **What survives & where:** conception → `docs/papers/` (SOUL paper); recall + modality-priority → `docs/PLAN.md` N-02 (hybrid retrieval) / N-06 (context assembly).
+> **Status:** stale TECH (FastAPI/n8n) but authoritative CONCEPTION (preserved in the paper).
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # LAWRENCE Architecture (Current + Target)

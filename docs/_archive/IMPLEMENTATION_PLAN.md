@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/IMPLEMENTATION_PLAN.md`.
+> **What it was:** the foundation-hardening plan (P0–P9 + V3 tasks), invariants **I1–I9**, and Appendix A (verified Anthropic backend facts).
+> **What survives & where:** **I1–I9 invariants** (still cited verbatim in DONE.md/PLAN.md) ; open P/V3 tasks → PLAN nodes (N-03/N-06/N-13/N-21…); Anthropic facts → `model.py`/`capabilities.py`.
+> **Status:** superseded by DONE.md/PLAN.md; keep handy ONLY for the I1–I9 wording + Anthropic appendix until those are relocated.
+
 # LAWRENCE Implementation Plan — v2, minimal-edit revision (2026-06-12)
 
 Working TODO for bringing the repo back to the concept. Written for smaller

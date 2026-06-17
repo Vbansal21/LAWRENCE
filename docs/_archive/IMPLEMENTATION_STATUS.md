@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/IMPLEMENTATION_STATUS.md`.
+> **What it was:** point-in-time status of the old FastAPI kernel.
+> **What survives & where:** "Retrieval (lexical + lightweight cosine; full ANN/BM25 pending)" — corroborates the regression → `docs/PLAN.md` N-02. Live status now = `docs/DONE.md`.
+> **Status:** stale; superseded by DONE.md.
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # Implementation Status

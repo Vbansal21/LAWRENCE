@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/AUDIT.md`.
+> **What it was:** an is-it-real scan (2026-06-13 + 2026-06-15) — HOLLOW/DEAD lists; "Retrieval: real BM25 + SQLite FTS5".
+> **What survives & where:** the BM25/FTS5 admission corroborates the lexical regression → `docs/PLAN.md` N-02; HOLLOW/DEAD items → DONE.md assumptions (D-12/D-13/D-14/D-19) + PLAN N-07/N-14.
+> **Status:** superseded; a fresh code+doc audit (2026-06-17) is embedded in DONE.md/PLAN.md.
+
 # Implementation Audit — 2026-06-13
 
 Honest scan of what is **actually implemented** vs. **hollow** (looks done, isn't)

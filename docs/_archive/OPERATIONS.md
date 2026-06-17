@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/OPERATIONS.md`.
+> **What it was:** runbook for the dead FastAPI/n8n stack (uvicorn, :8000/:5678).
+> **What survives & where:** nothing live — current ops = `docs/CLI.md` + root `README.md`.
+> **Status:** fully obsolete (commands reference removed services).
+
 > **CONCEPTUAL REFERENCE ONLY.** Describes the target design, not the running code. The FastAPI/n8n implementation it references was replaced by `services/lk/`. For current implementation truth see `README.md` and `docs/IMPLEMENTATION_PLAN.md`.
 
 # Operations Runbook

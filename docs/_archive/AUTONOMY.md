@@ -1,3 +1,8 @@
+> **⌫ ARCHIVED 2026-06-17 — staged for removal, NOT deleted.** Original: `docs/AUTONOMY.md`.
+> **What it was:** the living autonomy plan — WS-M/P/C/R/J/U/T/A/X/K workstreams, §9 master checklist, §10 cross-plan index + FR-001..011 map, §6 worklog.
+> **What survives & where:** ALL of it consolidated → `docs/DONE.md` (D-01..D-19) + `docs/PLAN.md` (N-01..N-30); the litmus ("fancy chat vs autonomous agent") → SOUL paper.
+> **Status:** superseded by DONE.md/PLAN.md (this was the richest source the bipartite split drew from).
+
 # Autonomy Scorecard & Roadmap
 
 > Living doc. The question it answers: **what separates LAWRENCE from a fancy
