@@ -128,8 +128,12 @@ raw.close()
 
 
 # ─────────────────────── D. emit/handle contract parity (static) ───────────────────────
-section("D. SSE event-type parity: app.js handlers ⊇ Python emitters")
-app = (Path("apps/desktop/web/app.js")).read_text(encoding="utf-8")
+section("D. SSE event-type parity: classic variant handlers ⊇ Python emitters")
+# WS-U N-09: the front-end is now split — transport lives in web/lib/bridge.js
+# and each variant under web/variants/<v>/app.js. The classic variant is the
+# behavioral baseline; the bridge module is the sole transport surface.
+app = (Path("apps/desktop/web/variants/classic/app.js")).read_text(encoding="utf-8")
+bridge_js = (Path("apps/desktop/web/lib/bridge.js")).read_text(encoding="utf-8")
 handled = set(re.findall(r'payload\.type === "([a-z]+)"', app))
 emitted = {"status", "response", "refined", "context", "tasks", "delta", "finding"}
 missing = emitted - handled
@@ -145,8 +149,10 @@ check("bridge routes DELETE /jobs", 'parts[0] == "jobs"' in bridge_src and "canc
 check("bridge CORS allows DELETE", "DELETE" in bridge_src and "Access-Control-Allow-Methods" in bridge_src)
 check("bridge threads should_stop into run_turn", "should_stop=should_stop" in bridge_src)
 check("_job_view drops private keys", 'startswith("_")' in bridge_src)
-check("app.js has deleteBridge transport", "function deleteBridge(" in app and "bridge_delete" in app)
-check("app.js cancels active turn", "function cancelActiveTurn(" in app and "/jobs/" in app)
+check("transport module exposes deleteBridge", "function deleteBridge(" in bridge_js and "bridge_delete" in bridge_js)
+check("classic variant imports deleteBridge from the transport module",
+      "deleteBridge" in app and "lib/bridge.js" in app)
+check("classic variant cancels active turn", "function cancelActiveTurn(" in app and "/jobs/" in app)
 check("app.js Escape cancels in-flight turn", "state.activeJobId" in app and "cancelActiveTurn()" in app)
 check("app.js treats cancelled job honestly (no fake answer)", 'job.state === "cancelled"' in app)
 rust_src = Path("apps/desktop/src-tauri/src/main.rs").read_text(encoding="utf-8")
@@ -207,6 +213,41 @@ check("/health advertises the backend reminder counts (badge from backend)",
 ctl_src = Path("services/lk/ctl.py").read_text(encoding="utf-8")
 check("lk remind CLI command is registered",
       "def cmd_remind(" in ctl_src and '"remind": cmd_remind' in ctl_src)
+
+section("I. WS-U N-09 UI seam — the base is robust to the UI (variant switch)")
+import subprocess, glob, shutil
+# (a) transport isolation: NO variant touches the BRIDGE transport directly —
+#     every HTTP/SSE call to the kernel goes through lib/bridge.js. (A variant may
+#     still use __TAURI__ for native SHELL APIs — windows, panels, open_url — which
+#     are a legitimate front-end concern, not bridge transport.)
+TRANSPORT_LEAKS = ("window.fetch(", "new EventSource(", 'invoke("bridge_get"',
+                   'invoke("bridge_post"', 'invoke("bridge_delete"')
+variant_files = sorted(glob.glob("apps/desktop/web/variants/*/app.js"))
+check("at least the classic variant exists", any(p.endswith("classic/app.js") for p in variant_files),
+      f"variants={variant_files}")
+for vf in variant_files:
+    src = Path(vf).read_text(encoding="utf-8")
+    leaks = [tok for tok in TRANSPORT_LEAKS if tok in src]
+    check(f"{vf} uses no bridge transport directly (only via lib/bridge.js)", not leaks, f"leaked: {leaks}")
+    check(f"{vf} imports from lib/bridge.js", "lib/bridge.js" in src)
+
+# (b) bootstrap reads the variant from /health and falls back to classic on any error.
+boot = Path("apps/desktop/web/bootstrap.js").read_text(encoding="utf-8")
+check("bootstrap reads /health to pick the variant", "/health" in boot and "uiVariant" in boot)
+check("bootstrap falls back to classic", '"classic"' in boot or "CLASSIC" in boot)
+check("/health advertises uiVariant", '"uiVariant"' in bridge_src)
+check("ui_variant is a config key (GUI==CLI round-trip)",
+      '"ui_variant"' in Path("services/lk/config.py").read_text(encoding="utf-8"))
+
+# (c) every entrypoint parses (node --check) when node is available.
+node = shutil.which("node")
+if node:
+    for js in ("apps/desktop/web/bootstrap.js", "apps/desktop/web/lib/bridge.js",
+               "apps/desktop/web/variants/classic/app.js"):
+        rc = subprocess.run([node, "--check", js], capture_output=True, text=True)
+        check(f"node --check {js}", rc.returncode == 0, rc.stderr.strip())
+else:
+    print("  node not installed — node --check skipped")
 
 stop.set()
 try: ui.close()

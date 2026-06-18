@@ -1,3 +1,8 @@
+import {
+  bridgeBaseUrl, postBridge, getBridge, deleteBridge,
+  connectEvents as bridgeConnectEvents,
+} from "../../lib/bridge.js";
+
 const feed = document.querySelector("#feed");
 const form = document.querySelector("#composer");
 const promptInput = document.querySelector("#prompt");
@@ -767,30 +772,9 @@ function localDraft(text, config, status) {
   };
 }
 
-// Native-first transport. The WebKitGTK webview under WSLg can silently block
-// fetch() to http://127.0.0.1 (mixed content / CSP), so when running inside
-// Tauri we proxy every call through Rust (ureq). fetch() is only used in the
-// browser static-preview where Tauri commands are unavailable.
-async function postBridge(path, payload) {
-  if (tauri?.core?.invoke) {
-    return tauri.core.invoke("bridge_post", { path, body: payload ?? {} });
-  }
-  return fetchJson("POST", path, payload);
-}
-
-async function getBridge(path) {
-  if (tauri?.core?.invoke) {
-    return tauri.core.invoke("bridge_get", { path });
-  }
-  return fetchJson("GET", path, null);
-}
-
-async function deleteBridge(path) {
-  if (tauri?.core?.invoke) {
-    return tauri.core.invoke("bridge_delete", { path });
-  }
-  return fetchJson("DELETE", path, null);
-}
+// Bridge transport (bridgeBaseUrl/postBridge/getBridge/deleteBridge + the SSE
+// EventSource) lives in lib/bridge.js, imported at the top of this file. This
+// variant never opens its own connection — the seam keeps the base UI-agnostic.
 
 // Cancel the in-flight turn (Escape / Stop). Cooperative: the bridge flips the
 // job's cancel flag; run_turn raises TurnCancelled and the job ends 'cancelled'
@@ -807,23 +791,6 @@ async function cancelActiveTurn() {
   }
 }
 
-async function fetchJson(method, path, payload) {
-  const base = bridgeBaseUrl();
-  if (!base || typeof window.fetch !== "function") {
-    throw new Error("fetch unavailable");
-  }
-  const opts = { method };
-  if (payload != null) {
-    opts.headers = { "Content-Type": "application/json" };
-    opts.body = JSON.stringify(payload);
-  }
-  const response = await window.fetch(`${base}${path}`, opts);
-  const data = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(data.error || `HTTP ${response.status}`);
-  }
-  return data;
-}
 
 // WS-K capability routing: surface decoding options the live backend could not
 // honor as a compact, honest meta marker — saved in config, never silently dropped.
@@ -888,14 +855,6 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function bridgeBaseUrl() {
-  const raw = document.querySelector("#kernel-url")?.value?.trim?.() || "http://127.0.0.1:8765";
-  if (!raw) return "";
-  return raw
-    .replace(/^ws:/i, "http:")
-    .replace(/^wss:/i, "https:")
-    .replace(/\/+$/, "");
-}
 
 function saveSessionState() {
   try {
@@ -1028,44 +987,34 @@ function removePendingJobMessage(jobId) {
 }
 
 function connectEvents(url) {
-  if (!window.EventSource || state.eventSource?.url === url) return;
-  state.eventSource?.close?.();
-  const source = new EventSource(url);
-  source.onmessage = (event) => {
-    try {
-      const payload = JSON.parse(event.data);
-      state.liveEvents.push(payload);
-      state.liveEvents = state.liveEvents.slice(-10);
-      if (payload.type === "status") streamState.textContent = payload.status || streamState.textContent;
-      if (payload.type === "context" && payload.kind === "audio") {
-        const heard = extractAudioTranscript(payload.text || "");
-        state.voiceTranscript = heard || state.voiceTranscript;
-        state.metrics.transcript = heard ? `heard: ${heard.slice(0, 80)}` : (payload.text || "audio update");
-        addVoiceUserMessage(heard, ["audio transcript"], `audio:${heard.toLowerCase()}`);
-      }
-      if (payload.type === "context" && payload.kind === "vision") state.metrics.visual = payload.text || "vision update";
-      if (payload.type === "context" && payload.kind === "turn") state.metrics.transcript = payload.text || "turn update";
-      if (payload.type === "context" && payload.kind === "voice") {
-        const heard = String(payload.text || "").replace(/^heard:\s*/i, "").trim();
-        state.voiceTranscript = heard || state.voiceTranscript;
-        state.metrics.transcript = heard ? `heard: ${heard.slice(0, 80)}` : "voice";
-        addVoiceUserMessage(heard, ["spoken audio"], `event:${heard.toLowerCase()}`);
-      }
-      if (payload.type === "tasks") applyTasks(payload);
-      if (payload.type === "delta") onDelta(payload.text);
-      if (payload.type === "finding") onFinding(payload);
-      if (payload.type === "refined") onRefined(payload);
-      if (payload.type === "response") onRemoteResponse(payload);
-      renderTelemetry();
-    } catch {
-      // Ignore malformed SSE frames; the bridge health poll remains authoritative.
+  bridgeConnectEvents(url, (payload) => {
+    state.liveEvents.push(payload);
+    state.liveEvents = state.liveEvents.slice(-10);
+    if (payload.type === "status") streamState.textContent = payload.status || streamState.textContent;
+    if (payload.type === "context" && payload.kind === "audio") {
+      const heard = extractAudioTranscript(payload.text || "");
+      state.voiceTranscript = heard || state.voiceTranscript;
+      state.metrics.transcript = heard ? `heard: ${heard.slice(0, 80)}` : (payload.text || "audio update");
+      addVoiceUserMessage(heard, ["audio transcript"], `audio:${heard.toLowerCase()}`);
     }
-  };
-  source.onerror = () => {
+    if (payload.type === "context" && payload.kind === "vision") state.metrics.visual = payload.text || "vision update";
+    if (payload.type === "context" && payload.kind === "turn") state.metrics.transcript = payload.text || "turn update";
+    if (payload.type === "context" && payload.kind === "voice") {
+      const heard = String(payload.text || "").replace(/^heard:\s*/i, "").trim();
+      state.voiceTranscript = heard || state.voiceTranscript;
+      state.metrics.transcript = heard ? `heard: ${heard.slice(0, 80)}` : "voice";
+      addVoiceUserMessage(heard, ["spoken audio"], `event:${heard.toLowerCase()}`);
+    }
+    if (payload.type === "tasks") applyTasks(payload);
+    if (payload.type === "delta") onDelta(payload.text);
+    if (payload.type === "finding") onFinding(payload);
+    if (payload.type === "refined") onRefined(payload);
+    if (payload.type === "response") onRemoteResponse(payload);
+    renderTelemetry();
+  }, () => {
     state.metrics.transcript = "event stream retry";
     renderTelemetry();
-  };
-  state.eventSource = source;
+  });
 }
 
 // ── live token streaming (SSE "delta" events from the kernel) ────────────────

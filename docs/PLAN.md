@@ -59,7 +59,7 @@ medium · L/* → one line + edges.
 
 ## §B — §0 Conception-recovery reworks (highest priority)
 
-### N-01 (EMB) — Embedding seam `[ ]` — FULL
+### N-01 (EMB) — Embedding seam `[x]` — FULL — **DONE → DONE.md D-20**
 **Pathway (DAG).** Hard-dep on D-17 (provider seam). Convergence point: feeds N-02
 (vector arm), N-06/N-07/N-08 (semantic recall). Parallel-safe with all of §1.
 **Triple-anchor.** *Task-local:* `embed(texts)->vectors` via the role seam. *Impl-
@@ -76,7 +76,11 @@ query speed — fine at scale.
 in index schema). API embed routing `resolve-before-start` (route like background
 roles, default local). Re-embed-on-model-swap `crystallizes-during`.
 
-### N-02 (RET) — Hybrid retrieval engine 🔁 `[ ]` — FULL — supersedes D-14
+### N-02 (RET) — Hybrid retrieval engine 🔁 `[x]` — FULL — supersedes D-14 — DONE 2026-06-18 → D-24
+> **DONE (own-memory hybrid recall).** `retrieval/memory.py` `MemoryIndex` + `reindex.py`:
+> unified `source_kind` store, RRF fusion of lexical(FTS5)+vector(D-20)+graph(NoteStore),
+> recency×link(G)×delete(P) shaping, local-first embed (degrades), `lk reindex`. The web
+> arm stays in `SemanticDB` (fused later by N-03/N-05); the own-vs-web mix is N-05's call.
 **Pathway (DAG).** Hard-deps: N-01 (vector arm), D-01 (L3/L2 sources), D-05 (journal),
 D-08 (NoteStore graph arm + past chats). Soft-dep (informs): N-03 (web arm), N-04
 (doc arm). **Diamond:** N-02 → {N-06, N-08} which must converge on the ambient-vs-
@@ -101,7 +105,11 @@ store index `crystallizes-during` → single table w/ `source_kind`. Own-vs-web 
 per query `intentionally-open` → N-05 decides per step. Backfill scope
 `crystallizes-during`.
 
-### N-03 (WEB) — Web search & read rework `[ ]` — medium + deferral
+### N-03 (WEB) — Web search & read rework `[~]` — medium + deferral — **folded as a category in D-26**
+> **2026-06-18:** the web arm is now a category in the unified engine (D-26): cached web rows
+> ∪ fresh search→read→extract (D-19 chain), BM25-ranked, cited consistently. Remaining: the
+> single/deep/off *policy* surface (FR-003) is partly wired (`deep_search`); per-FR-003 web
+> enforcement is on by default.
 **Pathway.** Independent start; feeds N-02 web arm + N-05. Reuses D-19 chain/pacing/
 cooldown.
 **Achieves + alignment.** Real search→read→extract→**embed into N-02** (reusable,
@@ -110,7 +118,11 @@ cited), policy-gated (single/deep/off per FR-003); query formulation owned by N-
 **Deferral.** Soft-defer the formulation half to N-05; the read/extract/embed half
 ships independently and is valuable pre-loop. Re-entry: N-02 index schema exists.
 
-### N-04 (DOC) — Document retrieval & conversion rework `[ ]` — medium — subsumes §6 ingest
+### N-04 (DOC) — Document retrieval & conversion rework `[~]` — medium — subsumes §6 ingest — **doc arm shipped in D-26**
+> **2026-06-18:** the doc *retrieval* arm is now a category in the unified engine (D-26):
+> ingested `file://` chunks in `SemanticDB`, BM25-ranked, cited. Remaining: the conversion/
+> ingest *write* path with path/page provenance (reuse D-16 converters) + the N-12 ingest
+> button — i.e. getting more docs INTO the index; reading them back out is done.
 **Pathway.** Hard-dep N-01 + N-02 index schema; reuses D-16 converters. Feeds N-02
 doc arm. UI button = N-12 (separate).
 **Achieves + alignment.** Converters → structural chunk → embed → index with
@@ -118,7 +130,12 @@ path/page provenance + citation (FR-005: typed/cited, not opaque blobs). *Soul:*
 "doc search useless" was orphaned output; this re-homes it into recall.
 **Deferral.** MUST-defer-until N-01+N-02 schema; one more source into the same index.
 
-### N-05 (LOOP) — Agentic retriever loop 🔁 `[ ]` — FULL — supersedes single-shot retrieve (FR-009)
+### N-05 (LOOP) — Agentic retriever loop 🔁 `[x]` — FULL — supersedes single-shot retrieve (FR-009) — **DONE 2026-06-18 → D-26**
+> **DONE 2026-06-18 → D-26.** Shipped as the unified `RetrievalEngine` (per-category parallel
+> chains + context-discernment-first + final collective RRF rank; perplexity default,
+> configurable+dynamic). Folds N-03/N-04 in as categories, completes N-06's recall half (recall
+> is now a cited category), and makes N-07 ride notes+doc+web. Full contract + granular steps
+> RE-1…RE-13 in **§J**; `make check` green (32 suites, incl. `test_retrieval_engine.py`).
 **Pathway (DAG).** Hard-deps: N-02, N-03. Reuses D-09 deadline machinery. Wraps
 retrieval inside N-06 (turn) and N-07 (proactive). Convergence: every answer/finding's
 grounding.
@@ -137,7 +154,12 @@ cheap model judgment (avoid per-source LLM grading). O(rounds·retrieve). stdlib
 capped). Assess-by-score-vs-judgment `crystallizes-during`. Deep-search profile
 `intentionally-open` (raises budget).
 
-### N-06 (CTX) — Turn context assembly rework 🔁 `[ ]` — FULL — supersedes screenshot-attach turn
+### N-06 (CTX) — Turn context assembly rework 🔁 `[~]` — FULL — supersedes screenshot-attach turn — RECALL HALF DONE → D-25/D-26
+> **RECALL HALF DONE (D-25 core → D-26 unified).** `run_turn` first injected a `[RECALLED
+> MEMORY]` block (D-25); D-26 then promoted recall to a **first-class cited category** inside
+> the unified engine (own memory ranked + cited alongside doc/web in one bundle). **REMAINING
+> (the perception half, independent of recall):** demote vision to distilled-secondary +
+> on-request hi-res; audio transcript primary; recall/recency budget split tuning.
 **Pathway (DAG).** Hard-dep N-02 (recall). Soft-dep D-18 (observers). Downstream:
 every turn, N-07. **Diamond (not a cycle) `[revised: F3]`:** N-02 is the apex; it
 feeds *both* N-06 and N-08, which must **converge once** on the ambient-vs-per-chat
@@ -163,7 +185,13 @@ tests). Current-context providers `resolve-before-start` (start with observer-
 captured window+ts; reminder/calendar later). Per-chat split conflict with N-08
 `resolve-before-start` (co-design).
 
-### N-07 (PRO) — Proactive loop actually fires 🔁 `[ ]` — FULL — re-opens D-13
+### N-07 (PRO) — Proactive loop actually fires 🔁 `[~]` — FULL — re-opens D-13
+> **2026-06-18 (D-26):** the "realize→retrieve→surface" quality half is in — `run_proactive`
+> now rides the unified engine (findings grounded in own memory + doc + web, not web-only) and
+> live-indexes each finding so the next pass sees what was surfaced. **REMAINING (the firing
+> audit):** confirm the tick actually fires it under load (slot starvation / cadence) and route
+> background off the starved local slot (N-21); the engine's plan/assess calls are droppable
+> `PRI_PROACTIVE`, so de-starvation is the open risk to *firing* (vs. *quality*, now done).
 **Pathway (DAG).** Hard-deps: D-03 (tick fires it), N-02 (relevant findings), N-06
 (real "realize context"). Soft-dep N-21 (de-starve). Diamond: depends on both the
 retrieval rework AND the de-starvation fix converging.
@@ -217,7 +245,13 @@ start` (reuse WS-J, scoped).
 
 ## §C — §1 WS-U UI redesign
 
-### N-09 (U0) — UI seam (Track 0) `[ ]` — FULL
+### N-09 (U0) — UI seam (Track 0) `[x]` — FULL — **DONE 2026-06-18 → D-23**
+**Done note.** Shipped exactly as planned: `web/lib/bridge.js` (sole transport) +
+`web/variants/classic/app.js` (git-moved, imports transport) + `web/bootstrap.js`
+(variant switch, classic fallback) + `ui_variant`/`LK_UI_VARIANT` config + `/health.
+uiVariant`. Zero visual change, no Rust change. stress_ui section I + node --check on all
+three entrypoints; `make check` green (30 suites). Markdown vendoring + `localDraft`
+removal deliberately deferred to N-10. **Unblocks N-10/N-11/N-12/N-13/N-14/N-15.**
 **Pathway (DAG).** No upstream **in the tracked done-graph** `[revised: F1]`. **Fan-out
 convergence:** unblocks N-10, N-11, N-12, N-13, N-14, N-15 (all UI). The keystone of
 the UI partition.
@@ -335,7 +369,7 @@ Hard-dep N-09 seam (variant architecture is the enabler). Scaffolding in
 ### N-27 (L1) — Tauri shell rebuild for live cancel `[ ]` — one line ↩ resume D-09
 Rust `bridge_delete` exists; rebuild so UI Stop/Esc fire. Mechanical; I6. Anytime.
 
-### N-28 (L2) — Launcher Quit & Quit-all `[ ]` — medium + deferral *(user 2026-06-17)*
+### N-28 (L2) — Launcher Quit & Quit-all `[x]` — DONE → DONE.md D-21 *(user 2026-06-17)*
 **Triage note `[revised: F7]`:** true *centrality is L* (leaf — fan-out 0, nothing
 waits on it); the medium depth is driven by *ambiguity M* (sudo escalation, verify
 pass, "all relevant" scope) + explicit user priority, not by centrality.
@@ -376,6 +410,60 @@ home (e.g. `docs/INVARIANTS.md` or DONE.md preamble); fix README `crates/system-
 FR-008 pairs with N-16; FR-010 folds into N-11; FR-004 rich telemetry into N-10/11 +
 honest `/metrics`. Fold each into its parent; no standalone build.
 
+### N-32 (LOCAL-PERF) — Local turn latency `[ ]` — medium *(finding from D-21, user "optimise for local")*
+**Pathway.** Independent start; informs N-05 (loop budget) + N-06 (turn assembly).
+**Finding (D-21).** Raw llama-server completes a tiny local completion in **~0.7s**,
+but a full `run_turn` takes **minutes** on CPU — the cost is in the *pipeline*
+(multiple model calls per turn: query/analysis/response/background) and the **gemma
+thinking-token burn** (see [[lawrence-thinking-token-budget]]), NOT the server. So
+the local spine *works* but isn't yet *usable-fast*.
+**Achieves + alignment.** Make a local turn responsive: audit per-turn model-call
+count + token ceilings; expose/right-size `LK_THINKING` and per-role `max_tokens`;
+consider a smaller/faster local default + GPU offload (`LLAMACPP_GPU_LAYERS`); keep
+the degraded-path doctrine (never hang the turn). *Soul:* "the whole system had to
+be optimised for local" — a watcher-assistant that takes minutes to answer fails the
+responsiveness bar even when fully local.
+**Ambiguity register.** thinking on/off vs budget `resolve-before-start` (measure
+first — disabling may regress quality per the thinking-budget memory). Smaller local
+model `intentionally-open` (user hardware call). Per-role ceilings `crystallizes-during`.
+
+### N-33 (SENSOR-DECOUPLE) — Sensors as independent services; model probes `[~]` — FULL *(user 2026-06-17)*
+**Principle (user directive).** **Decouple the sensor from the model.** Each sensor
+(vision, audio) is a *separate, individual, always-on service* that keeps running and
+*proceeds with the data on its own* — capture → OCR/transcription → logging → context
+write → extraction → context tracking → dynamic/smart adaptation to environment change
+— **independent of the model**. The model never drives sensor lifecycle; it only
+**probes** the accumulated sensor data to retrieve what's relevant. **Only the USER
+turns a sensor off** (UI toggle · `/vision on|off` · config). The model may relay an
+"off" *only* when a proactive / voice-query / active user-query explicitly asks for it.
+**Pathway (DAG).** Step 1 done (D-22: model→sensor control severed; auto-start at boot
+= D-21). Remaining hard-deps: **N-02** (the "probe" = hybrid retrieval over sensor-
+derived context), **N-06** (assemble probed context into the turn), **N-07** (proactive
+off the stream). Reuses D-18 (observers), D-02 (extraction), D-03 (tick/significance).
+**Triple-anchor.** *Task-local:* sensors run as services; model calls `retrieve()` to
+pull relevant perceived data; no per-turn device control. *Impl-scope:* observers
+(D-18) already capture→OCR/transcribe→write context continuously and now auto-start
+(D-21); the missing half is making the model *consume by probing* (N-02/N-06) instead
+of by toggling, and making proactive ride the stream (N-07). *Soul:* the watcher-
+assistant perceives continuously and recalls/acts on it — "audio/text primary, vision
+secondary"; useful with the user unplugged. **Coherent — this is the umbrella the
+perception reworks serve.**
+**Proactive extrapolation (explicit ask).** Apply the same decoupling to N-07: the
+proactive loop must observe the *continuously-updated* context stream — significance/
+change-detection on the latest OCR/transcript (D-03 + vision region-change gating) —
+and on a meaningful change, **probe** (N-02) + surface a finding, all WITHOUT the
+model toggling sensors. Sensors push; tick watches for change; model pulls on a
+worthwhile delta. Firing is driven by environment change, not by the model asking a
+sensor to turn on.
+**Deferral.** Step 1 (decouple control) done now. The probe/assembly/proactive halves
+defer to N-02 → N-06 → N-07. The "model relays an explicit user OFF" case needs an
+intent-aware path (a real effector/command channel, not the per-turn envelope) —
+deferred (relates to N-25 effectors).
+**Ambiguity register.** "probe" granularity (latest-frame vs windowed transcript vs
+retrieval) `resolve-during` N-02. Change-detection thresholds for proactive
+`crystallizes-during` N-07. Explicit-user-off intent path `resolve-before-start` of
+that sub-task (N-25-adjacent).
+
 ---
 
 ## §G — N→N edge set (the execution DAG, beyond the cross-partition edges in DONE.md)
@@ -406,15 +494,27 @@ N-17 --dependency--> N-25            load-bearing  L6 propose-path precedes effe
 N-09 --dependency--> N-26            load-bearing  variant seam enables host-native
 N-18 --conditional-> N-02            significant   N-02 may subsume recent_findings →
                                                    sequence after N-02 design [rev:F6]
+# sensor-decoupling umbrella [user 2026-06-17]
+N-33 --requires----> N-02            load-bearing  "model probes sensor data" = retrieval
+N-33 --requires----> N-06            load-bearing  probed perception composed into the turn
+N-33 --requires----> N-07            load-bearing  proactive rides the continuous stream
+D-18/D-02/D-03 --feed--> N-33        load-bearing  observers/extraction/tick = the services
+D-22 --partial-completion--> N-33    load-bearing  step 1 (model→sensor control severed) done
 # cross-partition backend edges for the UI-folded nodes [revised: F2]
 D-19/D-16 --dependency--> N-12        significant   /ingest + converters back the button
 D-18(/voice) --dependency--> N-13     significant   voice endpoint backs PTT
 ```
 
 **Executable frontier right now (no unsatisfied hard-dep, no active hard-defer):**
-N-01, N-03 (read/extract half), N-09, N-21, N-27, N-28, N-29. **Recommended pick:
-N-01 → N-02** (the soul-critical spine), with N-09 and N-28 as parallel low-coupling
-wins.
+~~N-01~~ **(done → D-20)**, ~~N-28~~ **(done → D-21)**, **N-02** (unblocked — hard-dep
+N-01 satisfied), N-03 (read/extract half), N-09, N-21, N-27, N-29, **N-32** (new:
+local turn latency). **User-set order (2026-06-17):** (1) ✅ make the existing
+launcher/kernel/server work as envisioned — DONE (D-21: local-first default, launcher
+opens, sensors auto-start, Quit/Quit-all, logs viewable); (2) the *existing* UI
+revision next → **N-09 (UI seam) → N-10 (classic) / N-11 (palette)**; (3) then
+iterative improvements (incl. **N-32** local latency, **N-02** retrieval); (4) new UI
+later. So the recommended next pick is **N-09** (then N-10/N-11), with N-32 and N-02
+as the high-value iterative wins after the UI revision lands.
 
 ---
 
@@ -474,3 +574,216 @@ clean** — 7 findings, all addressed in §I.
   to wait on it.
 - **`?:open` SOUL confirmation** — the SOUL statement is synthesized from the corpus
   (AUTONOMY §0/§1, ARCHITECTURE); pending the user's explicit confirmation (§6 gate).
+
+---
+
+## §J — Unified Perplexity Retrieval Engine + autonomy-loop closure — **SHIPPED 2026-06-18 → D-26** ✅
+
+> **STATUS: SHIPPED.** All of RE-1…RE-13 below are done; `make check` green (32 suites incl.
+> `test_retrieval_engine.py`). Recorded as DONE.md **D-26**; N-05 `[x]`, N-03/N-04/N-06/N-07
+> advanced. The contract/architecture below is kept as the as-built reference.
+
+> **User directive (this session).** *"Get the system to work autonomously; make it
+> capable of capturing running long contexts; write atomic logs; context-adaptive
+> journal entries; tiered rolling memory with compaction and compression smartly to
+> context; web/doc/notes retrieval — like perplexity — enforced, reranked, iterative,
+> consistent citation, context (short & long) based."*
+>
+> This section is the **authoritative build contract** for that directive. It realizes
+> **N-05 (LOOP)** as the spine and folds in **N-03 (WEB)**, **N-04 (DOC)** as
+> retrieval *categories*, finishes the recall half of **N-06 (CTX)**, makes **N-07
+> (PRO)** ride it, and closes the live **N-02→N-06→N-07** loop. Treatment depth: FULL.
+
+### §J.0 — Directive coverage audit (what exists vs. what this build adds)
+
+| Directive clause | State at audit (2026-06-18) | This build |
+|---|---|---|
+| work **autonomously** | tick + proactive wired in both kernels (D-03); `run_proactive` rides **web only**, findings/journal **not** re-indexed → recall goes stale | proactive rides the unified engine; **live incremental indexing** closes perceive→remember→recall→act |
+| **long context** capture | `ContextStore` dynamic-budget L1→L2→L3 tiering solid (D-01) | unchanged; recall now spans it |
+| **atomic logs** | `context-YYYY-MM-DD.log` one-liner-per-event exists (D-01) | unchanged; already indexed by reindex |
+| **context-adaptive journal** | WS-J engine: significance-gated, first-person, rolling-revision (D-05) | new entries **incrementally indexed** into recall |
+| **tiered rolling memory + compaction/compression** | model compaction L1→L2→L3 + dynamic working budget solid (D-01) | unchanged |
+| **web/doc/notes retrieval — perplexity** | `RetrievalPipeline` is **single-shot, web/doc-only, gated, non-iterative**; notes recall is a *separate* block; citations don't span memory | **the centerpiece** — the new `RetrievalEngine` below |
+
+### §J.1 — Decisions locked (2026-06-18 AskUserQuestion)
+
+- **D1 — depth.** Default = a faithful **Perplexity design**: context-grounded, retrieval
+  **enforced** once warranted, **reranked**, **iterative**. Make it **configurable +
+  dynamic**: simple needs terminate after one round, complex needs iterate deeper; every
+  bound is a knob.
+- **D2 — fusion shape.** Each **category** (notes / doc / web) runs the **whole chain
+  independently and in parallel** — *parse → retrieve → rank → iterate* on its own —
+  then a **final collective ranking phase** fuses them. **Precondition:** a
+  **context-discernment pass** runs first — the model drafts its understanding of the
+  *current* situation (the "Raw/draft"), and **only from that correct context can it
+  produce the correct retrieval** queries. ("Context (short & long) based" = the discern
+  pass is fed the short rolling tail **and** the long summary/recall digest.)
+- **D3 — categories + citations.** Categories: **notes** (own memory — hybrid via
+  `MemoryIndex`, N-02), **doc** (local ingested `file://` chunks in `SemanticDB`, N-04),
+  **web** (search→read→extract→store, N-03). One **consistent citation space** across all
+  three (memory is cited like any source, `memory://<node_id>`).
+- **D4 — local-first ([[lawrence-local-first]]).** The discern/assess/refine model calls
+  run under a new role **`retrieve`** that is **NOT** in `BACKGROUND_ROLES` → defaults to
+  the **local** backend (planning over personal context never ships to cloud by default;
+  API still opt-in via `routing.retrieve`). Notes arm embeds locally. No embedding/web
+  backend ⇒ the affected arm is **skipped**, never fatal (degrade to what is available).
+
+### §J.2 — Architecture: `retrieval/engine.py :: RetrievalEngine`
+
+```
+gather(need, *, short_ctx, long_ctx="", proactive=False, priority, timeout,
+       should_stop, live_fn) -> GatherResult
+GatherResult(context_understanding: str, evidence: list[CitedResult],
+             capture_hires: bool, queries: dict[str,list[str]], iterations: int)
+```
+
+- **Phase A — DISCERN (1 model call, role=`retrieve`, schema `RETRIEVAL_PLAN`).** Input =
+  short_ctx (rolling tail = recent raw + sticky L2/L3 summaries) + long_ctx (a recall
+  digest from `MemoryIndex` + journal) + the need (user question, or "" for proactive →
+  prompt framed as "what is worth looking into"). Output = `context_understanding`
+  (the Raw/draft), per-category query lists (`notes_queries`/`doc_queries`/`web_queries`),
+  `needs_retrieval`, `capture_hires`. **Degrade:** model down/empty → heuristic token
+  queries from the need (lexical), so retrieval still runs.
+- **Phase B — per-category PARALLEL chains (`ThreadPoolExecutor`, one worker/arm).** Each
+  arm runs ≤ `max_iter` rounds: `retrieve(queries, depth) → rank-within-arm → sufficiency`.
+  - **notes arm** = `MemoryIndex.recall` per query, merged by `node_id` keeping best rank
+    (recall is itself hybrid lexical+vector+graph+recency+link/delete — the per-category
+    "chain" is satisfied internally).
+  - **web arm** = `SemanticDB.search` (non-`file://` rows) ∪ `search_and_fetch` for
+    under-served queries → store new chunks → dedup/cap per URL → BM25 rank.
+  - **doc arm** = `SemanticDB.search` filtered to `file://` rows → BM25 rank.
+  - **iterate (dynamic):** after a round, an arm under its `min_results` floor (and with
+    rounds left) gets **refined queries** from a single shared **ASSESS call** (role
+    `retrieve`, schema `RETRIEVAL_ASSESS`, one call covers all arms → returns
+    `sufficient` + per-arm `refined_*`). Assessor off (`retrieval_assess=0`) or
+    `max_iter=1` ⇒ single-shot per arm. The model's `sufficient` verdict is the dynamic
+    stop; `max_iter` + `timeout`/`should_stop` (reuse `TurnCancelled`, D-09) are the hard caps.
+- **Phase C — FINAL COLLECTIVE RANK.** **RRF** across the per-arm ranked id-lists
+  (parameterless, scale-free; reuse `memory._rrf`) **× a global BM25 blend** of each
+  candidate's text vs. the union of all queries (rewards cross-arm agreement *and*
+  lexical strength) → dedup by key → assign citation numbers in fused order → top
+  `retrieval_top_k`. Returns unified `CitedResult`s tagged with `category`.
+- **Invariants.** stdlib core, heavy deps lazy (I4); all model selection behind the
+  `retrieve` role (I3); never raises (every phase degrades); web pacing/cooldown reused
+  from D-19; no new on-disk store (reuses `SemanticDB` + `MemoryIndex`).
+
+### §J.3 — Granular step-by-step build (RE-1 … RE-13)
+
+**Seams (small, low-risk edits first):**
+- **RE-1 — `retrieval/pipeline.py`:** add `category: str = "web"` to `CitedResult`
+  (defaulted → positional callers + tests unaffected). Make `format_snippets` /
+  `format_for_model` / `format_citations` **category-aware**: tag each item `(notes|doc|
+  web)`; render a clickable link only for `http(s)://`/`file://` (notes `memory://` shows
+  `(memory)` text, no link). Keep the substrings existing tests assert (`previews`,
+  `URL`, `[1]`).
+- **RE-2 — `kernel/schemas.py`:** add `RETRIEVAL_PLAN`
+  (`context_understanding`, `needs_retrieval`*, `notes_queries[]`, `doc_queries[]`,
+  `web_queries[]`, `capture_hires`) and `RETRIEVAL_ASSESS` (`sufficient`*,
+  `refined_notes[]`, `refined_doc[]`, `refined_web[]`). `additionalProperties:false`,
+  minimal required sets (the schema discipline in the module docstring).
+- **RE-3 — `kernel/prompts.py`:** add `RETRIEVAL_PLAN` prompt (discern current situation
+  → per-category, *adjacent/complementary* queries; proactive framing when no question)
+  and `RETRIEVAL_ASSESS` prompt (judge sufficiency of gathered evidence; emit refined
+  per-category queries only for gaps).
+- **RE-4 — `config.py`:** add `_ENV_MAP` knobs → `LK_RETRIEVAL_*`: `retrieval_enabled`,
+  `retrieval_enforce`, `retrieval_iters` (default 2), `retrieval_assess` (model assessor
+  on/off), `retrieval_top_k`, `retrieval_min_results`, `retrieval_depth`,
+  `retrieval_categories` (csv: `notes,doc,web`). Round-trip via `lk config`/GUI.
+- **RE-5 — `model.py`:** add `"retrieve"` to `ALL_ROLES` (NOT `BACKGROUND_ROLES`) so
+  presets cover it and it defaults local; `_routing.get("retrieve") or _backend` already
+  resolves it with zero further change.
+
+**Core engine:**
+- **RE-6 — `retrieval/engine.py` (NEW):** `RetrievalEngine`, `GatherResult`, internal
+  `_Candidate`; Phases A/B/C as in §J.2; the three arm runners; `_rrf` reuse + global
+  BM25 blend; heuristic-query + per-arm + whole-engine degrade paths; live-patchable
+  knobs read from env each call (so `/set` works without restart).
+- **RE-7 — `retrieval/__init__.py`:** export `RetrievalEngine`, `GatherResult`.
+
+**Test gate:**
+- **RE-8 — `tests/test_retrieval_engine.py` (NEW, offline, deterministic):** stub model
+  (`call_model` monkeypatched to emit canned PLAN/ASSESS JSON) + stub arms (in-mem
+  `MemoryIndex` with the bag-of-words embed from `test_memory_index.py`; a fake
+  `SemanticDB`; web fetch stubbed). Assert: (a) discern produces per-category queries;
+  (b) arms run independently and a single-arm failure is isolated; (c) the iterative
+  refine path fires when an arm is under `min_results` and `sufficient=false`, and stops
+  on `sufficient=true`/`max_iter`; (d) final RRF orders a cross-arm-agreed candidate
+  first; (e) citations are one consistent 1..N space spanning categories; (f) degrade
+  with no model (heuristic queries) and with no web/embed (arm skipped). Wire into
+  `scripts/check.sh` + `Makefile`.
+
+**Wiring + autonomy-loop closure:**
+- **RE-9 — `kernel/invoke.py` `run_turn`:** add `engine: RetrievalEngine | None`. When
+  present, replace the separate analysis+retrieve+recall blocks with **one**
+  `engine.gather(user_text, short_ctx=ctx_tail, long_ctx=<recall digest>)`; feed
+  `context_understanding`→`[SITUATION]`, the unified `evidence`→snippet/expand/citation
+  path (works unchanged — `evidence` is `list[CitedResult]`). `engine=None` ⇒ today's
+  behavior (back-compat / tests). Honor `capture_hires`.
+- **RE-10 — `kernel/invoke.py` `run_proactive`:** accept `engine` + `memory`; when
+  present, `engine.gather(need="", short_ctx=tail, proactive=True,
+  priority=PRI_PROACTIVE)` → brief over the unified bundle → findings ride notes+web+doc.
+- **RE-11 — live incremental indexing (close N-02→N-06→N-07):** index fresh own-memory so
+  recall/proactive don't go stale mid-session — `run_turn` upserts the completed turn
+  (`memory.upsert(turn_id,"turn",…,embed=False)`); `run_proactive` upserts each finding;
+  `kernel/journal.run_journal` upserts each new entry (thread `memory` through
+  `JournalTrigger`). `embed=False` live (lexical+graph instant); embeddings backfilled by
+  the background pass / `lk reindex`.
+- **RE-12 — construct the engine in BOTH kernels:** `cli.py` (REPL) and
+  `apps/desktop/scripts/ui_bridge.py` build `RetrievalEngine(db=<SemanticDB>,
+  memory=self.memory)` and pass it to `run_turn`/`run_proactive`; wire `memory` into the
+  `JournalTrigger`.
+
+**Gate + docs:**
+- **RE-13 — `make check` green; record `DONE.md` D-26 (engine), update D-24/D-25 stubs;
+  mark N-05 `[x]`, N-03/N-04 advanced, N-06 recall-half `[x]`, N-07 `[~]`/`[x]` per
+  result; update memory ([[lawrence-autonomous-spine-decision]], [[lawrence-work-tracker]]).**
+
+### §J.4 — Out of scope here (tracked, deferred)
+- **Vision demotion** (N-06's other half — distilled-secondary + on-request hi-res) is
+  independent of recall and lands as a follow-up.
+- **Doc ingest UI button** (N-12) and **deep-study artifacts** (N-16) consume this engine
+  later; not in this build.
+- **N-32 (local turn latency)** runs in parallel — the engine adds ≤2 model calls/turn by
+  default (discern + at most one assess), all `retrieve`-role-routable to a faster backend
+  and all `should_stop`/deadline-bounded; the iteration cap is the latency lever.
+
+### §J.5 — Acceptance (litmus)
+- Offline gate green incl. `test_retrieval_engine.py`.
+- A turn's answer is grounded in a **single cited bundle spanning notes+web+doc**, the
+  model citing memory like a source.
+- With the user idle, the proactive loop surfaces a finding **grounded in own memory +
+  web** (not web-only), and that finding + journal + turns are **recallable within the
+  same session** (live indexing) — i.e. *useful with the user unplugged an hour*.
+
+### §J.6 — Desktop contract alignment (`apps/desktop/*.md|mdx`, reviewed 2026-06-18)
+The desktop feature-request docs pin down what "enforced / perplexity-style" must mean at
+the bridge boundary. The engine is built to satisfy them (UI rendering stays N-10/N-11):
+- **"Enforced" = no classifier gate (FR-003 + README L200).** *"Web search is on by
+  default; every turn sends a single-pass web/retrieval request when web is enabled,
+  regardless of the prompt."* So `retrieval_enforce` (default **on**) means **every
+  enabled category runs every turn** — the DISCERN pass supplies the `context_understanding`
+  + queries, but its `needs_retrieval=false` may only suppress *non-enforced* categories;
+  an enforced category (web by default) always runs. (Config can disable a category
+  entirely; that is the only "off".)
+- **Deep-research per-turn (FR `Deep Web Search Turn Flag`; README magnifier).** Bridge
+  sends `config.deepSearch:true` → `gather(deep=True)` raises the per-turn profile
+  (`searchDepth=comprehensive`, `freshPerQuery≈8`, `topK≈18`, `expandSources=true`,
+  `requireCitations=true`, higher `max_iter`) **without mutating global defaults**. Map:
+  `deepSearch → RetrievalEngine deep profile`. Knobs: `LK_RETRIEVAL_DEEP_ITERS`,
+  `LK_RETRIEVAL_DEEP_TOPK`, `LK_RETRIEVAL_DEEP_FRESH`.
+- **Visible progress (FR-003/004).** `gather` emits `live_fn` events per category
+  (`[retrieve] web: N sources`, `deep-search: N sources considered`) so the bridge can
+  stream them as SSE — long retrieval never waits for turn completion.
+- **Typed evidence cards (FR-008).** The unified `CitedResult` bundle maps 1:1 to typed
+  `assets` (`{id:"src-N", kind:category, title, url, snippet:text, usedBy}`) — add an
+  `evidence_assets(results)` helper so the bridge can push `assets` (scrollable Perplexity
+  cards) instead of scraping Markdown links. Engine produces the data now; card rendering
+  is N-10/N-11.
+- **Managed quality loop (FR-009).** The DISCERN→retrieve→**ASSESS**→refine→retry loop
+  with `max_iter`/`toolRounds` caps **is** FR-009's "validate retrieval/tool relevance →
+  refine query → retry within toolRounds" half (the format-repair half already lives in
+  `invoke._fallback_response` + schema fallback). `agent.toolRounds`/`toolCallLimit` from
+  the UI map onto `retrieval_iters`.
+- **Unsupported-state honesty (FR `deepSearch`; G5).** If no web backend can browse, the
+  web arm is skipped and a structured note surfaces (reuse `web.search_stats()`), never a
+  silent empty pass.

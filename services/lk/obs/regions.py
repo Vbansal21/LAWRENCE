@@ -18,9 +18,14 @@ This is pure logic (no I/O) and is unit-tested.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
 from dataclasses import dataclass
+
+# Spawn Windows powershell.exe from a Windows-valid CWD (C:\): a WSL \\wsl$\ CWD
+# makes the Win32 loader fail with the 0xc0000142 "unable to start" dialog.
+_WIN_CWD = "/mnt/c" if os.path.isdir("/mnt/c") else None
 
 
 # ── raw window rectangle (virtual-screen pixel coords) ────────────────────────
@@ -178,7 +183,7 @@ def _powershell_windows() -> tuple[list[WinRect], tuple[int, int, int, int]] | N
     try:
         r = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", _PS_WINDOWS],
-            capture_output=True, text=True, timeout=12,
+            capture_output=True, text=True, timeout=12, cwd=_WIN_CWD,
         )
         if r.returncode != 0 or not r.stdout.strip():
             return None

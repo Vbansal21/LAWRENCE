@@ -17,7 +17,7 @@ test-fast:           ## import-check every module (catches import/wiring errors)
 	@python3 -c "import sys; sys.path.insert(0,'services'); import importlib; \
 	mods=['lk.cli','lk.sensor','lk.server','lk.profile','lk.model','lk.admin','lk.logger', \
 	'lk.ctx.store','lk.ctx.gate','lk.ctx.distill','lk.ctx.extract','lk.ctx.notes','lk.ctx.chats','lk.ctx.significance','lk.obs.vision','lk.obs.audio','lk.obs.spool', \
-	'lk.retrieval.pipeline','lk.retrieval.db','lk.kernel.invoke','lk.kernel.tick','lk.kernel.refine','lk.kernel.elevate','lk.kernel.journal']; \
+	'lk.retrieval.pipeline','lk.retrieval.db','lk.retrieval.vectors','lk.kernel.invoke','lk.kernel.tick','lk.kernel.refine','lk.kernel.elevate','lk.kernel.journal']; \
 	[importlib.import_module(m) for m in mods]; print('import OK ('+str(len(mods))+' modules)')"
 
 test: test-fast      ## full offline regression suite (no model/server needed)
@@ -38,6 +38,9 @@ test: test-fast      ## full offline regression suite (no model/server needed)
 	@python3 services/lk/tests/test_capabilities.py
 	@python3 services/lk/tests/test_proactive_dedup.py
 	@python3 services/lk/tests/test_retrieval_rank.py
+	@python3 services/lk/tests/test_embed.py
+	@python3 services/lk/tests/test_memory_index.py
+	@python3 services/lk/tests/test_retrieval_engine.py
 	@python3 services/lk/tests/test_schedule.py
 	@python3 services/lk/tests/test_converters.py
 	@python3 services/lk/tests/test_recent_findings.py

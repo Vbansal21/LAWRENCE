@@ -33,7 +33,10 @@ from ..model    import (
     PRI_COMPACT, PRI_PROACTIVE, TurnCancelled,
     audio_block, call_model, image_block, note_fallback_parse, text_block,
 )
-from ..retrieval import RetrievalPipeline, format_snippets, format_for_model, format_citations
+from ..retrieval import (
+    RetrievalPipeline, RetrievalEngine, MemoryIndex, format_snippets, format_for_model,
+    format_citations, format_recall,
+)
 from ..ui       import UIConnector
 from .          import prompts, schemas
 
@@ -242,6 +245,7 @@ class TurnConfig:
     timeout:           int         = 300
     skip_analysis:     bool        = False
     no_retrieval:      bool        = False
+    deep_search:       bool        = False   # UI deepSearch flag → wider/deeper retrieval
     allow_images:      bool        = True   # False for text-only / non-vision models
     allow_audio:       bool        = True   # False for models without audio input
     # Advanced sampling — None = use backend default (omitted from payload)
@@ -271,6 +275,8 @@ def run_turn(
     *,
     ctx:        ContextStore,
     retrieval:  RetrievalPipeline,
+    memory:     MemoryIndex | None = None,
+    engine:     RetrievalEngine | None = None,
     cfg:        TurnConfig,
     images:     list[Path],
     audios:     list[Path],
@@ -295,29 +301,70 @@ def run_turn(
     if not cfg.allow_images:
         capture_fn = None   # don't bother capturing hi-res for a non-vision model
 
-    # ── pass 1: analysis ──────────────────────────────────────────────────────
     analysis: dict[str, Any] | None = None
     retrieval_queries: list[str] = []
     cited_results = []
+    recall_block = ""
 
-    if not cfg.skip_analysis:
-        ui.push_status("analysing")
-        body = f"{ctx_tail}\n\nUSER QUESTION: {user_text}"
+    if engine is not None and not cfg.no_retrieval and user_text.strip():
+        # ── unified retrieval (N-05): DISCERN own-context → per-category PARALLEL
+        # chains (notes+doc+web) → final collective cited bundle. This subsumes the
+        # separate analysis + recall + single-shot retrieve path: own memory is now a
+        # cited category in ONE consistent bundle, not a side block. Best-effort.
+        ui.push_status("retrieving")
         try:
-            raw = call_model(
-                _build_messages(prompts.ANALYSIS, body, images, audios),
-                max_tokens=768, temperature=0.1, timeout=cfg.timeout,
-                schema=schemas.ANALYSIS, role="analysis", should_stop=should_stop,
+            g = engine.gather(
+                user_text, short_ctx=ctx_tail, deep=cfg.deep_search,
+                timeout=cfg.timeout, should_stop=should_stop, live_fn=live_fn,
             )
-            parsed = _extract_json(raw.get("text", ""))
-            if parsed and "needs_retrieval" in parsed:
-                analysis = parsed
+            cited_results = g.evidence
+            analysis = {"situation": g.context_understanding, "capture_hires": g.capture_hires}
+            retrieval_queries = [q for qs in g.queries.values() for q in qs]
         except TurnCancelled:
             raise
         except Exception:
-            pass
+            cited_results = []
+    else:
+        # ── legacy / no-engine path: own-memory recall block + single analysis +
+        # single-shot retrieve (kept for back-compat, tests, and engine-disabled). ──
+        if memory is not None and user_text.strip():
+            try:
+                recalled = memory.recall(user_text, k=6)
+                recall_block = format_recall(recalled)
+                if live_fn and recalled:
+                    kinds = ", ".join(sorted({r.source_kind for r in recalled}))
+                    live_fn(f"[recall] {len(recalled)} memory items ({kinds})")
+            except Exception:
+                recall_block = ""
 
-    # Model requested a hi-res capture for the response pass
+        if not cfg.skip_analysis:
+            ui.push_status("analysing")
+            body = f"{ctx_tail}\n\nUSER QUESTION: {user_text}"
+            try:
+                raw = call_model(
+                    _build_messages(prompts.ANALYSIS, body, images, audios),
+                    max_tokens=768, temperature=0.1, timeout=cfg.timeout,
+                    schema=schemas.ANALYSIS, role="analysis", should_stop=should_stop,
+                )
+                parsed = _extract_json(raw.get("text", ""))
+                if parsed and "needs_retrieval" in parsed:
+                    analysis = parsed
+            except TurnCancelled:
+                raise
+            except Exception:
+                pass
+
+        if analysis and analysis.get("needs_retrieval") and analysis.get("queries"):
+            retrieval_queries = [str(q) for q in analysis["queries"] if q][:4]
+
+        if not cfg.no_retrieval and retrieval_queries:
+            ui.push_status("retrieving", f"{len(retrieval_queries)} queries")
+            cited_results = retrieval.retrieve(retrieval_queries)
+            if live_fn and cited_results:
+                qs = ", ".join(f'"{q}"' for q in retrieval_queries[:2])
+                live_fn(f"[retrieval] {len(cited_results)} sources for {qs}")
+
+    # Model (or engine) requested a hi-res capture for the response pass
     if analysis and analysis.get("capture_hires") and capture_fn:
         hi = capture_fn()
         if hi and hi.exists() and hi not in images:
@@ -325,21 +372,12 @@ def run_turn(
             if live_fn:
                 live_fn("[vision] hi-res captured on model request")
 
-    if analysis and analysis.get("needs_retrieval") and analysis.get("queries"):
-        retrieval_queries = [str(q) for q in analysis["queries"] if q][:4]
-
-    # ── retrieval — snippets first ────────────────────────────────────────────
-    if not cfg.no_retrieval and retrieval_queries:
-        ui.push_status("retrieving", f"{len(retrieval_queries)} queries")
-        cited_results = retrieval.retrieve(retrieval_queries)
-        if live_fn and cited_results:
-            qs = ", ".join(f'"{q}"' for q in retrieval_queries[:2])
-            live_fn(f"[retrieval] {len(cited_results)} sources for {qs}")
-
     # ── pass 2: response (snippets) ───────────────────────────────────────────
     ui.push_status("responding")
     snippet_block = format_snippets(cited_results) if cited_results else ""
     parts = [ctx_tail]
+    if recall_block:
+        parts.append(recall_block)
     if snippet_block:
         parts.append(snippet_block)
     if analysis and analysis.get("situation"):
@@ -438,6 +476,16 @@ def run_turn(
     compact, detailed = D.turn(ts_now, user_text, answer, note_compact)
     ctx.append(ts=ts_now, kind="turn", compact=compact, detailed=detailed)
 
+    # Live incremental indexing (closes the N-02→N-06→N-07 loop): the just-finished
+    # turn becomes recallable immediately — lexical/graph now; the embedding is filled
+    # by the background backfill / `lk reindex`. Best-effort, never blocks the turn.
+    if memory is not None:
+        try:
+            memory.upsert(turn_id, "turn", f"{user_text}\n\n{answer}"[:2000],
+                          ts=time.time(), title="chat turn", embed=False)
+        except Exception:
+            pass
+
     write_turn({
         "ts":          ts_now,
         "turn_id":     turn_id,
@@ -487,6 +535,9 @@ def run_proactive(
     retrieval: RetrievalPipeline,
     live_fn:   Callable[[str], None]  | None = None,
     present_fn: Callable[[dict], None] | None = None,
+    *,
+    engine:    RetrievalEngine | None = None,
+    memory:    MemoryIndex | None = None,
 ) -> None:
     """
     Called from a background thread after a significant sensor event — this is the
@@ -508,27 +559,39 @@ def run_proactive(
     tail = ctx.tail_for_model()
     if tail == "(no context yet)":
         return
-    try:
-        # PRI_PROACTIVE is droppable: if the local inference slot is busy the
-        # call returns empty text ("skipped") and we simply bail out below.
-        raw = call_model(
-            _build_messages(prompts.PROACTIVE, tail, [], []),
-            max_tokens=512, temperature=0.1,   # headroom for the thinking block
-            schema=schemas.PROACTIVE, priority=PRI_PROACTIVE, role="proactive",
-        )
-        parsed = _extract_json(raw.get("text", ""))
-    except Exception:
-        return
-    if not parsed or not parsed.get("needs_retrieval"):
-        return
-    queries = [str(q) for q in parsed.get("queries", []) if q][:3]
-    if not queries:
-        return
 
-    results = retrieval.retrieve(queries)
+    if engine is not None:
+        # Unified engine (N-05/N-07): DISCERN the live stream → per-category parallel
+        # retrieval (own memory + doc + web) → a cited bundle. Proactive findings now
+        # ride the SAME notes+doc+web evidence a user turn would — not web alone. The
+        # engine's plan/assess calls are PRI_PROACTIVE (droppable when the slot is busy).
+        try:
+            g = engine.gather("", short_ctx=tail, proactive=True,
+                              priority=PRI_PROACTIVE, live_fn=live_fn)
+        except Exception:
+            return
+        results = g.evidence
+    else:
+        try:
+            # PRI_PROACTIVE is droppable: if the local inference slot is busy the
+            # call returns empty text ("skipped") and we simply bail out below.
+            raw = call_model(
+                _build_messages(prompts.PROACTIVE, tail, [], []),
+                max_tokens=512, temperature=0.1,   # headroom for the thinking block
+                schema=schemas.PROACTIVE, priority=PRI_PROACTIVE, role="proactive",
+            )
+            parsed = _extract_json(raw.get("text", ""))
+        except Exception:
+            return
+        if not parsed or not parsed.get("needs_retrieval"):
+            return
+        queries = [str(q) for q in parsed.get("queries", []) if q][:3]
+        if not queries:
+            return
+        results = retrieval.retrieve(queries)
+
     if live_fn and results:
-        qs = ", ".join(f'"{q}"' for q in queries[:2])
-        live_fn(f"[proactive] {len(results)} sources warmed ({qs})")
+        live_fn(f"[proactive] {len(results)} sources warmed")
 
     # ── surface a finding unprompted (the "present nicely" step) ─────────────────
     if present_fn is None or not results:
@@ -577,6 +640,14 @@ def run_proactive(
         compact=f"[FOUND] {headline}",
         detailed=f"[PROACTIVE FINDING] {headline}\n{insight}",
     )
+    # Live-index the finding so it is recallable in the same session (and so the next
+    # proactive pass's own-memory arm sees what was already surfaced) — best-effort.
+    if memory is not None:
+        try:
+            memory.upsert(f"finding-{ts}", "finding", f"{headline}\n{insight}",
+                          title=headline[:80], embed=False)
+        except Exception:
+            pass
 
 
 # ── perception: extraction (called from the observer/spool path) ───────────────
@@ -657,6 +728,7 @@ def run_compaction(events_text: str, layer: Any) -> str:
 # ── journal (on demand / session end) ────────────────────────────────────────
 
 def write_journal_entry(ctx: ContextStore, *, retrieval: Any = None,
+                        memory: Any = None,
                         live_fn: Callable[[str], None] | None = None) -> str:
     """
     Write a journal entry to memory/journal/YYYY-MM-DD.mdx. Called explicitly
@@ -668,4 +740,4 @@ def write_journal_entry(ctx: ContextStore, *, retrieval: Any = None,
     Returns the new entry's title, or "" if there was nothing to journal.
     """
     from .journal import run_journal
-    return run_journal(ctx, retrieval=retrieval, live_fn=live_fn)
+    return run_journal(ctx, retrieval=retrieval, memory=memory, live_fn=live_fn)

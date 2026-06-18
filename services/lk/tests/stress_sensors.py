@@ -85,7 +85,8 @@ import lk.cli as cli
 runs = {"n": 0}
 inflight = threading.Event()    # set while the stubbed run_proactive is 'busy'
 release = threading.Event()
-def stub_run_proactive(ctx, retrieval, live_fn=None, present_fn=None):
+def stub_run_proactive(ctx, retrieval, live_fn=None, present_fn=None, **kwargs):
+    # **kwargs absorbs engine= / memory= (N-05 unified retrieval wiring)
     runs["n"] += 1
     inflight.set()
     release.wait(2.0)           # stay 'in flight' so we can probe single-flight

@@ -68,7 +68,7 @@ from .obs        import VisionObserver, AudioObserver, capture_now, record_now, 
 from .tasks      import TaskStore
 from .obs.vision import POLL_INTERVAL, MIN_WRITE_SECS, REGION_EMA, REGION_CHANGE_MIN
 from .profile    import ModelProfile
-from .retrieval  import SemanticDB, RetrievalPipeline
+from .retrieval  import SemanticDB, RetrievalPipeline, RetrievalEngine, MemoryIndex, startup_backfill
 from .schedule   import Schedule, ScheduleError
 from .ui         import UIConnector
 
@@ -1213,6 +1213,7 @@ def _notify(title: str, body: str) -> None:
             subprocess.Popen(
                 ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                cwd=("/mnt/c" if os.path.isdir("/mnt/c") else None),  # avoid WSL 0xc0000142 dialog
             )
     except Exception:
         pass
@@ -1227,6 +1228,8 @@ def _make_proactive_trigger(
     state: _LiveState,
     live_fn:    "Callable[[str], None] | None"  = None,
     present_fn: "Callable[[dict], None] | None" = None,
+    engine:     "RetrievalEngine | None"        = None,
+    memory:     "MemoryIndex | None"            = None,
 ) -> Callable[[str, str], None]:
     """
     Returns an on_event callback for sensor observers — the autonomous trigger.
@@ -1249,7 +1252,8 @@ def _make_proactive_trigger(
 
         def _run() -> None:
             try:
-                run_proactive(ctx, retrieval, live_fn=live_fn, present_fn=pf)
+                run_proactive(ctx, retrieval, live_fn=live_fn, present_fn=pf,
+                              engine=engine, memory=memory)
             finally:
                 _lock.release()
         threading.Thread(target=_run, daemon=True, name="proactive").start()
@@ -1270,6 +1274,8 @@ def _make_audio_query_handler(
     capture_fn: "Callable[[], Path | None] | None" = None,
     live_fn:    "Callable[[str], None] | None"     = None,
     tasks_fn:   "Callable[[dict], None] | None"    = None,
+    memory:     "MemoryIndex | None"               = None,
+    engine:     "RetrievalEngine | None"           = None,
 ) -> Callable[[str], None]:
     _lock = threading.Lock()
 
@@ -1288,7 +1294,7 @@ def _make_audio_query_handler(
             try:
                 answer, controls = run_turn(
                     transcript,
-                    ctx=ctx, retrieval=retrieval,
+                    ctx=ctx, retrieval=retrieval, memory=memory, engine=engine,
                     cfg=cfg, images=images, audios=[], ui=ui,
                     capture_fn=capture_fn, live_fn=live_fn,
                     tasks_fn=tasks_fn,
@@ -1405,10 +1411,25 @@ def main() -> int:
         return 1
 
     db        = SemanticDB()
-    notes     = NoteStore(index_fn=lambda nid, title, body: db.upsert(f"note://{nid}", title, [body]))
+    memory    = MemoryIndex()              # N-02 hybrid recall over own memory
+    def _index_note(nid: str, title: str, body: str) -> None:
+        db.upsert(f"note://{nid}", title, [body])
+        try:
+            memory.upsert(nid, "note", body, title=title)   # also into hybrid recall
+        except Exception:
+            pass
+    notes     = NoteStore(index_fn=_index_note)
+    memory.set_notes(notes)               # graph arm + link/delete signals
     extractor = Extractor(run_extract, note_store=notes)
     ctx       = ContextStore(compact_fn=run_compaction, live_fn=_ctx_live, extractor=extractor)
     pipeline  = RetrievalPipeline(db)
+    engine    = RetrievalEngine(db=db, memory=memory)   # N-05 unified perplexity retrieval
+    try:
+        _counts = startup_backfill(memory)   # fast lexical/graph now; embeds in background
+        if _counts.get("total"):
+            print(f"  [memory] recall index: {_counts['total']} nodes (vectors embedding in background)")
+    except Exception:
+        pass
     ui        = UIConnector()
     tasks     = TaskStore()   # self-curated TODO + remember (shared with desktop UI)
 
@@ -1472,6 +1493,7 @@ def main() -> int:
 
     on_proactive = _make_proactive_trigger(
         ctx, pipeline, cfg, state, live_fn=live_q.put, present_fn=_present_finding,
+        engine=engine, memory=memory,
     )
 
     # WS-R/R2 elevation gate (shared by the slow loop + findings) and the R1 hook
@@ -1496,7 +1518,7 @@ def main() -> int:
     # trailing window + live context and lightly trims the window in place, in a
     # background thread so the heartbeat never blocks.
     journal_trigger = (
-        JournalTrigger(ctx, retrieval=pipeline, live_fn=live_q.put)
+        JournalTrigger(ctx, retrieval=pipeline, memory=memory, live_fn=live_q.put)
         if journal_enabled() else None
     )
 
@@ -1583,7 +1605,7 @@ def main() -> int:
                 _make_audio_query_handler(
                     ctx, pipeline, cfg, ui, response_q, control_q,
                     vision_ref, capture_fn=capture_fn, live_fn=live_q.put,
-                    tasks_fn=_tasks_fn,
+                    tasks_fn=_tasks_fn, memory=memory, engine=engine,
                 ) if args.audio_query else None
             )
             audio = AudioObserver(
@@ -1603,18 +1625,15 @@ def main() -> int:
             return True
 
         def _apply_controls(ctrl: dict) -> None:
-            v, a = ctrl.get("vision", ""), ctrl.get("audio", "")
+            # Sensors are decoupled from the model: always-on services the USER
+            # controls; the model only PROBES them. The only honored control is a
+            # one-off hi-res screen capture ("hi"). Lifecycle verbs ("on"/"off")
+            # are ignored — models over-fill a default "off" every turn, which
+            # would kill ambient perception. Start/stop is `/vision on|off`.
+            v = ctrl.get("vision", "")
             if v == "hi":
-                live_q.put("[vision] model requested hi-res — captured" if capture_fn()
-                           else "[vision] hi-res requested but observer is off")
-            elif v == "on" and _start_vision():
-                live_q.put("[vision] observer started by model")
-            elif v == "off" and _stop_vision():
-                live_q.put("[vision] observer stopped by model")
-            if a == "on" and _start_audio():
-                live_q.put("[audio] observer started by model")
-            elif a == "off" and _stop_audio():
-                live_q.put("[audio] observer stopped by model")
+                live_q.put("[vision] model probed hi-res — captured" if capture_fn()
+                           else "[vision] hi-res probe requested but capture failed")
 
         if not args.no_vision and _start_vision():
             print("  Vision observer started.")
@@ -1823,7 +1842,7 @@ def main() -> int:
                     sys.stdout.flush()
                     answer, controls = run_turn(
                         user_text,
-                        ctx=ctx, retrieval=pipeline,
+                        ctx=ctx, retrieval=pipeline, memory=memory, engine=engine,
                         cfg=cfg, images=images, audios=audios, ui=ui,
                         capture_fn=capture_fn, live_fn=live_q.put,
                         tasks_fn=_tasks_fn,

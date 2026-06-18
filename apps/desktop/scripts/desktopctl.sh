@@ -156,7 +156,11 @@ kill_windows_hotkey() {
   command -v powershell.exe >/dev/null 2>&1 || return 0
   # Codex: stop by script path or the title the helper sets, so cleanup still
   # works when PowerShell hides or rewrites one of those process surfaces.
+  # Run from a Windows-valid CWD (C:\) — a WSL \\wsl$\ CWD makes the Win32 loader
+  # fail powershell.exe init with the 0xc0000142 "unable to start" dialog.
+  ( cd /mnt/c 2>/dev/null || true
   powershell.exe -NoProfile -Command "\$ids = @(); Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | Where-Object { \$_.ProcessId -ne \$PID -and \$_.CommandLine -match '(-File|/File)\s+.*(GlobalHotkey|Register-Hotkey)\.ps1' } | ForEach-Object { \$ids += [int]\$_.ProcessId }; Get-Process -Name powershell -ErrorAction SilentlyContinue | Where-Object { \$_.Id -ne \$PID -and \$_.MainWindowTitle -eq 'LAWRENCE-GlobalHotkey' } | ForEach-Object { \$ids += [int]\$_.Id }; \$ids | Sort-Object -Unique | ForEach-Object { Stop-Process -Id \$_ -Force -ErrorAction SilentlyContinue }" >/dev/null 2>&1 || true
+  ) 2>/dev/null || true
 }
 
 ensure_windows_hotkey() {
@@ -164,9 +168,13 @@ ensure_windows_hotkey() {
   local ps_unix="$ROOT/host/windows/GlobalHotkey.ps1" ps_win
   ps_win="$(wslpath -w "$ps_unix" 2>/dev/null)" || return 0
   local port="${LAWRENCE_CONTROL_PORT:-8767}"
+  # Run from a Windows-valid CWD (C:\) so the nested Start-Process powershell.exe
+  # doesn't fail loader init with the 0xc0000142 dialog (WSL \\wsl$\ CWD bug).
+  ( cd /mnt/c 2>/dev/null || true
   powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden \
     -Command "Start-Process -WindowStyle Hidden -FilePath powershell.exe -ArgumentList '-NoProfile','-ExecutionPolicy','Bypass','-WindowStyle','Hidden','-File','$ps_win','-Port','$port'" \
     >/dev/null 2>&1 || true
+  ) 2>/dev/null || true
   echo "hotkey: Windows-side listener armed (Ctrl+Shift+L → :$port)"
 }
 

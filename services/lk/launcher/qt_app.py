@@ -12,6 +12,7 @@ incrementally; tabs not yet built show a small placeholder.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -57,7 +58,7 @@ DETAIL_ROWS: tuple[tuple[str, str], ...] = (
 )
 
 # Tier-1 front-view actions, left to right.
-FRONT_ACTION_IDS: tuple[str, ...] = ("start", "ui", "stop", "restart")
+FRONT_ACTION_IDS: tuple[str, ...] = ("start", "ui", "stop", "restart", "quit")
 
 
 def _default_snapshot() -> dict:
@@ -294,6 +295,7 @@ class LauncherWindow(QtWidgets.QMainWindow):
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)   # kill the style's light tab-bar base line
         self.tabs.setMovable(False)
         self.setCentralWidget(self.tabs)
 
@@ -352,10 +354,13 @@ class LauncherWindow(QtWidgets.QMainWindow):
     def _build_consoles(self, ctx) -> QtWidgets.QWidget:
         from .. import ctl, config
         from .console import FRONT, REPO_ROOT
+        runtime = REPO_ROOT / ".runtime"
         return qt_tabs.ConsolesTab(
             ctx, front_path=str(FRONT),
             server_log=str(ctl.SERVER_LOG),
-            bridge_log=str(REPO_ROOT / ".runtime" / "desktop" / "bridge.log"),
+            bridge_log=str(runtime / "desktop" / "bridge.log"),
+            popup_log=str(runtime / "desktop" / "app.log"),
+            embed_log=str(runtime / "lk-embed-server.log"),
             config_path=str(config.CONFIG_PATH),
         )
 
@@ -366,15 +371,43 @@ class LauncherWindow(QtWidgets.QMainWindow):
 
     # ── action execution (shared gate → detached front-door) ────────────────────
     def _run_action(self, action_id: str) -> None:
+        if action_id == "quit":
+            QtWidgets.QApplication.quit()
+            return
+        if action_id == "quit_all":
+            self._quit_all()
+            return
         a = actions.get(action_id)
         if a is None or not a.argv:
-            return  # interactive handlers live in tabs/terminal, not the front view
-        ok, _kind, reason = actions.claim(list(a.argv))
-        if not ok:
-            self.front.flash(reason or "blocked")
+            return  # other handler-only actions live in tabs/terminal, not the front view
+        # Route through the console seam so the command's output is always visible
+        # (front-view Start/Stop used to run with output sent to /dev/null).
+        self._run_in_console(a.argv, "lk " + " ".join(a.argv))
+
+    def _quit_all(self) -> None:
+        """N-28 Quit-all: terminate every LAWRENCE process, then close this window."""
+        resp = QtWidgets.QMessageBox.question(
+            self, "Quit all — full stop",
+            "Terminate EVERY LAWRENCE process — bridge, model server, popup, "
+            "sensors and REPL — and close this launcher?\n\n"
+            "Services will stop (this is the deliberate full stop).",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if resp != QtWidgets.QMessageBox.StandardButton.Yes:
+            self.front.flash("quit all — cancelled")
             return
-        self.front.flash("running: lk " + " ".join(a.argv))
-        self._spawn_front(a.argv)
+        from .. import ctl
+        self.front.flash("quit all — stopping every LAWRENCE process…")
+        try:
+            survivors = ctl.quit_all()
+        except Exception as exc:  # pragma: no cover - surfaced to the user
+            QtWidgets.QMessageBox.critical(self, "Quit all failed", str(exc))
+            return
+        if survivors:
+            QtWidgets.QMessageBox.warning(
+                self, "Quit all — survivors",
+                "Some processes resisted termination:\n\n" + ctl.format_processes(survivors))
+        QtWidgets.QApplication.quit()
 
     def _spawn_front(self, argv: tuple[str, ...]) -> None:
         """Run an `lk` front-door command detached, so the event loop never blocks."""
@@ -423,6 +456,25 @@ class LauncherWindow(QtWidgets.QMainWindow):
         super().closeEvent(evt)
 
 
+def _select_qt_platform() -> None:
+    """Pick a Qt platform plugin that actually shows a window here.
+
+    Under WSLg both ``WAYLAND_DISPLAY`` and ``DISPLAY`` are set, so Qt auto-selects
+    the ``wayland`` QPA plugin — but PySide6 ships no working wayland platform
+    plugin (only the -egl/-generic shells), so the window silently never appears
+    (``Could not find the Qt platform plugin "wayland"``). ``xcb`` works via WSLg's
+    Xwayland. So whenever an X display exists we prefer ``xcb``; only fall back to
+    wayland when there is no X server at all. An explicit ``QT_QPA_PLATFORM`` (incl.
+    the ``offscreen`` used by headless tests) is always honoured.
+    """
+    if os.environ.get("QT_QPA_PLATFORM"):
+        return
+    if os.environ.get("DISPLAY"):
+        os.environ["QT_QPA_PLATFORM"] = "xcb"
+    elif os.environ.get("WAYLAND_DISPLAY"):
+        os.environ["QT_QPA_PLATFORM"] = "wayland"
+
+
 def _ensure_app() -> QtWidgets.QApplication:
     """Return the running QApplication, creating + theming one if needed.
 
@@ -431,6 +483,7 @@ def _ensure_app() -> QtWidgets.QApplication:
     """
     app = QtWidgets.QApplication.instance()
     if app is None:
+        _select_qt_platform()         # before QApplication reads QT_QPA_PLATFORM
         QtWidgets.QApplication.setHighDpiScaleFactorRoundingPolicy(
             QtCore.Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
         )

@@ -36,7 +36,17 @@ SECRETS_PATH = SECRETS_DIR / "secrets.env"
 # `compact` and are unused unless a memory.layers config opts in.
 BACKGROUND_ROLES = ("extract", "proactive", "refine", "compact",
                     "compact-l1", "compact-l2", "compact-l3", "journal", "study")
-ALL_ROLES        = ("query", "analysis", "response") + BACKGROUND_ROLES
+# `embed` is the vector-arm role (N-01) but is DELIBERATELY NOT a background role:
+# LAWRENCE is local-first, and embeddings vectorise the user's own memory, so the
+# default keeps them on the kernel-managed LOCAL embedding server (no presets ship
+# personal data to a cloud API). It stays explicitly routable for TESTING via
+# `{"routing": {"embed": "gemini"}}` in lk.json — see model.embed().
+# `retrieve` is the unified retrieval engine's planning/assess/refine role (N-05).
+# Like `analysis`/`response` it is a FOREGROUND turn role (NOT a background role): it
+# reasons over the user's own context to plan retrieval, so local-first keeps it on the
+# local backend by default. Presets still route it (gemini/claude → cloud); under the
+# `local`/`hybrid` presets it falls back to the local backend (`_routing.get or _backend`).
+ALL_ROLES        = ("query", "analysis", "response", "retrieve") + BACKGROUND_ROLES
 
 # One-pick setups. Each writes the default backend + per-role routing in one go,
 # so a user (or the launcher) never has to reason about individual roles. Shared
@@ -103,10 +113,32 @@ _ENV_MAP = {
     "journal_max_interval": "LK_JOURNAL_MAX_INTERVAL",    # trigger: time floor (≥1 per N s)
     "journal_sig_tier":     "LK_JOURNAL_SIG_TIER",        # trigger: C2 tier that forces an entry
     "thinking":      "LK_THINKING",
+    # retrieval vector arm (N-01), local-first. embed_model_path = the local
+    # embedding GGUF to serve (else auto-discovered in models/local/embed/);
+    # embed_pooling = its pooling type. embed_model = the model NAME for the
+    # testing-only API path; embed_url = an external embedding server override.
+    "embed_model_path": "LK_EMBED_MODEL_PATH",
+    "embed_pooling":    "LK_EMBED_POOLING",
+    "embed_model":      "LK_EMBED_MODEL",
+    "embed_url":        "LK_EMBED_URL",
     "searxng_url":   "LK_SEARXNG_URL",
     "ui_port":       "LK_UI_PORT",
     "events_port":   "LK_UI_EVENTS_PORT",
     "proactive_interval": "LK_PROACTIVE_INTERVAL",
+    "ui_variant":    "LK_UI_VARIANT",   # WS-U N-09: which front-end loads (default classic)
+    # unified retrieval engine (N-05) — perplexity-style: context-discern → per-category
+    # parallel chains → iterative → final collective rank. All knobs live-patchable.
+    "retrieval_enabled":     "LK_RETRIEVAL",             # master on/off (default on)
+    "retrieval_enforce":     "LK_RETRIEVAL_ENFORCE",     # enabled categories run every turn (no classifier gate; FR-003)
+    "retrieval_categories":  "LK_RETRIEVAL_CATEGORIES",  # csv subset of: notes,doc,web
+    "retrieval_iters":       "LK_RETRIEVAL_ITERS",       # max iterative rounds per arm (default 2)
+    "retrieval_assess":      "LK_RETRIEVAL_ASSESS",      # model sufficiency/refine pass on/off
+    "retrieval_top_k":       "LK_RETRIEVAL_TOP_K",       # final fused bundle size
+    "retrieval_min_results": "LK_RETRIEVAL_MIN_RESULTS", # per-arm sufficiency floor
+    "retrieval_depth":       "LK_RETRIEVAL_DEPTH",       # candidates pulled per arm/query
+    "retrieval_deep_iters":  "LK_RETRIEVAL_DEEP_ITERS",  # deepSearch profile (FR deep-web flag)
+    "retrieval_deep_topk":   "LK_RETRIEVAL_DEEP_TOPK",
+    "retrieval_deep_fresh":  "LK_RETRIEVAL_DEEP_FRESH",
 }
 
 

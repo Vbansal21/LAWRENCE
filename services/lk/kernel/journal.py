@@ -220,6 +220,7 @@ def run_journal(
     ctx: Any,
     *,
     retrieval: Any = None,
+    memory: Any = None,
     when: datetime | None = None,
     live_fn: Callable[[str], None] | None = None,
 ) -> str:
@@ -264,6 +265,15 @@ def run_journal(
         admin.save_journal(j, when=when)
     if live_fn:
         live_fn(f"[journal] {new_entry.id}: {title}")
+
+    # Live-index the new entry so today's journal is recallable in the same session
+    # (the durable episodic memory feeds the notes arm immediately) — best-effort.
+    if memory is not None:
+        try:
+            memory.upsert(f"journal-{date}-{new_entry.id}", "journal",
+                          f"{title}\n{body}", title=title, embed=False)
+        except Exception:
+            pass
 
     # ── light trimming-revision of the trailing window (best-effort) ──
     if window and _revise_enabled():
@@ -333,12 +343,14 @@ class JournalTrigger:
         ctx: Any,
         *,
         retrieval: Any = None,
+        memory: Any = None,
         live_fn: Callable[[str], None] | None = None,
         run_fn: Callable[..., str] = run_journal,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         self._ctx       = ctx
         self._retrieval = retrieval
+        self._memory    = memory
         self._live_fn   = live_fn
         self._run_fn    = run_fn
         self._clock     = clock
@@ -373,7 +385,8 @@ class JournalTrigger:
 
         def _run() -> None:
             try:
-                self._run_fn(self._ctx, retrieval=self._retrieval, live_fn=self._live_fn)
+                self._run_fn(self._ctx, retrieval=self._retrieval,
+                             memory=self._memory, live_fn=self._live_fn)
             except Exception:
                 pass
             finally:

@@ -878,3 +878,140 @@ def _strip_thinking(text: str) -> str:
     # Standard <think>…</think> (other model formats)
     text = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.DOTALL)
     return text.strip()
+
+
+# ── embeddings (vector arm of retrieval — invariant I3 lives here too) ──────────
+#
+# LAWRENCE is LOCAL-FIRST: embeddings vectorise the user's own journal/notes/
+# screen-extracts, so by default they run on a kernel-managed local embedding
+# server (see server.ensure_embeddings) and that personal data never leaves the
+# machine. The OpenAI-compatible API path below is an OPT-IN TESTING convenience
+# (route the `embed` role to a provider) for when no local embedding GGUF is
+# installed yet — not the default. Optimise the local path; treat the API as a
+# stopgap.
+
+# Per-provider default embedding model for the TESTING-ONLY API path. Local
+# servers serve whatever GGUF was loaded (the name is ignored). Anthropic has NO
+# embeddings API (they point at Voyage), so embed() routes around it to local.
+_EMBED_DEFAULT_MODELS = {
+    "openai":     "text-embedding-3-small",
+    "gemini":     "gemini-embedding-001",   # text-embedding-004 is 404 on v1beta openai-compat
+    "openrouter": "openai/text-embedding-3-small",
+}
+# Batch size for one /embeddings request (providers cap the input array + tokens).
+_EMBED_BATCH = max(1, int(os.environ.get("LK_EMBED_BATCH", "64")))
+
+
+def _embed_model_for(b: Backend) -> str:
+    """The embedding model name to send for backend ``b`` (LK_EMBED_MODEL wins)."""
+    env = os.environ.get("LK_EMBED_MODEL", "").strip()
+    if env:
+        return env
+    return _EMBED_DEFAULT_MODELS.get(b.provider, "")
+
+
+def _embed_endpoint(b: Backend) -> str:
+    """OpenAI-compatible /embeddings URL for backend ``b``.
+
+    API backends hit their own /embeddings. The LOCAL (default) path uses the
+    kernel-managed dedicated embedding server — started on demand from a local
+    embedding GGUF (server.ensure_embeddings). LK_EMBED_URL overrides with an
+    external embedding server. Raises if no local embedding model is available so
+    callers degrade to the lexical/graph arms rather than silently using a remote."""
+    if b.kind == "api" and b.base_url:
+        return b.base_url.rstrip("/") + "/embeddings"
+    base = os.environ.get("LK_EMBED_URL", "").strip() or _server.ensure_embeddings()
+    if not base:
+        raise RuntimeError(
+            "no local embedding model available — install an embedding GGUF under "
+            "models/local/embed/ (or set config embed_model_path). For TESTING ONLY "
+            "you may route embeddings to an API, e.g. add "
+            '{"routing": {"embed": "gemini"}} to .runtime/lk.json'
+        )
+    return base.rstrip("/") + "/v1/embeddings"
+
+
+def _fetch_embeddings(url: str, payload: dict[str, Any], timeout: float | None) -> dict[str, Any]:
+    """POST one /embeddings request and return the parsed JSON. Errors are
+    wrapped as RuntimeError (same shape as _post) so embed()'s routing/fallback
+    logic can react to them uniformly. (Factored out so tests can stub it.)"""
+    req = urllib.request.Request(
+        url, data=json.dumps(payload).encode(), headers=_headers(), method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body = e.read().decode(errors="replace")[:400]
+        raise RuntimeError(f"{_current_backend().kind} backend HTTP {e.code}: {body}") from None
+    except (TimeoutError, urllib.error.URLError) as e:
+        reason = getattr(e, "reason", e)
+        raise RuntimeError(f"{_current_backend().kind} embeddings error: {reason}") from None
+
+
+def embed(texts: list[str], *, role: str = "embed", timeout: int = 120) -> list[list[float]]:
+    """Embed ``texts`` into dense vectors via the role seam (invariant I3).
+
+    Returns a list of float vectors aligned 1:1 with ``texts`` (``[]`` for empty
+    input). LOCAL-FIRST: by default ``embed`` runs on the kernel-managed local
+    embedding server so personal memory never leaves the machine. ``role`` selects
+    the backend through the routing table exactly like call_model, so a user can
+    OPT IN to a fast embeddings API for testing; a routed-API failure then falls
+    back to local when it is healthy.
+
+    Raises RuntimeError when no backend can embed (no local embedding model and no
+    API route): callers treat that as "vector arm unavailable" and degrade to the
+    lexical/graph arms rather than failing the turn.
+    """
+    items = [t if isinstance(t, str) else str(t) for t in texts]
+    if not items:
+        return []
+
+    def _attempt() -> list[list[float]]:
+        b = _current_backend()
+        if b.kind == "anthropic":
+            raise RuntimeError(
+                "anthropic backend has no embeddings API — route the 'embed' role "
+                "to a local server or an OpenAI-compatible provider (openai/gemini)"
+            )
+        model = _embed_model_for(b)
+        if not model and b.kind == "api":
+            raise RuntimeError(
+                "API embed backend has no embedding model set (LK_EMBED_MODEL / "
+                "config embed_model)"
+            )
+        url = _embed_endpoint(b)
+        out: list[list[float]] = []
+        for start in range(0, len(items), _EMBED_BATCH):
+            batch = items[start:start + _EMBED_BATCH]
+            payload: dict[str, Any] = {"input": batch}
+            if model:
+                payload["model"] = model
+            data = _fetch_embeddings(url, payload, timeout)
+            rows = data.get("data") or []
+            vecs: list[list[float]] = [[] for _ in batch]
+            for i, row in enumerate(rows):
+                idx = row.get("index", i) if isinstance(row, dict) else i
+                if 0 <= idx < len(vecs):
+                    vecs[idx] = [float(x) for x in (row.get("embedding") or [])]
+            out.extend(vecs)
+        return out
+
+    primary = _routing.get(role) or _backend
+    try:
+        _active.backend = primary
+        return _attempt()
+    except RuntimeError as exc:
+        # Resilience: a routed API/anthropic embed failed → fall back to local.
+        if primary.kind == "local" or not _server.health_check(timeout=1.5):
+            raise
+        _warn_once(f"embed-fallback-{role}",
+                   f"[model] role={role} {primary.kind} embeddings failed ({exc}); "
+                   "falling back to local")
+        _active.backend = Backend(kind="local", provider="local")
+        try:
+            return _attempt()
+        finally:
+            _active.backend = None
+    finally:
+        _active.backend = None

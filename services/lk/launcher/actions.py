@@ -72,6 +72,12 @@ REGISTRY: tuple[Action, ...] = (
     Action("processes", "Processes     — list launcher-managed PIDs", "Processes",
            argv=("processes",), tier=2, group="lifecycle", parent="restart",
            hint="list managed PIDs"),
+    Action("quit", "Quit          — close this launcher (services keep running)", "Quit",
+           handler="quit", tier=1, group="lifecycle",
+           hint="close the launcher window; bridge/model/popup keep running"),
+    Action("quit_all", "Quit all      — full stop: every LAWRENCE process", "Quit all",
+           handler="quit_all", tier=2, group="lifecycle", parent="quit", confirm=True,
+           hint="terminate every LAWRENCE process incl. this launcher, then verify"),
 
     # ── config (advanced tab) ───────────────────────────────────────────────
     Action("wizard", "Setup wizard  — first-run detect & write config", "Wizard",

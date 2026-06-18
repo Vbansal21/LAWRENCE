@@ -18,7 +18,7 @@ step() {
 
 echo "== LAWRENCE offline check =="
 step "syntax (compileall)"  python3 -m compileall -q services/lk apps/desktop/scripts/ui_bridge.py
-step "node syntax (app.js)" bash -c 'command -v node >/dev/null && node --check apps/desktop/web/app.js || echo "node not installed — skipped"'
+step "node syntax (web entrypoints)" bash -c 'command -v node >/dev/null && for f in apps/desktop/web/bootstrap.js apps/desktop/web/lib/bridge.js apps/desktop/web/variants/classic/app.js; do node --check "$f" || exit 1; done || echo "node not installed — skipped"'
 step "offline suite"        python3 services/lk/tests/test_offline.py
 step "edge suite"           python3 services/lk/tests/test_edge.py
 step "concurrency suite"    python3 services/lk/tests/test_concurrency.py
@@ -36,6 +36,9 @@ step "cancellation suite"   python3 services/lk/tests/test_cancel.py
 step "capability suite"     python3 services/lk/tests/test_capabilities.py
 step "proactive dedup"      python3 services/lk/tests/test_proactive_dedup.py
 step "retrieval rank"       python3 services/lk/tests/test_retrieval_rank.py
+step "embedding seam"       python3 services/lk/tests/test_embed.py
+step "memory-recall suite"  python3 services/lk/tests/test_memory_index.py
+step "retrieval-engine suite" python3 services/lk/tests/test_retrieval_engine.py
 step "schedule suite"       python3 services/lk/tests/test_schedule.py
 step "converters suite"     python3 services/lk/tests/test_converters.py
 step "recent-findings suite" python3 services/lk/tests/test_recent_findings.py

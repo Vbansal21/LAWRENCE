@@ -6,8 +6,12 @@ exists or fails — a notification must never break the loop that sent it.
 """
 from __future__ import annotations
 
+import os
 import shutil
 import subprocess
+
+# Windows-valid CWD for powershell.exe (avoids the 0xc0000142 dialog under WSL).
+_WIN_CWD = "/mnt/c" if os.path.isdir("/mnt/c") else None
 
 
 def notify(title: str, body: str = "") -> bool:
@@ -32,7 +36,7 @@ def notify(title: str, body: str = "") -> bool:
             )
             subprocess.Popen(
                 ["powershell.exe", "-NoProfile", "-Command", ps],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, cwd=_WIN_CWD,
             )
             return True
     except Exception:

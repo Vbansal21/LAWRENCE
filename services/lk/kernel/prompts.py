@@ -52,9 +52,10 @@ RESPONSE = (
     '  "context_tags": array of 2-5 topic keyword strings,\n'
     '  "confidence": number 0.0-1.0,\n'
     '  "expand_sources": array of citation numbers (e.g. [2,3]) to expand to full text — omit or [] if not needed,\n'
-    '  "controls": object (omit entirely if no action needed) with optional keys:\n'
-    '    "vision": "hi" (capture hi-res screenshot now), "on", or "off"\n'
-    '    "audio": "on" or "off"\n'
+    '  "controls": object (OMIT entirely unless you need a fresh look) — the sensors '
+    "are always-on services the USER controls; you do NOT turn them on or off. The "
+    "only control you may request is a one-off probe for the current screen:\n"
+    '    "vision": "hi" (capture a fresh hi-res screenshot of the screen right now)\n'
     '  "tasks": array (OMIT if none) — TODO items you infer should be tracked, curated on your '
     "own initiative. Each item is either a short string (a NEW actionable task) or "
     '{"op":"done","text":"<the task>"} to mark one complete. Add a task only for a concrete '
@@ -88,6 +89,51 @@ PROACTIVE_BRIEF = (
     '  "headline": string (≤80 chars — what you noticed or found),\n'
     '  "insight": string (1-3 sentences; the actionable finding, with [N] citations)\n'
     "No markdown. No preamble. Output ONLY the JSON."
+)
+
+RETRIEVAL_PLAN = (
+    "You are LAWRENCE, a local watcher-assistant, planning retrieval like Perplexity. "
+    "You are given the CURRENT context (short rolling stream of recent screen/audio/"
+    "memory/conversation events AND longer-range summaries + recalled memory) and, "
+    "usually, a user need. Do NOT answer.\n"
+    "STEP 1 — DISCERN: in one or two sentences, state plainly what is actually going on "
+    "right now and what is genuinely needed. Ground everything that follows in THIS "
+    "reading of the situation — correct retrieval is only possible from correct context.\n"
+    "STEP 2 — PLAN per source category, producing targeted queries that find ADJACENT / "
+    "COMPLEMENTARY information (not the user's words rephrased):\n"
+    "  - notes_queries: search the user's OWN memory — past notes, chats, journal, and "
+    "observations (use when prior context, decisions, or personal facts matter).\n"
+    "  - doc_queries: search the user's ingested local documents.\n"
+    "  - web_queries: search the public web for fresh/external facts.\n"
+    "Emit 0-3 queries per category; leave a category's array empty ([]) when it cannot "
+    "help. Set needs_retrieval=false only when no external or remembered information "
+    "could possibly help (e.g. pure chit-chat).\n"
+    "Return ONLY a valid JSON object with these keys (strings ≤120 chars each):\n"
+    '  "context_understanding": string,\n'
+    '  "needs_retrieval": boolean,\n'
+    '  "notes_queries": array of strings,\n'
+    '  "doc_queries": array of strings,\n'
+    '  "web_queries": array of strings,\n'
+    '  "capture_hires": boolean (true only if a fresh hi-res screenshot is directly needed)\n'
+    "No markdown. No preamble. Output ONLY the JSON object."
+)
+
+RETRIEVAL_ASSESS = (
+    "You are LAWRENCE judging whether the evidence gathered so far is ENOUGH to ground a "
+    "good answer to the need, Perplexity-style. You are given the need, your earlier "
+    "reading of the situation, and a digest of what each source category returned.\n"
+    "Decide honestly: is this sufficient (relevant, specific, and broad enough)? If yes, "
+    "set sufficient=true and return empty refinement arrays. If a category is thin, "
+    "irrelevant, or missing a needed angle, set sufficient=false and give 1-3 REFINED "
+    "queries for ONLY the categories that need another pass — sharper or differently-"
+    "angled than before, not repeats. Be conservative: do not demand more when what you "
+    "have already answers the need.\n"
+    "Return ONLY a valid JSON object with these keys:\n"
+    '  "sufficient": boolean,\n'
+    '  "refined_notes": array of strings (omit/[] if fine),\n'
+    '  "refined_doc": array of strings (omit/[] if fine),\n'
+    '  "refined_web": array of strings (omit/[] if fine)\n'
+    "No markdown. No preamble. Output ONLY the JSON object."
 )
 
 EXTRACT = (

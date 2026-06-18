@@ -417,7 +417,8 @@ class ConsolesTab(QtWidgets.QWidget):
     each PTY console has its own Interactive toggle + indicator."""
 
     def __init__(self, ctx: TabContext, *, front_path: str, server_log: str,
-                 bridge_log: str, config_path: str, parent=None):
+                 bridge_log: str, config_path: str, popup_log: str = "",
+                 embed_log: str = "", parent=None):
         super().__init__(parent)
         self.ctx = ctx
         self._front = front_path
@@ -442,17 +443,29 @@ class ConsolesTab(QtWidgets.QWidget):
 
         self.tabs = QtWidgets.QTabWidget()
         self.tabs.setDocumentMode(True)
+        self.tabs.tabBar().setDrawBase(False)   # kill the style's light tab-bar base line
         lay.addWidget(self.tabs, 1)
 
         self.output = qt_terminal.PtyTerminal(title="command output")
         self.tabs.addTab(self.output, "Output")
-        self.server = qt_terminal.LogView(server_log)
-        self.tabs.addTab(self.server, "Server log")
-        self.bridge = qt_terminal.LogView(bridge_log)
-        self.tabs.addTab(self.bridge, "Bridge log")
+        # Live, read-only tails of every started process's log — so "what is it
+        # doing right now" is always viewable, not just for the foreground command.
+        self._logs: list[qt_terminal.LogView] = []
+        for log_path, label in (
+            (server_log, "Server log"),
+            (bridge_log, "Bridge log"),
+            (popup_log, "Popup log"),
+            (embed_log, "Embed log"),
+        ):
+            if not log_path:
+                continue
+            view = qt_terminal.LogView(log_path)
+            self.tabs.addTab(view, label)
+            view.start()
+            self._logs.append(view)
+        self.server = self._logs[0] if self._logs else None
+        self.bridge = self._logs[1] if len(self._logs) > 1 else None
         self.tabs.addTab(self._build_repl(), "REPL")
-        self.server.start()
-        self.bridge.start()
 
     def _build_repl(self) -> QtWidgets.QWidget:
         w = QtWidgets.QWidget()

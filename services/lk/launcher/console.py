@@ -172,6 +172,25 @@ def _act_key() -> None:
     _pause()
 
 
+def _act_quit_all() -> None:
+    """N-28 Quit-all from the console: terminate every LAWRENCE process, verify."""
+    from .. import ctl
+    try:
+        if input("  terminate ALL LAWRENCE processes (full stop)? [y/N] ").strip().lower() != "y":
+            print("  cancelled")
+            return
+    except (EOFError, KeyboardInterrupt):
+        print("\n  cancelled")
+        return
+    print("  stopping every LAWRENCE process…")
+    survivors = ctl.quit_all()
+    if survivors:
+        print(_c("33", "  could not stop:"))
+        print(ctl.format_processes(survivors))
+    else:
+        print(_c("32", "  all LAWRENCE processes stopped"))
+
+
 # Local interactive handlers, keyed by Action.handler.
 _HANDLERS = {
     "presets": _act_presets,
@@ -181,6 +200,7 @@ _HANDLERS = {
     "notes": _act_notes,
     "shell": _act_shell,
     "command": _act_command,
+    "quit_all": _act_quit_all,
 }
 
 # The console menu: (hotkey, action id), in display order. Labels and argv come
@@ -188,6 +208,7 @@ _HANDLERS = {
 _CONSOLE_KEYS: list[tuple[str, str]] = [
     ("1", "start"), ("2", "ui"), ("3", "stop"), ("4", "stop_all"),
     ("5", "processes"), ("6", "restart"), ("b", "rebuild"), ("x", "reset"),
+    ("Q", "quit_all"),
     ("r", "repl"), ("w", "wizard"), ("p", "presets"), ("k", "keys"),
     ("c", "config"), ("g", "ingest"), ("m", "memory"), ("n", "notes"),
     ("d", "doctor"), ("l", "logs"), ("t", "shell"), (":", "command"),

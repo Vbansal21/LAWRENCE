@@ -12,8 +12,10 @@ writer-lock file, and delegates real work to the existing entry points:
     lk rebuild          recompile the desktop popup (Tauri) and relaunch it
     lk reset [--all]    force a clean slate from any wedged state (--all: + server)
     lk stop [--all]     stop popup+bridge  (--all also stops llama-server)
+    lk quit-all [--yes] full stop: terminate every LAWRENCE process, then verify
     lk memory [...]     inspect/back up/clear memory (stats|clear-cache|clear-all)
     lk processes        list launcher-managed LAWRENCE processes
+    lk reindex [...]    rebuild the hybrid recall index from memory (--no-embed)
     lk notes [...]      browse the zettelkasten (list | show <id> | search <q>)
     lk chats [...]      manage chats (list | show | export | new | switch | rename | delete)
     lk links [...]      cross-chat graph (show <chat> <seq> | add <c> <s> <c> <s>)
@@ -134,7 +136,8 @@ def _windows_hotkey_processes() -> list[dict]:
     )
     try:
         out = subprocess.run(["powershell.exe", "-NoProfile", "-Command", query],
-                             capture_output=True, text=True, timeout=5).stdout
+                             capture_output=True, text=True, timeout=5,
+                             cwd=("/mnt/c" if os.path.isdir("/mnt/c") else None)).stdout
     except Exception:
         return []
     rows: list[dict] = []
@@ -221,7 +224,8 @@ def _stop_windows_pid(pid: int) -> None:
     if shutil.which("powershell.exe"):
         subprocess.run(["powershell.exe", "-NoProfile", "-Command",
                         f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue"],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5,
+                       cwd=("/mnt/c" if os.path.isdir("/mnt/c") else None))
 
 
 def terminate_processes(rows: list[dict], *, force: bool = False) -> None:
@@ -425,12 +429,13 @@ def cmd_doctor(_args: list[str]) -> int:
             print(f"  {mod:<14} OK (python)")
         except ImportError:
             print(f"  {mod:<14} MISSING — pip install -e '.[{extra}]'")
-    try:
-        __import__("tkinter")
-        print(f"  {'tkinter':<14} OK (GUI launcher)")
-    except ImportError:
-        print(f"  {'tkinter':<14} MISSING — GUI launcher falls back to console menu"
-              " (apt: python3-tk)")
+    for mod in ("PySide6", "pyte"):
+        try:
+            __import__(mod)
+            print(f"  {mod:<14} OK (Qt launcher)")
+        except ImportError:
+            print(f"  {mod:<14} MISSING — pip install -e '.[gui]'"
+                  " (launcher falls back to the console menu)")
     bin_ = REPO_ROOT / "third_party/llama.cpp/build/bin/llama-server"
     print(f"  llama-server {'OK ' + str(bin_) if bin_.exists() else 'MISSING — build third_party/llama.cpp'}")
     models = list((REPO_ROOT / "models").rglob("*.gguf"))
@@ -649,6 +654,36 @@ def cmd_restart(args: list[str]) -> int:
     return cmd_start([a for a in args if a not in ("--all", "--force")])
 
 
+def quit_all() -> list[dict]:
+    """Quit-all (N-28): the deliberate full stop. Terminate EVERY LAWRENCE process
+    — popup, bridge, llama-server, embed-server, sensors, REPL, desktop-dev — and
+    any *other* launcher windows, then re-scan and return survivors. Force is
+    implied (this is the explicit "stop everything"); the caller's own process is
+    spared so a launcher can close itself last. Never touches non-LAWRENCE procs."""
+    cmd_stop(["--all", "--force"])          # popup+bridge+model+sensor+repl+desktop-dev
+    others = [r for r in managed_processes(include_launcher=True)
+              if not (r["label"] == "launcher" and r["pid"] == os.getpid())]
+    if others:
+        terminate_processes(others, force=True)
+    return [r for r in managed_processes(include_launcher=True)
+            if not (r["label"] == "launcher" and r["pid"] == os.getpid())]
+
+
+def cmd_quit_all(args: list[str]) -> int:
+    """Stop the entire LAWRENCE system (every process). Confirms unless --yes."""
+    if not ("--yes" in args or "-y" in args):
+        if not _confirm("  terminate ALL LAWRENCE processes (full stop)?"):
+            print("  cancelled")
+            return 1
+    survivors = quit_all()
+    if survivors:
+        print("  could not stop:")
+        print(format_processes(survivors))
+        return 1
+    print("  all LAWRENCE processes stopped")
+    return 0
+
+
 def cmd_rebuild(args: list[str]) -> int:
     """Recompile the desktop popup (Tauri release build) and relaunch it.
 
@@ -709,6 +744,34 @@ def cmd_memory(args: list[str]) -> int:
         return 0
     print("usage: lk memory [stats | backup | clear-cache | clear-rolling | clear-logs | clear-journal | clear-notes | clear-all] [--force]")
     return 2
+
+
+def cmd_reindex(args: list[str]) -> int:
+    """Rebuild the hybrid recall index (N-02) from on-disk memory.
+
+    A running kernel already backfills at startup and indexes new content
+    incrementally, so this is a manual full rebuild — run it with the kernel
+    stopped (it writes the same index the kernel owns). ``--no-embed`` does a fast
+    lexical/graph-only pass (skips the local embedding backend)."""
+    owner = _lock_owner()
+    if owner:
+        print(f"  a {owner.get('role', '?')} kernel (pid {owner.get('pid', '?')}) owns memory/ —"
+              " it already keeps the recall index fresh.")
+        print("  stop it first for a manual full reindex:  lk stop --all")
+        return 1
+    sys.path.insert(0, str(REPO_ROOT / "services"))
+    from lk.retrieval import MemoryIndex, backfill
+    embed = "--no-embed" not in args
+    print(f"  reindexing recall ({'with' if embed else 'without'} embeddings)…")
+    index = MemoryIndex()
+    counts = backfill(index, embed=embed)
+    for src in ("notes", "chats", "rolling", "log", "journal"):
+        print(f"    {src:<8} {counts.get(src, 0):>6}")
+    print(f"    {'total':<8} {counts.get('total', 0):>6} new/changed")
+    s = index.stats()
+    print(f"  index: {s['nodes']} nodes, {s['embedded']} embedded, {s['vectors']} vectors")
+    index.close()
+    return 0
 
 
 def cmd_notes(args: list[str]) -> int:
@@ -978,8 +1041,10 @@ _COMMANDS = {
     "secrets": cmd_secrets, "wizard": cmd_wizard, "ingest": cmd_ingest,
     "launcher": cmd_launcher, "menu": cmd_launcher, "preset": cmd_preset,
     "restart": cmd_restart, "rebuild": cmd_rebuild, "reset": cmd_reset,
+    "quit-all": cmd_quit_all,
     "memory": cmd_memory, "mem": cmd_memory, "notes": cmd_notes,
     "chats": cmd_chats, "links": cmd_links, "remind": cmd_remind,
+    "reindex": cmd_reindex,
 }
 
 

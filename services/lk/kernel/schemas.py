@@ -48,12 +48,18 @@ RESPONSE = {
         "confidence":      {"type": "number"},
         "expand_sources":  {"type": "array", "items": {"type": "integer"}},
         "controls": {
+            # Sensors are DECOUPLED from the model: they are always-on services the
+            # USER starts/stops, and the model only *probes* them for data — it does
+            # NOT control their lifecycle. The single probe the model may request is
+            # a fresh hi-res screen frame ("hi"). These keys are optional (omit when
+            # no probe is needed); on/off are intentionally NOT honored from a turn
+            # envelope (models over-fill a default "off" every turn, which silently
+            # killed the ambient sensors). See ui_bridge._apply_model_controls.
             "type": "object",
             "properties": {
-                "vision": {"type": "string"},   # "hi" | "on" | "off" | "" (no-op)
-                "audio":  {"type": "string"},   # "on" | "off" | "" (no-op)
+                "vision": {"type": "string"},   # "hi" = probe a fresh frame; else no-op
+                "audio":  {"type": "string"},   # reserved; not a model lifecycle control
             },
-            "required": ["vision", "audio"],
             "additionalProperties": False,
         },
         "tasks": {
@@ -88,6 +94,41 @@ PROACTIVE = {
         "queries":         {"type": "array", "items": {"type": "string"}},
     },
     "required": ["needs_retrieval"],
+    "additionalProperties": False,
+}
+
+# Unified retrieval engine (N-05). RETRIEVAL_PLAN = the context-discernment pass: the
+# model first drafts its understanding of the CURRENT situation, then — and only from
+# that — produces per-category (notes/doc/web) queries. `context_understanding` first so
+# a partial parse still yields the draft; only `needs_retrieval` is required (per-category
+# query arrays optional → a short turn stays cheap).
+RETRIEVAL_PLAN = {
+    "type": "object",
+    "properties": {
+        "context_understanding": {"type": "string"},
+        "needs_retrieval":       {"type": "boolean"},
+        "notes_queries":         {"type": "array", "items": {"type": "string"}},
+        "doc_queries":           {"type": "array", "items": {"type": "string"}},
+        "web_queries":           {"type": "array", "items": {"type": "string"}},
+        "capture_hires":         {"type": "boolean"},
+    },
+    "required": ["needs_retrieval"],
+    "additionalProperties": False,
+}
+
+# RETRIEVAL_ASSESS = the dynamic-iteration brain (one call covers all arms): is the
+# evidence gathered so far sufficient, and if not, what refined per-category queries
+# close the gaps? `sufficient` first + only-required so a "good enough" verdict is one
+# tiny token (keeps the loop cheap on slow local hardware).
+RETRIEVAL_ASSESS = {
+    "type": "object",
+    "properties": {
+        "sufficient":     {"type": "boolean"},
+        "refined_notes":  {"type": "array", "items": {"type": "string"}},
+        "refined_doc":    {"type": "array", "items": {"type": "string"}},
+        "refined_web":    {"type": "array", "items": {"type": "string"}},
+    },
+    "required": ["sufficient"],
     "additionalProperties": False,
 }
 

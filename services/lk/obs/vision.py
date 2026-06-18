@@ -58,6 +58,14 @@ class LatestFrame:
 
 # ── screen capture ────────────────────────────────────────────────────────────
 
+# Launch Windows powershell.exe with a valid *Windows* working directory. When a
+# WSL process spawns powershell.exe its CWD defaults to the current WSL path
+# (\\wsl$\...), which the Win32 loader can't use as a CWD → the "Application was
+# unable to start correctly (0xc0000142)" dialog (a GUI popup our stderr redirect
+# can't suppress). Pointing CWD at C:\ avoids it; none of our PS uses a relative CWD.
+_WIN_CWD = "/mnt/c" if os.path.isdir("/mnt/c") else None
+
+
 def _wsl_win_path(p: Path) -> str:
     return subprocess.check_output(["wslpath", "-w", str(p)], text=True).strip()
 
@@ -81,7 +89,7 @@ def _powershell_capture(out: Path, w: int, h: int) -> bool:
     )
     r = subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True,
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, cwd=_WIN_CWD,
     )
     return r.returncode == 0 and out.exists()
 
@@ -177,7 +185,7 @@ def capture_fullres(out: Path) -> tuple[int, int, int, int] | None:
         try:
             r = subprocess.run(
                 ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-                capture_output=True, text=True, timeout=20,
+                capture_output=True, text=True, timeout=20, cwd=_WIN_CWD,
             )
         except Exception:
             return None
@@ -279,7 +287,7 @@ def capture_foreground(out: Path) -> tuple[tuple[int, int, int, int], str] | Non
     try:
         r = subprocess.run(
             ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-            capture_output=True, text=True, timeout=20,
+            capture_output=True, text=True, timeout=20, cwd=_WIN_CWD,
         )
     except Exception:
         return None

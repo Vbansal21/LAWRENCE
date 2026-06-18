@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-node --check web/app.js
+for f in web/bootstrap.js web/lib/bridge.js web/variants/classic/app.js; do node --check "$f"; done
 python3 -m json.tool src-tauri/tauri.conf.json >/tmp/lawrence-tauri-conf-check.json
 
 node --input-type=module <<'NODE'
@@ -211,7 +211,10 @@ global.requestAnimationFrame = window.requestAnimationFrame
 
 document.write(html);
 document.close();
-await import(`${pathToFileURL(`${process.cwd()}/web/app.js`).href}?stress=${Date.now()}`);
+// Import the classic variant directly: bootstrap.js loads the variant via a
+// fire-and-forget dynamic import (driven by /health.uiVariant), which would race
+// this synchronous DOM harness. The classic variant is the behavioral baseline.
+await import(`${pathToFileURL(`${process.cwd()}/web/variants/classic/app.js`).href}?stress=${Date.now()}`);
 
 async function settle() {
   for (let i = 0; i < 20; i += 1) await Promise.resolve();

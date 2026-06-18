@@ -39,7 +39,10 @@ from lk.retrieval.ingest import ingest as _ingest  # noqa: E402
 from lk.obs import AudioObserver, VisionObserver, capture_now, record_now  # noqa: E402
 from lk.obs.audio import transcribe as _transcribe  # noqa: E402
 from lk.profile import ModelProfile  # noqa: E402
-from lk.retrieval import RetrievalPipeline, SemanticDB, format_citations, format_snippets  # noqa: E402
+from lk.retrieval import (  # noqa: E402
+    RetrievalPipeline, RetrievalEngine, SemanticDB, MemoryIndex, startup_backfill,
+    format_citations, format_snippets,
+)
 from lk.retrieval.web import search_stats as _web_search_stats  # noqa: E402
 from lk.schedule import Schedule, ScheduleError  # noqa: E402
 from lk.tasks import TaskStore  # noqa: E402
@@ -183,9 +186,15 @@ class DesktopBridge:
         # Wire compaction/background events through the SSE connector so they appear
         # on the event stream even between turns.
         self.db = SemanticDB()
-        self.notes = NoteStore(
-            index_fn=lambda nid, title, body: self.db.upsert(f"note://{nid}", title, [body]),
-        )
+        self.memory = MemoryIndex()           # N-02 hybrid recall over own memory
+        def _index_note(nid: str, title: str, body: str) -> None:
+            self.db.upsert(f"note://{nid}", title, [body])
+            try:
+                self.memory.upsert(nid, "note", body, title=title)   # also into recall
+            except Exception:
+                pass
+        self.notes = NoteStore(index_fn=_index_note)
+        self.memory.set_notes(self.notes)     # graph arm + link/delete signals
         self.extractor = Extractor(run_extract, note_store=self.notes)  # WS-P/B1 + M3
         self.ctx = ContextStore(
             compact_fn=run_compaction,
@@ -193,6 +202,11 @@ class DesktopBridge:
             extractor=self.extractor,
         )
         self.retrieval = RetrievalPipeline(self.db)
+        self.engine = RetrievalEngine(db=self.db, memory=self.memory)  # N-05 unified retrieval
+        try:
+            startup_backfill(self.memory)     # fast lexical/graph now; embeds in background
+        except Exception:
+            pass
         # WS-U Track 1: chat workspace — first-class switchable conversations. Each
         # chat owns its short-term L1/L2 (memory/chats/<id>/); the journal, notes,
         # and the deep L3 tier stay shared (the agent's continuous mind). The active
@@ -228,7 +242,7 @@ class DesktopBridge:
         # WS-J autonomous journal — significance-gated + time-floor trigger consulted
         # by the tick each beat; journals run in a background thread (never block it).
         self.journal_trigger: JournalTrigger | None = (
-            JournalTrigger(self.ctx, retrieval=self.retrieval,
+            JournalTrigger(self.ctx, retrieval=self.retrieval, memory=self.memory,
                            live_fn=lambda msg: self.ui.push_context_event("journal", msg))
             if journal_enabled() else None
         )
@@ -243,6 +257,34 @@ class DesktopBridge:
                 on_log=lambda msg: self.ui.push_context_event("tick", msg),
             )
             self.tick.start()
+
+        # Local-first watcher: begin perceiving at boot per config, not only when a
+        # UI toggles a sensor (the previous behaviour left every sensor inactive on
+        # a headless/auto start). Best-effort + dep-gated — see _autostart_observers.
+        self._autostart_observers()
+
+    def _autostart_observers(self) -> None:
+        """Start the sensors at boot per config (LK_VISION / LK_AUDIO from lk.json).
+
+        A watcher-assistant should perceive from the moment it starts. Each sensor
+        is best-effort: a text-only model or a missing capture tool degrades to off
+        with a logged reason instead of failing startup. Idempotent with the UI
+        toggle (set_observer) — it just primes the initial state."""
+        for name, want, supported, turn_on in (
+            ("vision", _flag("LK_VISION", False), self.profile.vision, self._set_vision),
+            ("audio",  _flag("LK_AUDIO",  False), self.profile.audio,  self._set_audio),
+        ):
+            if not want:
+                continue
+            if not supported:
+                self.ui.push_context_event(
+                    "sensors", f"{name} on in config but the active model has no {name} input")
+                continue
+            try:
+                turn_on(True)
+                self.ui.push_context_event("sensors", f"{name} observer started at boot")
+            except Exception as exc:
+                self.ui.push_context_event("sensors", f"{name} could not start: {exc}")
 
     def _profile(self) -> ModelProfile:
         if _model.backend_from_env():
@@ -275,6 +317,8 @@ class DesktopBridge:
             "ok": True,
             "modelHealth": _model.health(),
             "backend": _model.describe_backend(),
+            # WS-U N-09: front-end the bootstrap loader should select (default classic).
+            "uiVariant": os.environ.get("LK_UI_VARIANT", "classic"),
             # WS-K: which decoding families the live backend can honor (UI markers).
             "capabilities": _model.active_capability_summary(),
             "modalities": self.profile.modalities,
@@ -423,32 +467,26 @@ class DesktopBridge:
         return True
 
     def _apply_model_controls(self, controls: dict[str, Any]) -> dict[str, str]:
-        """Actuate model-emitted sensor controls (the agentic half of the loop).
+        """Actuate model-emitted sensor *probes* — NOT sensor lifecycle.
 
-        The REPL applies these in cli.py:_apply_controls; this is the bridge-side
-        equivalent so model agency works from the UI too. Returns what changed.
-        """
+        Sensors are decoupled from the model (user directive 2026-06-17): they are
+        always-on services the USER starts/stops; the model only probes them for
+        data. So the only thing honored here is ``vision: "hi"`` — a one-off hi-res
+        capture of the current screen (works even if the ambient observer is off,
+        via capture_now). Lifecycle verbs ("on"/"off") are intentionally ignored:
+        models over-fill the optional controls with a default "off" every turn,
+        which silently killed the auto-started sensors. Turning a sensor on/off is
+        a user action (UI toggle / `/vision` / config). The REPL mirror is
+        cli.py:_apply_controls."""
         applied: dict[str, str] = {}
         v = str((controls or {}).get("vision", "") or "")
-        a = str((controls or {}).get("audio", "") or "")
         try:
             if v == "hi":
                 out = capture_now(self.tmp_path / f"model-hi-{_stamp()}.png")
                 self.pending_images.append(out)
                 applied["vision"] = "hi-res captured"
-            elif v == "on" and self._set_vision(True):
-                applied["vision"] = "observer started"
-            elif v == "off" and self._set_vision(False):
-                applied["vision"] = "observer stopped"
         except Exception as exc:
-            applied["vision"] = f"request failed: {exc}"
-        try:
-            if a == "on" and self._set_audio(True):
-                applied["audio"] = "observer started"
-            elif a == "off" and self._set_audio(False):
-                applied["audio"] = "observer stopped"
-        except Exception as exc:
-            applied["audio"] = f"request failed: {exc}"
+            applied["vision"] = f"probe failed: {exc}"
         if applied:
             summary = " · ".join(f"{k}: {msg}" for k, msg in applied.items())
             self.events.append(f"[controls] {summary}")
@@ -495,6 +533,7 @@ class DesktopBridge:
                     self.ctx, self.retrieval,
                     live_fn=lambda msg: self.ui.push_context_event("proactive", msg),
                     present_fn=self._present_finding,
+                    engine=self.engine, memory=self.memory,
                 )
             except Exception:
                 pass
@@ -914,6 +953,7 @@ class DesktopBridge:
             skip_analysis=bool(config.get("skipAnalysis", False)),
             # deepSearch overrides the retrieval toggle — force retrieval on
             no_retrieval=not bool(config.get("retrieval", True)) and not deep_search,
+            deep_search=deep_search,   # magnifier → wider/deeper unified retrieval (FR)
             allow_images=allow_img,
             allow_audio=allow_aud,
             top_p=_opt_float(dec.get("topP")),
@@ -987,6 +1027,8 @@ class DesktopBridge:
                 turn_text,
                 ctx=turn_ctx,
                 retrieval=retrieval,
+                memory=self.memory,
+                engine=self.engine,
                 cfg=cfg,
                 images=images,
                 audios=audios,
@@ -1008,6 +1050,15 @@ class DesktopBridge:
                     chat_id, "user", user_message,
                     meta={"source": source} if source else None)
                 asst_mid = self.chats.append_message(chat_id, "assistant", answer)
+                # Feed the durable transcript into hybrid recall (N-02), so past
+                # conversation becomes recallable in future turns. Best-effort.
+                try:
+                    if user_mid:
+                        self.memory.upsert(user_mid, "chat", user_message, title="chat[user]")
+                    if asst_mid:
+                        self.memory.upsert(asst_mid, "chat", answer, title="chat[assistant]")
+                except Exception:
+                    pass
             except Exception as exc:
                 self.events.append(f"[chat] transcript write failed: {exc}")
             controls = dict(controls or {})

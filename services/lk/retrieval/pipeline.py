@@ -68,6 +68,18 @@ class CitedResult:
     url: str
     title: str
     text: str    # the ranked chunk text
+    category: str = "web"   # web | doc | notes — for the unified RetrievalEngine bundle
+
+
+def _is_linkable(url: str) -> bool:
+    """A citation renders as a clickable link only for real fetchable locations.
+    Own-memory citations (``memory://<node_id>``) are provenance, not links."""
+    return url.startswith(("http://", "https://", "file://"))
+
+
+def _cat_tag(r: "CitedResult") -> str:
+    """Short provenance tag for a cited item (notes→memory; doc/web as-is)."""
+    return "memory" if r.category == "notes" else r.category
 
 
 def _db_to_chunk(sc: StoredChunk, query: str) -> WebChunk:
@@ -197,7 +209,8 @@ def format_snippets(results: list[CitedResult], chars: int = 150) -> str:
         preview = r.text[:chars].rstrip()
         if len(r.text) > chars:
             preview += "…"
-        lines.append(f"\n[{r.citation_num}] {r.title or r.url}")
+        label = r.title or (r.url if _is_linkable(r.url) else "(your memory)")
+        lines.append(f"\n[{r.citation_num}] ({_cat_tag(r)}) {label}")
         lines.append(f"    {preview}")
     return "\n".join(lines)
 
@@ -208,8 +221,10 @@ def format_for_model(results: list[CitedResult]) -> str:
         return ""
     lines = ["[RETRIEVED SOURCES]"]
     for r in results:
-        lines.append(f"\n[{r.citation_num}] {r.title or r.url}")
-        lines.append(f"    URL: {r.url}")
+        label = r.title or (r.url if _is_linkable(r.url) else "(your memory)")
+        lines.append(f"\n[{r.citation_num}] ({_cat_tag(r)}) {label}")
+        if _is_linkable(r.url):
+            lines.append(f"    URL: {r.url}")
         lines.append(f"    {r.text}")
     return "\n".join(lines)
 
@@ -226,5 +241,27 @@ def format_citations(results: list[CitedResult]) -> str:
     lines = ["", "---", "**Sources**", ""]
     for r in results:
         label = (r.title or r.url).replace("[", "(").replace("]", ")")
-        lines.append(f"- [{r.citation_num}] [{label}]({r.url})")
+        if _is_linkable(r.url):
+            lines.append(f"- [{r.citation_num}] ({_cat_tag(r)}) [{label}]({r.url})")
+        else:   # own-memory provenance — no clickable link
+            lines.append(f"- [{r.citation_num}] ({_cat_tag(r)}) {label}")
     return "\n".join(lines)
+
+
+def evidence_assets(results: list[CitedResult], *, snippet_chars: int = 240) -> list[dict]:
+    """Map a unified evidence bundle to typed asset cards (FR-008): the desktop
+    bridge can push these as scrollable Perplexity-style source cards instead of
+    scraping Markdown links from the answer. Card rendering is the UI's job."""
+    assets: list[dict] = []
+    for r in results:
+        kind = {"web": "webpage", "doc": "document", "notes": "memory"}.get(r.category, r.category)
+        snippet = " ".join((r.text or "").split())[:snippet_chars]
+        assets.append({
+            "id":       f"src-{r.citation_num}",
+            "kind":     kind,
+            "category": r.category,
+            "title":    r.title or (r.url if _is_linkable(r.url) else "your memory"),
+            "url":      r.url if _is_linkable(r.url) else "",
+            "snippet":  snippet,
+        })
+    return assets
