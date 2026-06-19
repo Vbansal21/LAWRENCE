@@ -1,0 +1,51 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Upstream demand"; style="dashed,rounded"; color="#888888";
+    "turn" [label="live user turn — synchronous", shape=box, style="rounded"];
+    "proac" [label="proactive cognition — autonomous", shape=box, style="rounded"];
+  }
+  subgraph cluster_1 {
+    label="Retrieval subsystem — roles"; style="dashed,rounded"; color="#888888";
+    "planner" [label="grounded query-planner", shape=box];
+    "fan" [label="{parallel fan-out — one independent gatherer per source class}", shape=diamond];
+    "gmem" [label="evidence gatherer + intra-source relevance ranker", shape=box];
+    "gdoc" [label="evidence gatherer + intra-source relevance ranker", shape=box];
+    "gweb" [label="evidence gatherer + intra-source relevance ranker", shape=box];
+    "suff" [label="sufficiency gate", shape=diamond];
+    "assessor" [label="sufficiency assessor", shape=box];
+    "fuse" [label="cross-source rank-fusion", shape=box];
+    "out" [label="cited evidence set", shape=box, style="rounded"];
+  }
+  subgraph cluster_2 {
+    label="Neighbouring subsystems it meshes with"; style="dashed,rounded"; color="#888888";
+    "seam" [label="model gateway — least-privilege role seam, local-default", shape=box];
+    "mem" [label="associative memory — own knowledge", shape=cylinder];
+    "doc" [label="local document corpus", shape=cylinder];
+    "web" [label="live web — external", shape=cylinder];
+    "answer" [label="answer composer", shape=box, style="rounded"];
+  }
+  "turn" -> "planner" [label="need"];
+  "proac" -> "planner" [label="autonomous need", style=dashed];
+  "planner" -> "seam" [label="discern reasoning", style=dashed];
+  "planner" -> "fan" [label="per-source query plan"];
+  "fan" -> "gmem";
+  "fan" -> "gdoc";
+  "fan" -> "gweb";
+  "gmem" -> "mem" [label="fast, transient", dir=both];
+  "gdoc" -> "doc" [label="local lookup", dir=both];
+  "gweb" -> "web" [label="slow, external, cache-back", dir=both];
+  "gmem" -> "suff";
+  "gdoc" -> "suff";
+  "gweb" -> "suff";
+  "suff" -> "assessor" [label="under floor, rounds remain"];
+  "assessor" -> "seam" [label="assess reasoning", style=dashed];
+  "assessor" -> "fan" [label="refine, bounded"];
+  "suff" -> "fuse" [label="enough"];
+  "fuse" -> "out" [penwidth=2.2];
+  "out" -> "answer" [label="cited bundle", penwidth=2.2];
+  "out" -> "proac" [label="situation understanding", style=dashed];
+}

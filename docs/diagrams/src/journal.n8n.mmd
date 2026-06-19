@@ -1,0 +1,22 @@
+%% n8n-PARALLEL — Journal (WS-J) in n8n's node library.
+%% RESTRICTION: "rolling revision until cost-bounded" is an iterative loop -> Loop Over
+%% Items with a cap; non-blocking dispatch -> a separate triggered sub-workflow; time-floor
+%% state -> Static Data.
+flowchart TD
+  trg([Execute Workflow Trigger — reflection hook with events])
+  iffloor{IF — time-floor elapsed\nn8n: last-write time in Static Data}
+  ifsig{IF — events significant}
+  skip[NoOp — skip]
+  exrecall[Execute Workflow — memory recall + fold web/doc]
+  loop[Loop Over Items — revise until budget\nn8n: bounded loop, not open-ended]
+  llm[Basic LLM Chain — first-person revision]
+  ifbudget{IF — cost budget reached}
+  exwrite[Execute Workflow — memory write, single writer]
+
+  trg ==> iffloor
+  iffloor -->|no| skip
+  iffloor -->|yes| ifsig
+  ifsig -->|no| skip
+  ifsig -->|yes| exrecall ==> loop ==> llm ==> ifbudget
+  ifbudget -->|room| loop
+  ifbudget -->|done| exwrite

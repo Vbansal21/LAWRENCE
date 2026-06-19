@@ -1,0 +1,23 @@
+graph 1 9.8542 8.0833
+node aud 1.625 7.2917 2.8056 0.5 "audio capture — realtime stream" rounded box black lightgrey
+node scr 4.5278 7.2917 2.3056 0.5 "screen capture — realtime" rounded box black lightgrey
+node reg 7.5278 7.2917 3 0.5 "region / window capture — realtime" rounded box black lightgrey
+node buf 4.5278 6.0972 5.4722 0.5 "transient observation buffer — fire-and-forget, never blocks sensors" solid cylinder black lightgrey
+node kernel 4.5278 4.9028 6.5908 0.5 "{cognitive kernel — cadence-paced consumer}" solid diamond black lightgrey
+node gate 4.5278 3.8333 5.2083 0.5 "significance + context gating — cheap-first filter / back-pressure" solid box black lightgrey
+node drop 3.8194 2.6389 1.5694 0.5 "discard / log only" rounded box black lightgrey
+node refine 7.4028 2.6389 4.9028 0.5 "context-based refinement — situate against running context" solid box black lightgrey
+node invoke 4.5694 1.4444 5.5278 0.5 "proactive model invocation — only on high gain, not per observation" solid box black lightgrey
+node seam 4.5694 0.25 3.25 0.5 "model gateway — least-privilege seam" solid box black lightgrey
+node ctx 8.5417 1.4444 1.7083 0.5 "context + memory" solid cylinder black lightgrey
+edge aud buf 7 1.9306 7.0384 2.1684 6.8521 2.4583 6.625 2.4583 6.625 2.4583 6.625 2.9356 6.5065 3.4317 6.3833 "temporally-atomic transcription" 3.4514 6.6944 solid black
+edge scr buf 4 4.5278 7.036 4.5278 6.8786 4.5278 6.6698 4.5278 6.4905 "temporally-atomic frame-scene" 5.5069 6.6944 solid black
+edge reg buf 7 7.1764 7.0384 6.9029 6.8521 6.5694 6.625 6.5694 6.625 6.5694 6.625 6.0986 6.5065 5.6091 6.3833 "temporally-atomic observation" 7.7083 6.6944 solid black
+edge buf kernel 4 4.5278 5.8416 4.5278 5.6841 4.5278 5.4754 4.5278 5.296 "async drain on own cadence — temporal decoupling" 6.1875 5.5 dashed black
+edge kernel gate 4 4.5278 4.6525 4.5278 4.5269 4.5278 4.3694 4.5278 4.2271 solid black
+edge gate drop 4 4.381 3.5777 4.2816 3.4139 4.1485 3.1947 4.0368 3.0108 "low significance" 4.7153 3.2361 solid black
+edge gate refine 4 5.113 3.5819 5.5678 3.3974 6.2005 3.1406 6.6857 2.9438 "worth attention" 6.5347 3.2361 solid black
+edge refine invoke 4 6.8226 2.3861 6.3742 2.2015 5.7516 1.9451 5.2745 1.7486 solid black
+edge refine ctx 4 7.6388 2.3833 7.8048 2.2132 8.0292 1.9833 8.2127 1.7953 "durable observation" 8.6319 2.0417 solid black
+edge invoke seam 4 4.5694 1.1888 4.5694 1.0313 4.5694 0.8226 4.5694 0.64327 "probe: model reads sensor output, never toggles sensor lifecycle" 6.6042 0.84722 dashed black
+stop

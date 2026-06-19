@@ -1,0 +1,29 @@
+graph 1 7.2222 10.625
+node beat 4.0069 10.375 4.1111 0.5 "kernel reflection hook — every beat, active or idle" rounded box black lightgrey
+node floor 4.0069 9.3056 3.567 0.5 "own time-floor elapsed?" solid diamond black lightgrey
+node sig 2.6736 8.1111 3.9214 0.5 "events significant enough?" solid diamond black lightgrey
+node skip 5.3264 6.9167 1.4444 0.5 "skip — no write" rounded box black lightgrey
+node dispatch 2.1319 6.9167 4.2639 0.5 "dispatch to background — never blocks the cadence" solid box black lightgrey
+node recall 2.1319 5.8472 3.8889 0.5 "recall prior entries + fold memory and web/doc" solid box black lightgrey
+node mem 1.9236 4.7778 1.2917 0.5 "memory gear" rounded box black lightgrey
+node seam 2.2708 3.5833 2.7778 0.5 "model gateway — least-privilege" solid box black lightgrey
+node revise 4.9097 4.7778 3.9722 0.5 "first-person rolling revision of the standing entry" solid box black lightgrey
+node budget 5.5069 3.5833 3.0001 0.5 "within cost budget?" solid diamond black lightgrey
+node writer 5.5069 2.3889 2.7166 0.5 "single writer — I1" solid diamond black lightgrey
+node store 5.5069 1.3194 3.4306 0.5 "journal = shared long-term episodic mind" solid cylinder black lightgrey
+node back 5.5069 0.25 2.9167 0.5 "feeds recall digest / global context" rounded box black lightgrey
+edge beat floor 4 4.0069 10.125 4.0069 9.9991 4.0069 9.8416 4.0069 9.6993 solid black
+edge floor sig 4 3.7686 9.0831 3.56 8.9006 3.2545 8.6332 3.0191 8.4273 yes 3.4931 8.7083 solid black
+edge floor skip 7 4.1897 9.0805 4.4274 8.806 4.8125 8.3611 4.8125 8.3611 4.8125 8.3611 5.041 7.725 5.1933 7.3012 no 5.0764 8.1111 solid black
+edge sig skip 4 3.094 7.9124 3.5151 7.7272 4.1696 7.4393 4.6612 7.2231 no 4.1736 7.5139 solid black
+edge sig dispatch 4 2.5692 7.8723 2.4935 7.7092 2.3895 7.4852 2.3019 7.2966 yes 2.5347 7.5139 solid black
+edge dispatch recall 4 2.1319 6.6664 2.1319 6.5408 2.1319 6.3833 2.1319 6.241 solid black
+edge recall mem 4 2.0566 5.4565 2.0379 5.3632 2.0179 5.2633 1.9993 5.17 solid black
+edge recall revise 4 2.7623 5.597 3.1728 5.443 3.7109 5.2412 4.1457 5.0782 solid black
+edge revise seam 4 4.3693 4.525 3.9535 4.3411 3.3768 4.0862 2.9332 3.89 "revision reasoning" 4.2431 4.1806 dashed black
+edge revise budget 7 4.9963 4.5245 5.0637 4.3382 5.1458 4.1111 5.1458 4.1111 5.1458 4.1111 5.2032 4.0294 5.2723 3.9312 solid black
+edge budget revise 4 5.3954 3.815 5.3119 3.9783 5.1955 4.2056 5.0976 4.3968 "room remains" 5.6667 4.1806 solid black
+edge budget writer 4 5.5069 3.3277 5.5069 3.1702 5.5069 2.9615 5.5069 2.7822 "bound reached" 5.9931 2.9861 solid black
+edge writer store 4 5.5069 2.1386 5.5069 2.013 5.5069 1.8555 5.5069 1.7132 solid black
+edge store back 4 5.5069 1.0692 5.5069 0.94355 5.5069 0.78606 5.5069 0.64376 dashed black
+stop

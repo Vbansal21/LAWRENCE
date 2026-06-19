@@ -1,0 +1,34 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "cron" [label="Schedule Trigger — heartbeat cadence\nn8n: no resident loop; cron stands in", shape=box, style="rounded"];
+  "exsched" [label="Execute Workflow — scheduler: fetch due intents", shape=box];
+  "iffire" [label="IF — any due intents", shape=diamond];
+  "fire" [label="Execute Workflow — fire intents, no model", shape=box];
+  "exdrain" [label="Execute Workflow — drain observation buffer", shape=box];
+  "exreflect" [label="Execute Workflow — journal reflection hook", shape=box];
+  "ifevents" [label="IF — any events", shape=diamond];
+  "backoff" [label="Set — lengthen cadence in Static Data\nn8n: cadence state across runs = Static Data", shape=box];
+  "sortsig" [label="Sort + Limit 1 — most-significant event", shape=box];
+  "iftier" [label="IF — clears action tier", shape=diamond];
+  "noop" [label="NoOp — no action", shape=box];
+  "ifbusy" [label="IF — live turn in progress\nn8n: no native preemption; check shared state", shape=diamond];
+  "drop2" [label="NoOp — yield to live turn", shape=box];
+  "agent" [label="AI Agent — one droppable proactive action\nTools: retrieval, effectors as sub-workflows", shape=box];
+  "cron" -> "exsched" [penwidth=2.2];
+  "exsched" -> "iffire" [penwidth=2.2];
+  "iffire" -> "fire" [label="yes"];
+  "fire" -> "exdrain";
+  "iffire" -> "exdrain" [label="no"];
+  "exdrain" -> "exreflect" [penwidth=2.2];
+  "exreflect" -> "ifevents" [penwidth=2.2];
+  "ifevents" -> "backoff" [label="no"];
+  "ifevents" -> "sortsig" [label="yes"];
+  "sortsig" -> "iftier" [penwidth=2.2];
+  "iftier" -> "noop" [label="no"];
+  "iftier" -> "ifbusy" [label="yes"];
+  "ifbusy" -> "drop2" [label="busy"];
+  "ifbusy" -> "agent" [label="free"];
+}

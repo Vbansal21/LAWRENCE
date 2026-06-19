@@ -1,0 +1,24 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "add" [label="new intent — from user / model / agency", shape=box, style="rounded"];
+  "log" [label="event-sourced log — add / fired / done / remove", shape=cylinder];
+  "state" [label="current state = fold of the event log", shape=box];
+  "poll" [label="kernel poll — any intent due now?", shape=diamond];
+  "none" [label="nothing due", shape=box, style="rounded"];
+  "persist" [label="record fired BEFORE acting — exactly-once guard", shape=box];
+  "fire" [label="fire intent — no model needed", shape=box];
+  "surface" [label="notify / agency — surface to user", shape=box, style="rounded"];
+  "restart" [label="restart / crash", shape=box, style="rounded"];
+  "add" -> "log";
+  "log" -> "state";
+  "state" -> "poll";
+  "poll" -> "none" [label="no"];
+  "poll" -> "persist" [label="yes"];
+  "persist" -> "log";
+  "persist" -> "fire";
+  "fire" -> "surface";
+  "restart" -> "state" [label="replay log -> exact state, no double-fire", style=dashed];
+}

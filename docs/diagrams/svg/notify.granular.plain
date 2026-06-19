@@ -1,0 +1,23 @@
+graph 1 10.313 5.4444
+node s1 1.4444 4.6528 2.4306 0.5 "fired reminders — scheduler" rounded box black lightgrey
+node s2 4.1806 4.6528 2.3472 0.5 "proactive findings — kernel" rounded box black lightgrey
+node s3 6.375 4.6528 1.3472 0.5 "errors / health" rounded box black lightgrey
+node dedup 4.1806 3.5833 6.638 0.5 "de-dup + rate-limit — suppress repeats / floods" solid diamond black lightgrey
+node drop 3.3194 2.3889 1.1389 0.5 suppressed rounded box black lightgrey
+node route 7.2778 2.3889 6.0711 0.5 "channel router — by urgency + focus state" solid diamond black lightgrey
+node inui 5.0139 1.3194 1.8056 0.5 "in-app SSE — live UI" rounded box black lightgrey
+node popup 7.2778 1.3194 2.0139 0.5 "desktop overlay popup" rounded box black lightgrey
+node osn 9.3333 1.3194 1.3889 0.5 "OS notification" rounded box black lightgrey
+node ack 7.2778 0.25 1.9028 0.5 "delivery + ack record" solid cylinder black lightgrey
+edge s1 dedup 4 2.0653 4.4025 2.5011 4.2366 3.0829 4.0151 3.5259 3.8464 solid black
+edge s2 dedup 4 4.1806 4.4025 4.1806 4.2769 4.1806 4.1194 4.1806 3.9771 solid black
+edge s3 dedup 4 5.877 4.4025 5.5384 4.2418 5.0899 4.0289 4.7391 3.8624 solid black
+edge dedup drop 4 4.0145 3.3445 3.8907 3.1767 3.7192 2.9443 3.5775 2.7524 "repeat / over budget" 4.4167 2.9861 solid black
+edge dedup route 4 4.706 3.3715 5.2364 3.1717 6.0568 2.8627 6.6279 2.6476 deliver 6.0347 2.9861 solid black
+edge route inui 4 6.8413 2.1742 6.5057 2.0197 6.0369 1.804 5.6581 1.6298 solid black
+edge route popup 4 7.2778 2.1386 7.2778 2.013 7.2778 1.8555 7.2778 1.7132 solid black
+edge route osn 4 7.679 2.1717 7.9805 2.0189 8.3983 1.8072 8.7386 1.6347 solid black
+edge inui ack 4 5.5276 1.0692 5.855 0.91855 6.2819 0.72213 6.6321 0.56099 solid black
+edge popup ack 4 7.2778 1.0692 7.2778 0.94355 7.2778 0.78606 7.2778 0.64376 solid black
+edge osn ack 4 8.8669 1.0692 8.5723 0.91988 8.1889 0.72559 7.8725 0.56526 solid black
+stop

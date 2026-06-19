@@ -1,0 +1,28 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Context gating + distillation.
+%% The back-pressure gear between raw realtime observations and durable context: decides
+%% what earns attention, then turns transient activity into coherent context.
+%% (ctx/gate.py significance.py extract.py distill.py store.py)
+flowchart TD
+  obs([raw observations — from perception gear])
+  score[cheap-first significance scorer — heuristics before any model]
+  gate{attention gate — threshold / back-pressure}
+  drop([drop / log only])
+  extract[boundary-respecting extraction — structured content from the observation]
+  distill[distillation — compress into coherent context, escalate to model only on high value]
+  seam[model gateway — least-privilege, escalation only]
+  tiers[(tiered context store — rolling working set)]
+  writer{single writer — I1}
+
+  kernel([cognitive kernel])
+  retr([retrieval])
+  mem([durable memory])
+
+  obs --> score --> gate
+  gate -->|below| drop
+  gate -->|admit| extract --> distill
+  distill -.->|escalate only when cheap path is unsure| seam
+  distill --> writer
+  writer --> tiers
+  gate -.->|significance events| kernel
+  tiers -->|current context| retr
+  tiers -->|promote| mem

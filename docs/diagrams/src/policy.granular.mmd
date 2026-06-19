@@ -1,0 +1,26 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Policy / privacy / redaction (D-33).
+%% The trust boundary: nothing personal leaves a local boundary un-vetted. A classifier +
+%% redactor + routing decision sit on EVERY outbound seam. (policy.py)
+flowchart TD
+  req([any outbound or sensitive op — model route / web query / notification / log])
+  classify[classify — personal vs shareable, secret detection]
+  decide{policy decision — local-only vs external-allowed}
+  localonly([force local path])
+  redact[redact / sanitize — strip secrets + identifiers]
+  ok([release to external seam])
+
+  subgraph enforce[Enforcement points it meshes onto]
+    router([model provider router])
+    webarm([retrieval web arm])
+    notif([notifications])
+    logs[(logs / audit)]
+  end
+
+  req --> classify --> decide
+  decide -->|personal, no opt-in| localonly
+  decide -->|external allowed| redact --> ok
+  localonly -.-> router
+  ok -.-> router
+  ok -.-> webarm
+  ok -.-> notif
+  redact -.-> logs

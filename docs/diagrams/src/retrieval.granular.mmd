@@ -1,0 +1,49 @@
+%% SYSTEMS ARCHITECTURE (generalized, yet granular) — Retrieval subsystem as a gear.
+%% Generalized ROLES not implementation; shows how it meshes with neighbouring subsystems
+%% and the NATURE of each coupling. (retrieval/ — §J)
+flowchart TD
+  subgraph drv[Upstream demand]
+    turn([live user turn — synchronous])
+    proac([proactive cognition — autonomous])
+  end
+
+  subgraph R[Retrieval subsystem — roles]
+    planner[grounded query-planner]
+    fan{{parallel fan-out — one independent gatherer per source class}}
+    gmem[evidence gatherer + intra-source relevance ranker]
+    gdoc[evidence gatherer + intra-source relevance ranker]
+    gweb[evidence gatherer + intra-source relevance ranker]
+    suff{sufficiency gate}
+    assessor[sufficiency assessor]
+    fuse[cross-source rank-fusion]
+    out([cited evidence set])
+  end
+
+  subgraph ext[Neighbouring subsystems it meshes with]
+    seam[model gateway — least-privilege role seam, local-default]
+    mem[(associative memory — own knowledge)]
+    doc[(local document corpus)]
+    web[(live web — external)]
+    answer([answer composer])
+  end
+
+  turn -->|need| planner
+  proac -.->|autonomous need| planner
+  planner -.->|discern reasoning| seam
+  planner -->|per-source query plan| fan
+  fan --> gmem
+  fan --> gdoc
+  fan --> gweb
+  gmem <-->|fast, transient| mem
+  gdoc <-->|local lookup| doc
+  gweb <-->|slow, external, cache-back| web
+  gmem --> suff
+  gdoc --> suff
+  gweb --> suff
+  suff -->|under floor, rounds remain| assessor
+  assessor -.->|assess reasoning| seam
+  assessor -->|refine, bounded| fan
+  suff -->|enough| fuse
+  fuse ==> out
+  out ==>|cited bundle| answer
+  out -.->|situation understanding| proac

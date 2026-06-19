@@ -1,0 +1,27 @@
+%% n8n-PARALLEL — Memory + notes graph in n8n's node library.
+%% RESTRICTION: the single-writer invariant (I1) is NOT enforceable by n8n itself; it must
+%% be one shared sub-workflow that every writer calls (Execute Workflow), never direct
+%% store access. Recall fusion has no native node -> Code.
+flowchart TD
+  trgw([Execute Workflow Trigger — WRITE: the only mutator path\nn8n: I1 enforced by convention, one shared workflow])
+  classify{Switch — write kind}
+  vstore[(Vector Store — Insert + Embeddings)]
+  kv[(Data store node — tiered records)]
+  edge[HTTP / Data store — upsert graph edge with weight]
+  trgw ==> classify
+  classify -->|content| vstore
+  classify -->|record| kv
+  classify -->|link / delete| edge
+
+  trgr([Execute Workflow Trigger — RECALL: query])
+  emb[Embeddings — query vector]
+  vget[(Vector Store — Get Many)]
+  kget[(Data store — recent / lexical)]
+  gget[Code — graph neighbourhood + weights]
+  fuse[Code — fuse lexical + vector + graph + recency\nn8n: no native fusion]
+  resp([Respond — recall digest])
+  trgr ==> emb ==> vget
+  vget --> fuse
+  kget --> fuse
+  gget --> fuse
+  fuse ==> resp

@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Operation classes"; style="dashed,rounded"; color="#888888";
+    "life" [label="lifecycle — start / stop / rebuild", shape=diamond];
+    "cfg" [label="config get / set", shape=box];
+    "memops" [label="memory ops — inspect / compact / export", shape=box];
+    "doctor" [label="diagnostics — health probes", shape=box];
+  }
+  "op" [label="operator — lk verbs", shape=box, style="rounded"];
+  "parse" [label="verb router", shape=box];
+  "rebuild" [label="rebuild = COMPILE ONLY — starts/stops nothing, N-63 lesson", shape=box];
+  "procs" [label="process lifecycle — kernel / bridge / UI", shape=box, style="rounded"];
+  "store" [label="single config source — same as GUI", shape=cylinder];
+  "subsys" [label="every subsystem — admin reach", shape=box, style="rounded"];
+  "op" -> "parse";
+  "parse" -> "life";
+  "parse" -> "cfg";
+  "parse" -> "memops";
+  "parse" -> "doctor";
+  "life" -> "rebuild" [label="rebuild"];
+  "life" -> "procs" [label="start / stop"];
+  "cfg" -> "store" [dir=both];
+  "memops" -> "subsys";
+  "doctor" -> "subsys";
+}

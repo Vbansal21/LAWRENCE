@@ -1,0 +1,23 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Scheduler / temporal intents.
+%% Durable, exactly-once, crash-safe timers: event-sourced log, state = fold of events,
+%% PERSIST-BEFORE-ACT so a restart cannot double-fire or lose an intent. (schedule.py)
+flowchart TD
+  add([new intent — from user / model / agency])
+  log[(event-sourced log — add / fired / done / remove)]
+  state[current state = fold of the event log]
+  poll{kernel poll — any intent due now?}
+  none([nothing due])
+  persist[record fired BEFORE acting — exactly-once guard]
+  fire[fire intent — no model needed]
+  surface([notify / agency — surface to user])
+  restart([restart / crash])
+
+  add --> log
+  log --> state
+  state --> poll
+  poll -->|no| none
+  poll -->|yes| persist
+  persist --> log
+  persist --> fire
+  fire --> surface
+  restart -.->|replay log -> exact state, no double-fire| state

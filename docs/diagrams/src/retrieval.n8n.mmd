@@ -1,0 +1,55 @@
+%% n8n-PARALLEL — the SAME retrieval engine rebuilt from n8n's node library.
+%% Node types are real n8n nodes. Labels marked  n8n:  call out a real n8n restriction
+%% that forces the shape (where the Python is freer than n8n allows).
+%% ==> main item-array flow  -->|cond| IF/Switch output  -.-> loop-back / async emit
+flowchart TD
+  trg([Execute Workflow Trigger\nitems: need short_ctx long_ctx proactive deep])
+  knobs[Set — knobs max_iter depth top_k fresh min_results categories\nn8n: no live env per call -> Workflow Static Data / Variables]
+  iflong{IF — long_ctx is empty}
+  vrecall[(Vector Store notes — Get Many k=4\n+ Embeddings sub-node)]
+  fmt[Code — format_recall digest]
+  discern[Basic LLM Chain — DISCERN\nChat Model sub: local llama / Output Parser: RETRIEVAL_PLAN]
+  clean[Code — clean queries + enforce FR-003 fallback]
+
+  rounds[Loop Over Items — rounds max_iter\nn8n: conditional loop only via batch cap + early-exit IF, or Execute Workflow recursion]
+  sw{Switch — active categories\nn8n: arms are STATIC branches, not a dynamic pool}
+
+  nGet[(Vector Store notes — Get Many per query)]
+  nRank[Code — merge by best rank -> candidates]
+  dGet[(Vector Store docs — Get Many, filter file://)]
+  dRank[Code — dedup + MAX_PER_URL + BM25 rank]
+  wGet[(Vector Store webcache — Get Many)]
+  wUnder{IF — hits under min_results}
+  wSearch[HTTP Request — web search]
+  wFetch[HTTP Request — fetch + read]
+  wExtract[Code — extract chunks]
+  wUpsert[(Vector Store webcache — Insert, cache back)]
+  wRank[Code — dedup + BM25 rank]
+
+  mrg[Merge — combine arms\nn8n: branch recombination needs an explicit Merge]
+  underq[Code — which arms under min_results]
+  ifunder{IF — any arm under and assess enabled}
+  assess[Basic LLM Chain — ASSESS\nOutput Parser: RETRIEVAL_ASSESS]
+  ifsuff{IF — sufficient}
+
+  fuse[Code — RRF x BM25 fuse + top_k\nn8n: no native fusion node -> Code]
+  resp([Respond — GatherResult: understanding evidence queries iterations])
+  prog>NoOp / HTTP notify — progress\nn8n: no token streaming between nodes]
+
+  trg ==> knobs ==> iflong
+  iflong -->|true| vrecall --> fmt --> discern
+  iflong -->|false| discern
+  discern ==> clean ==> rounds ==> sw
+  sw -->|notes| nGet --> nRank --> mrg
+  sw -->|doc| dGet --> dRank --> mrg
+  sw -->|web| wGet --> wUnder
+  wUnder -->|under| wSearch --> wFetch --> wExtract --> wUpsert --> wRank
+  wUnder -->|enough| wRank
+  wRank --> mrg
+  mrg ==> underq --> ifunder
+  ifunder -->|no| fuse
+  ifunder -->|yes| assess --> ifsuff
+  ifsuff -->|sufficient| fuse
+  ifsuff -.->|refine queries| rounds
+  fuse ==> resp
+  mrg -.-> prog

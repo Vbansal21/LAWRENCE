@@ -1,0 +1,23 @@
+%% n8n-PARALLEL — Model gateway + serving in n8n's node library.
+%% RESTRICTION: n8n has no single-slot scheduler or token streaming; priority arbitration
+%% is a shared-state check, and the role seam is an Execute-Workflow indirection so every
+%% caller routes through one place (provider choice never leaks to callers).
+flowchart TD
+  trg([Execute Workflow Trigger — items: role, messages, schema, priority])
+  route{Switch — provider router by role\nn8n: routing table in Static Data / Variables}
+  policy[Code — redaction gate before any external node]
+  http[HTTP Request — external provider, opt-in]
+  ifbusy{IF — local slot busy\nn8n: no single-slot scheduler; check shared state}
+  wait[Wait — requeue lower-priority call\nn8n: no preemption; cooperative requeue]
+  llm[Basic LLM Chain — local model\nChat Model sub: llama.cpp server]
+  parse[Structured Output Parser — schema-constrained]
+  resp([Respond — structured result])
+  fail([NoOp — empty result on failure, caller no-ops])
+
+  trg ==> route
+  route -->|cloud opt-in| policy ==> http ==> parse
+  route -->|local default| ifbusy
+  ifbusy -->|busy and droppable| wait
+  ifbusy -->|free or high priority| llm ==> parse
+  parse ==> resp
+  llm -.-> fail

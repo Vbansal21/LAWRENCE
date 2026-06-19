@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Enforcement points it meshes onto"; style="dashed,rounded"; color="#888888";
+    "router" [label="model provider router", shape=box, style="rounded"];
+    "webarm" [label="retrieval web arm", shape=box, style="rounded"];
+    "notif" [label="notifications", shape=box, style="rounded"];
+    "logs" [label="logs / audit", shape=cylinder];
+  }
+  "req" [label="any outbound or sensitive op — model route / web query / notification / log", shape=box, style="rounded"];
+  "classify" [label="classify — personal vs shareable, secret detection", shape=box];
+  "decide" [label="policy decision — local-only vs external-allowed", shape=diamond];
+  "localonly" [label="force local path", shape=box, style="rounded"];
+  "redact" [label="redact / sanitize — strip secrets + identifiers", shape=box];
+  "ok" [label="release to external seam", shape=box, style="rounded"];
+  "req" -> "classify";
+  "classify" -> "decide";
+  "decide" -> "localonly" [label="personal, no opt-in"];
+  "decide" -> "redact" [label="external allowed"];
+  "redact" -> "ok";
+  "localonly" -> "router" [style=dashed];
+  "ok" -> "router" [style=dashed];
+  "ok" -> "webarm" [style=dashed];
+  "ok" -> "notif" [style=dashed];
+  "redact" -> "logs" [style=dashed];
+}

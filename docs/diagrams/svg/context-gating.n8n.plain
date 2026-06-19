@@ -1,0 +1,22 @@
+graph 1 9.6181 8.2361
+node trg 3.4931 7.9861 3.5417 0.5 "Execute Workflow Trigger — observation in" rounded box black lightgrey
+node score 3.4931 6.9167 2.7778 0.5 "Code — cheap significance score" solid box black lightgrey
+node ifgate 3.4931 5.8472 4.4883 0.5 "IF — above attention threshold" solid diamond black lightgrey
+node noop 0.84028 4.6528 1.6806 0.5 "NoOp — drop / log" solid box black lightgrey
+node extract 3.4931 4.6528 2.9306 0.5 "Code — extract structured content" solid box black lightgrey
+node ifhard 3.4931 3.5833 3.5198 0.5 "IF — cheap path unsure" solid diamond black lightgrey
+node llm 2.3542 2.3889 3.1667 0.5 "Basic LLM Chain — distill / summarize" solid box black lightgrey
+node set 3.4931 1.3194 2.5972 0.5 "Set — assemble context entry" solid box black lightgrey
+node exmem 3.4931 0.25 3.8333 0.5 "Execute Workflow — memory subsystem write\nn8n: tiered store is external state" solid box black lightgrey
+node emit 7.4653 4.6528 4.3056 0.5 "NoOp — emit significance event\nn8n: no event bus; downstream is a separate trigger" solid cds black lightgrey
+edge trg score 4 3.4931 7.7359 3.4931 7.6102 3.4931 7.4527 3.4931 7.3104 solid black
+edge score ifgate 4 3.4931 6.6664 3.4931 6.5408 3.4931 6.3833 3.4931 6.241 solid black
+edge ifgate noop 4 3.0609 5.6433 2.6409 5.4586 1.9969 5.1753 1.5104 4.9614 below 2.4444 5.25 solid black
+edge ifgate extract 4 3.4931 5.5916 3.4931 5.4341 3.4931 5.2254 3.4931 5.046 admit 3.6806 5.25 solid black
+edge ifgate emit 4 4.0792 5.6612 4.7235 5.4719 5.7679 5.1652 6.5266 4.9424 dashed black
+edge extract ifhard 4 3.4931 4.4025 3.4931 4.2769 3.4931 4.1194 3.4931 3.9771 solid black
+edge ifhard llm 4 3.2894 3.3609 3.1216 3.189 2.8803 2.9418 2.6848 2.7415 unsure 3.1875 2.9861 solid black
+edge ifhard set 10 3.6379 3.3489 3.8186 3.0737 4.1042 2.6389 4.1042 2.6389 4.1042 2.6389 4.1042 2.1389 4.1042 2.1389 4.1042 2.1389 3.9256 1.9035 3.7615 1.6872 sure 4.2431 2.3889 solid black
+edge llm set 4 2.6126 2.1386 2.7644 1.9998 2.9588 1.822 3.1263 1.6688 solid black
+edge set exmem 4 3.4931 1.0692 3.4931 0.94355 3.4931 0.78606 3.4931 0.64376 solid black
+stop

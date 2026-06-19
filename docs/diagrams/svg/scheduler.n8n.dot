@@ -1,0 +1,24 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trgadd" [label="Execute Workflow Trigger — register intent", shape=box, style="rounded"];
+  "append1" [label="Data store — append add event", shape=cylinder];
+  "cron" [label="Schedule Trigger — poll cadence\nn8n: cron is the poll, not the timer", shape=box, style="rounded"];
+  "fold" [label="Code — fold event log to current state", shape=box];
+  "due" [label="Filter — intents due now", shape=box];
+  "ifany" [label="IF — any due", shape=diamond];
+  "noop" [label="NoOp — none due", shape=box];
+  "append2" [label="Data store — append fired BEFORE acting", shape=cylinder];
+  "fire" [label="Execute Workflow — fire intent, no model", shape=box];
+  "exnotify" [label="Execute Workflow — notify subsystem", shape=box];
+  "trgadd" -> "append1" [penwidth=2.2];
+  "cron" -> "fold" [penwidth=2.2];
+  "fold" -> "due" [penwidth=2.2];
+  "due" -> "ifany" [penwidth=2.2];
+  "ifany" -> "noop" [label="no"];
+  "ifany" -> "append2" [label="yes"];
+  "append2" -> "fire" [penwidth=2.2];
+  "fire" -> "exnotify" [penwidth=2.2];
+}

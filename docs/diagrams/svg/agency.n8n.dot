@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trg" [label="Execute Workflow Trigger — proposals in", shape=box, style="rounded"];
+  "allow" [label="Switch — operation kind allowlist", shape=diamond];
+  "reject" [label="NoOp — refuse unknown kind", shape=box];
+  "set" [label="Set — stage pending + token + context-version", shape=box];
+  "wait" [label="Wait for Webhook — pause until approval\nn8n: cross-execution human-in-loop", shape=box];
+  "ifok" [label="IF — approved AND context-version current", shape=diamond];
+  "expired" [label="NoOp — denied / stale", shape=box];
+  "route" [label="Switch — dispatch to effector", shape=diamond];
+  "extask" [label="Execute Workflow — task store", shape=box];
+  "exsched" [label="Execute Workflow — scheduler", shape=box];
+  "http" [label="HTTP Request — write artifact", shape=box];
+  "audit" [label="Data store — append action audit", shape=cylinder];
+  "trg" -> "allow" [penwidth=2.2];
+  "allow" -> "reject" [label="unknown"];
+  "allow" -> "set" [label="allowed"];
+  "set" -> "wait" [penwidth=2.2];
+  "wait" -> "ifok" [penwidth=2.2];
+  "ifok" -> "expired" [label="no"];
+  "ifok" -> "route" [label="yes"];
+  "route" -> "extask";
+  "route" -> "exsched";
+  "route" -> "http";
+  "route" -> "audit" [penwidth=2.2];
+}

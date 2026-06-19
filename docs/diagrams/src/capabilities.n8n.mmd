@@ -1,0 +1,13 @@
+%% n8n-PARALLEL — Capability resolution in n8n's node library.
+%% Maps cleanly to n8n: a lookup + transform. The capability table is reference data;
+%% resolution is a Code node; no loops or external calls.
+flowchart TD
+  trg([Execute Workflow Trigger — requested config, kind, provider, model])
+  lookup[(Data store / Set — capability table lookup)]
+  resolve[Code — intersect + drop unsupported]
+  clamp[Code — clamp ranges + apply defaults]
+  resp([Respond — effective config])
+  summary[Set — capability summary for UI]
+
+  trg ==> lookup ==> resolve ==> clamp ==> resp
+  clamp --> summary

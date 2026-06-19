@@ -1,0 +1,27 @@
+%% n8n-PARALLEL — Agency / effectors in n8n's node library.
+%% RESTRICTION: human confirmation across executions needs Wait-for-Webhook (the workflow
+%% pauses and resumes on an approval callback); the allowlist is a Switch; the audit is an
+%% explicit append node. n8n cannot itself guarantee the staleness check -> Code + state.
+flowchart TD
+  trg([Execute Workflow Trigger — proposals in])
+  allow{Switch — operation kind allowlist}
+  reject[NoOp — refuse unknown kind]
+  set[Set — stage pending + token + context-version]
+  wait[Wait for Webhook — pause until approval\nn8n: cross-execution human-in-loop]
+  ifok{IF — approved AND context-version current}
+  expired[NoOp — denied / stale]
+  route{Switch — dispatch to effector}
+  extask[Execute Workflow — task store]
+  exsched[Execute Workflow — scheduler]
+  http[HTTP Request — write artifact]
+  audit[(Data store — append action audit)]
+
+  trg ==> allow
+  allow -->|unknown| reject
+  allow -->|allowed| set ==> wait ==> ifok
+  ifok -->|no| expired
+  ifok -->|yes| route
+  route --> extask
+  route --> exsched
+  route --> http
+  route ==> audit

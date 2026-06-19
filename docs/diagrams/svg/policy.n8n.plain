@@ -1,0 +1,15 @@
+graph 1 5.9444 5.9722
+node trg 2.1667 4.6528 4.1389 0.5 "Execute Workflow Trigger — payload + destination" rounded box black lightgrey
+node classify 2.1667 3.5833 4.3333 0.5 "Code — classify personal vs shareable + secret scan" solid box black lightgrey
+node decide 2.1667 2.5139 3.2599 0.5 "IF — external allowed" solid diamond black lightgrey
+node block 1.875 1.3194 2.9028 0.5 "NoOp — force local, deny external" solid box black lightgrey
+node redact 4.75 1.3194 2.1389 0.5 "Code — redact / sanitize" solid box black lightgrey
+node resp 4.75 0.25 2.3889 0.5 "Respond — cleared payload" rounded box black lightgrey
+node note 2.1667 5.7222 3.3056 0.5 "Downstream HTTP nodes call this FIRST\nn8n: gate is convention, not enforced" solid cds black lightgrey
+edge trg classify 4 2.1667 4.4025 2.1667 4.2769 2.1667 4.1194 2.1667 3.9771 solid black
+edge classify decide 4 2.1667 3.3331 2.1667 3.2074 2.1667 3.05 2.1667 2.9076 solid black
+edge decide block 4 2.109 2.2695 2.0692 2.1102 2.0153 1.8947 1.9693 1.7106 no 2.125 1.9167 solid black
+edge decide redact 4 2.559 2.3228 2.9654 2.1393 3.6076 1.8492 4.0919 1.6305 yes 3.6528 1.9167 solid black
+edge redact resp 4 4.75 1.0692 4.75 0.94355 4.75 0.78606 4.75 0.64376 solid black
+edge note trg 4 2.1667 5.472 2.1667 5.3463 2.1667 5.1888 2.1667 5.0465 dashed black
+stop

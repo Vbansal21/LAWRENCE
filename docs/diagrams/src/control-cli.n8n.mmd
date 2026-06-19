@@ -1,0 +1,22 @@
+%% n8n-PARALLEL — Control plane / CLI in n8n's node library.
+%% RESTRICTION: process lifecycle (start/stop/rebuild of OS processes) is NOT an n8n
+%% concern — n8n can orchestrate config + memory ops + diagnostics via sub-workflows, but
+%% spawning/killing the native daemons stays a host shell (Execute Command), not a node.
+flowchart TD
+  trg([Webhook / Manual Trigger — operator verb])
+  route{Switch — operation class}
+  excfg[Execute Workflow — config get / set]
+  exmem[Execute Workflow — memory ops]
+  exdoc[Execute Workflow — diagnostics health]
+  shell[Execute Command — lifecycle on host\nn8n: process control is shell, not a node]
+  resp([Respond — result])
+
+  trg ==> route
+  route -->|config| excfg
+  route -->|memory| exmem
+  route -->|doctor| exdoc
+  route -->|lifecycle| shell
+  excfg ==> resp
+  exmem ==> resp
+  exdoc ==> resp
+  shell ==> resp

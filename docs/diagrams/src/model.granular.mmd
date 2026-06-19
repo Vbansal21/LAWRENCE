@@ -1,0 +1,38 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Model gateway + local serving.
+%% The least-privilege seam (I3) every reasoning subsystem meshes through; arbitrates a
+%% single local inference slot by priority; serves under a warm-KV regime (N-65).
+%% (model.py + server.py)
+flowchart TD
+  subgraph callers[Reasoning subsystems mesh in by ROLE, not by provider]
+    c1([turn — synchronous, high priority])
+    c2([retrieval discern / assess])
+    c3([proactive — droppable])
+    c4([journal])
+  end
+
+  seam[role-based gateway — caller asks for a ROLE only]
+  router{provider router — local-default, cloud opt-in}
+  policy[privacy / redaction gate — before any external call]
+  cloud[(external provider — opt-in)]
+
+  gate{priority gate — single local slot, serialized}
+  preempt[higher-priority turn preempts droppable proactive]
+
+  serve[local serving engine]
+  warm[warm-KV regime — prefix reuse, fixed-prefix context-shift, slot save and restore]
+  decode[schema-constrained decode + structured extract]
+  degrade([backend down: empty result, caller treats as no-op])
+
+  c1 --> seam
+  c2 --> seam
+  c3 --> seam
+  c4 --> seam
+  seam --> router
+  router -->|personal-data, default| gate
+  router -.->|opt-in| policy --> cloud
+  gate --> preempt
+  preempt --> serve
+  serve <--> warm
+  serve --> decode
+  decode ==>|structured result| seam
+  serve -.-> degrade

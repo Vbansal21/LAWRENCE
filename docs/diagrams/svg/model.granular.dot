@@ -1,0 +1,37 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Reasoning subsystems mesh in by ROLE, not by provider"; style="dashed,rounded"; color="#888888";
+    "c1" [label="turn — synchronous, high priority", shape=box, style="rounded"];
+    "c2" [label="retrieval discern / assess", shape=box, style="rounded"];
+    "c3" [label="proactive — droppable", shape=box, style="rounded"];
+    "c4" [label="journal", shape=box, style="rounded"];
+  }
+  "seam" [label="role-based gateway — caller asks for a ROLE only", shape=box];
+  "router" [label="provider router — local-default, cloud opt-in", shape=diamond];
+  "policy" [label="privacy / redaction gate — before any external call", shape=box];
+  "cloud" [label="external provider — opt-in", shape=cylinder];
+  "gate" [label="priority gate — single local slot, serialized", shape=diamond];
+  "preempt" [label="higher-priority turn preempts droppable proactive", shape=box];
+  "serve" [label="local serving engine", shape=box];
+  "warm" [label="warm-KV regime — prefix reuse, fixed-prefix context-shift, slot save and restore", shape=box];
+  "decode" [label="schema-constrained decode + structured extract", shape=box];
+  "degrade" [label="backend down: empty result, caller treats as no-op", shape=box, style="rounded"];
+  "c1" -> "seam";
+  "c2" -> "seam";
+  "c3" -> "seam";
+  "c4" -> "seam";
+  "seam" -> "router";
+  "router" -> "gate" [label="personal-data, default"];
+  "router" -> "policy" [label="opt-in", style=dashed];
+  "policy" -> "cloud";
+  "gate" -> "preempt";
+  "preempt" -> "serve";
+  "serve" -> "warm" [dir=both];
+  "serve" -> "decode";
+  "decode" -> "seam" [label="structured result", penwidth=2.2];
+  "serve" -> "degrade" [style=dashed];
+}

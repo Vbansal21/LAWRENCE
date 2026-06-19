@@ -1,0 +1,30 @@
+graph 1 15.146 12.083
+node cron 2.9931 11.833 3.2222 0.5 "Schedule Trigger — heartbeat cadence\nn8n: no resident loop; cron stands in" rounded box black lightgrey
+node exsched 2.9931 10.764 4.0139 0.5 "Execute Workflow — scheduler: fetch due intents" solid box black lightgrey
+node iffire 2.9931 9.6944 3.1418 0.5 "IF — any due intents" solid diamond black lightgrey
+node fire 1.7569 8.5 3.5139 0.5 "Execute Workflow — fire intents, no model" solid box black lightgrey
+node exdrain 2.9792 7.4306 3.7222 0.5 "Execute Workflow — drain observation buffer" solid box black lightgrey
+node exreflect 2.9792 6.3611 3.5833 0.5 "Execute Workflow — journal reflection hook" solid box black lightgrey
+node ifevents 2.9792 5.2917 2.5513 0.5 "IF — any events" solid diamond black lightgrey
+node backoff 2.6875 4.0972 3.75 0.5 "Set — lengthen cadence in Static Data\nn8n: cadence state across runs = Static Data" solid box black lightgrey
+node sortsig 6.5625 4.0972 3.2917 0.5 "Sort + Limit 1 — most-significant event" solid box black lightgrey
+node iftier 6.5625 3.0278 3.2836 0.5 "IF — clears action tier" solid diamond black lightgrey
+node noop 6.2708 1.6389 1.6528 0.5 "NoOp — no action" solid box black lightgrey
+node ifbusy 11.299 1.6389 7.6944 0.88889 "IF — live turn in progress\nn8n: no native preemption; check shared state" solid diamond black lightgrey
+node drop2 9.6875 0.25 2.2083 0.5 "NoOp — yield to live turn" solid box black lightgrey
+node agent 12.924 0.25 3.5556 0.5 "AI Agent — one droppable proactive action\nTools: retrieval, effectors as sub-workflows" solid box black lightgrey
+edge cron exsched 4 2.9931 11.583 2.9931 11.457 2.9931 11.3 2.9931 11.158 solid black
+edge exsched iffire 4 2.9931 10.514 2.9931 10.388 2.9931 10.231 2.9931 10.088 solid black
+edge iffire fire 4 2.7777 9.4773 2.5951 9.305 2.3295 9.0543 2.1149 8.8518 yes 2.5347 9.0972 solid black
+edge iffire exdrain 10 3.1506 9.4694 3.3555 9.1948 3.6875 8.75 3.6875 8.75 3.6875 8.75 3.6875 8.25 3.6875 8.25 3.6875 8.25 3.4728 8.0058 3.2798 7.7864 no 3.7708 8.5 solid black
+edge fire exdrain 4 2.0343 8.2497 2.1988 8.1096 2.4098 7.9297 2.5907 7.7756 solid black
+edge exdrain exreflect 4 2.9792 7.1803 2.9792 7.0547 2.9792 6.8972 2.9792 6.7549 solid black
+edge exreflect ifevents 4 2.9792 6.1109 2.9792 5.9852 2.9792 5.8277 2.9792 5.6854 solid black
+edge ifevents backoff 4 2.9215 5.0473 2.8817 4.888 2.8278 4.6725 2.7818 4.4884 no 2.9375 4.6944 solid black
+edge ifevents sortsig 4 3.433 5.13 4.0009 4.9451 4.9855 4.6246 5.6989 4.3923 yes 4.9792 4.6944 solid black
+edge sortsig iftier 4 6.5625 3.847 6.5625 3.7213 6.5625 3.5638 6.5625 3.4215 solid black
+edge iftier noop 4 6.513 2.783 6.4689 2.577 6.4034 2.2715 6.3517 2.03 no 6.5208 2.4306 solid black
+edge iftier ifbusy 4 7.1012 2.8591 7.8248 2.6511 9.1311 2.2757 10.095 1.9987 yes 8.8958 2.4306 solid black
+edge ifbusy drop2 4 10.85 1.2459 10.607 1.0404 10.309 0.7889 10.076 0.5919 busy 10.59 0.84722 solid black
+edge ifbusy agent 4 11.751 1.2459 11.997 1.0404 12.297 0.7889 12.532 0.5919 free 12.424 0.84722 solid black
+stop

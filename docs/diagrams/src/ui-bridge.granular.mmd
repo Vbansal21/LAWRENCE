@@ -1,0 +1,41 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Desktop UI bridge.
+%% The single contract between any front-end and the whole system: request/response PLUS
+%% a one-way event stream. Front-end is swappable; the contract is the invariant.
+%% (apps/desktop/scripts/ui_bridge.py)
+flowchart TD
+  ui([front-end — variant-blind, swappable])
+
+  subgraph bridge[Contract gateway — the only transport]
+    health[health — advertises active variant + state]
+    reqs{request router}
+    stream[[event stream — one-way fan-out]]
+  end
+
+  subgraph verbs[Request endpoints mesh to subsystems]
+    chats([chats / history — memory])
+    links([links — notes graph])
+    voice([voice resolve — proactive])
+    confirmacts([action confirm — agency])
+    cfg([config — control plane, GUI equals CLI])
+  end
+
+  subgraph events[Event stream sources]
+    deltas([answer deltas — turn / model])
+    findings([findings — retrieval])
+    voicEv([voice events])
+    notes2([notifications])
+  end
+
+  ui -->|request| reqs
+  ui -->|subscribe| stream
+  ui --> health
+  reqs --> chats
+  reqs --> links
+  reqs --> voice
+  reqs --> confirmacts
+  reqs --> cfg
+  deltas -.-> stream
+  findings -.-> stream
+  voicEv -.-> stream
+  notes2 -.-> stream
+  stream -.->|push| ui

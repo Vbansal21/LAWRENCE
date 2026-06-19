@@ -1,0 +1,17 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trg" [label="Execute Workflow Trigger — requested config, kind, provider, model", shape=box, style="rounded"];
+  "lookup" [label="Data store / Set — capability table lookup", shape=cylinder];
+  "resolve" [label="Code — intersect + drop unsupported", shape=box];
+  "clamp" [label="Code — clamp ranges + apply defaults", shape=box];
+  "resp" [label="Respond — effective config", shape=box, style="rounded"];
+  "summary" [label="Set — capability summary for UI", shape=box];
+  "trg" -> "lookup" [penwidth=2.2];
+  "lookup" -> "resolve" [penwidth=2.2];
+  "resolve" -> "clamp" [penwidth=2.2];
+  "clamp" -> "resp" [penwidth=2.2];
+  "clamp" -> "summary";
+}

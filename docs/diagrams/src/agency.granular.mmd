@@ -1,0 +1,31 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Agency / effectors.
+%% How autonomous intent becomes a real-world side effect WITHOUT trust: a least-privilege
+%% allowlist + explicit confirmation + a staleness guard + an append-only audit. (agency.py)
+flowchart TD
+  proposer([kernel proactive / model — proposes actions])
+  allow{least-privilege allowlist — only known operation kinds}
+  reject([refuse — outside allowlist])
+  stage[stage pending + mint confirmation token + bind to context-version]
+  confirm{confirmation gate — explicit approve}
+  stale{context-version still current?}
+  expired([reject — stale / superseded])
+  exec[execute via the owning subsystem]
+  tasks([task store])
+  sched([scheduler])
+  artifact[(artifact store)]
+  audit[(append-only action audit)]
+  ui([UI / user — approves or denies])
+
+  proposer --> allow
+  allow -->|unknown kind| reject
+  allow -->|allowed| stage
+  stage --> confirm
+  ui --> confirm
+  confirm -->|deny| expired
+  confirm -->|approve| stale
+  stale -->|no| expired
+  stale -->|yes| exec
+  exec --> tasks
+  exec --> sched
+  exec --> artifact
+  exec --> audit

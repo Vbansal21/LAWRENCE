@@ -1,0 +1,38 @@
+graph 1 19.5 9.9028
+node turn 12.833 9.1111 2.5139 0.5 "live user turn — synchronous" rounded box black lightgrey
+node proac 15.903 9.1111 2.9306 0.5 "proactive cognition — autonomous" rounded box black lightgrey
+node planner 12.833 7.6528 2.0833 0.5 "grounded query-planner" solid box black lightgrey
+node fan 12.833 6.4583 8.7877 0.5 "{parallel fan-out — one independent gatherer per source class}" solid diamond black lightgrey
+node gmem 10.361 5.3889 4.1389 0.5 "evidence gatherer + intra-source relevance ranker" solid box black lightgrey
+node gdoc 14.847 5.3889 4.1389 0.5 "evidence gatherer + intra-source relevance ranker" solid box black lightgrey
+node gweb 5.875 5.3889 4.1389 0.5 "evidence gatherer + intra-source relevance ranker" solid box black lightgrey
+node suff 13.583 4.1944 2.504 0.5 "sufficiency gate" solid diamond black lightgrey
+node assessor 13.694 3 1.8056 0.5 "sufficiency assessor" solid box black lightgrey
+node fuse 16.014 3 2.125 0.5 "cross-source rank-fusion" solid box black lightgrey
+node out 16.014 1.9306 1.6667 0.5 "cited evidence set" rounded box black lightgrey
+node seam 4.6944 0.47222 4.6389 0.5 "model gateway — least-privilege role seam, local-default" solid box black lightgrey
+node mem 8.9861 0.47222 3.25 0.5 "associative memory — own knowledge" solid cylinder black lightgrey
+node doc 11.958 0.47222 1.9861 0.5 "local document corpus" solid cylinder black lightgrey
+node web 1.125 0.47222 1.7917 0.5 "live web — external" solid cylinder black lightgrey
+node answer 14.111 0.47222 1.6111 0.5 "answer composer" rounded box black lightgrey
+edge turn planner 4 12.833 8.861 12.833 8.6394 12.833 8.3043 12.833 8.0454 need 12.993 8.5139 solid black
+edge proac planner 4 15.396 8.861 14.868 8.6151 14.041 8.2294 13.469 7.9632 "autonomous need" 15.292 8.5139 dashed black
+edge planner fan 4 12.833 7.3972 12.833 7.2397 12.833 7.0309 12.833 6.8516 "per-source query plan" 13.528 7.0556 solid black
+edge planner seam 10 11.788 7.5113 9.3085 7.2085 3.2778 6.4722 3.2778 6.4722 3.2778 6.4722 3.2778 6.4722 3.2778 1.9167 3.2778 1.9167 3.941 1.247 4.3598 0.824 "discern reasoning" 3.8403 4.1944 dashed black
+edge fan gmem 4 12.339 6.2362 11.97 6.0808 11.462 5.8665 11.053 5.6942 solid black
+edge fan gdoc 4 13.246 6.2311 13.539 6.0793 13.938 5.8731 14.264 5.7044 solid black
+edge fan gweb 4 11.688 6.273 10.575 6.1064 8.8709 5.8513 7.595 5.6603 solid black
+edge gmem suff 7 11.304 5.1376 11.839 5.003 12.403 4.8611 12.403 4.8611 12.403 4.8611 12.807 4.6374 13.143 4.4519 solid black
+edge gmem mem 10 10.129 5.0136 9.9085 4.6709 9.6111 4.2083 9.6111 4.2083 9.6111 4.2083 9.6111 4.2083 9.6111 1.9167 9.6111 1.9167 9.3308 1.275 9.1456 0.85121 "fast, transient" 10.056 3 solid black
+edge gdoc suff 4 14.585 5.1333 14.386 4.9491 14.11 4.6948 13.899 4.4995 solid black
+edge gdoc doc 13 14.026 5.0914 13.233 4.8176 12.153 4.4444 12.153 4.4444 12.153 4.4444 11.694 4.2083 11.694 4.2083 11.694 4.2083 11.694 4.2083 11.694 1.9167 11.694 1.9167 11.811 1.2861 11.889 0.86226 "local lookup" 12.069 3 solid black
+edge gweb suff 4 7.4395 5.1382 9.0518 4.8942 11.503 4.5232 12.766 4.332 solid black
+edge gweb web 10 4.7578 5.1038 3.3381 4.7591 1.0694 4.2083 1.0694 4.2083 1.0694 4.2083 1.0694 4.2083 1.0694 1.9167 1.0694 1.9167 1.0939 1.2861 1.1104 0.86226 "slow, external, cache-back" 1.9097 3 solid black
+edge suff assessor 10 13.577 3.9417 13.573 3.8075 13.569 3.6667 13.569 3.6667 13.569 3.6667 13.569 3.5278 13.569 3.5278 13.569 3.5278 13.583 3.47 13.602 3.3932 "under floor, rounds remain" 14.424 3.5972 solid black
+edge suff fuse 7 14.058 4.0388 14.568 3.8867 15.306 3.6667 15.306 3.6667 15.306 3.6667 15.475 3.5109 15.647 3.3516 enough 15.674 3.5972 solid black
+edge assessor fan 16 14.599 3.2155 15.245 3.3595 16 3.5278 16 3.5278 16 3.5278 16.708 4.8611 16.708 4.8611 16.708 4.8611 17.097 5.1389 17.097 5.1389 17.097 5.1389 17.097 5.6389 17.097 5.6389 17.097 5.6389 15.198 5.9977 13.935 6.2363 "refine, bounded" 17.215 4.7917 solid black
+edge assessor seam 7 12.913 2.7485 12.452 2.6084 11.958 2.4583 11.958 2.4583 11.958 2.4583 7.7037 1.3032 5.7068 0.76098 "assess reasoning" 11.389 1.9306 dashed black
+edge fuse out 4 16.014 2.7497 16.014 2.6241 16.014 2.4666 16.014 2.3243 solid black
+edge out proac 10 16.461 2.1808 17.043 2.4882 17.986 2.9861 17.986 2.9861 17.986 7.6667 17.986 7.6667 17.986 7.6667 17.986 7.6667 16.977 8.3593 16.364 8.7806 "situation understanding" 18.743 5.3889 dashed black
+edge out answer 4 15.7 1.6804 15.383 1.4423 14.892 1.073 14.539 0.80817 "cited bundle" 15.681 1.3333 solid black
+stop

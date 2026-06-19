@@ -1,0 +1,30 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Always-on sensors — independent lifecycle, USER-controlled"; style="dashed,rounded"; color="#888888";
+    "aud" [label="audio capture — realtime stream", shape=box, style="rounded"];
+    "scr" [label="screen capture — realtime", shape=box, style="rounded"];
+    "reg" [label="region / window capture — realtime", shape=box, style="rounded"];
+  }
+  "buf" [label="transient observation buffer — fire-and-forget, never blocks sensors", shape=cylinder];
+  "kernel" [label="{cognitive kernel — cadence-paced consumer}", shape=diamond];
+  "gate" [label="significance + context gating — cheap-first filter / back-pressure", shape=box];
+  "drop" [label="discard / log only", shape=box, style="rounded"];
+  "refine" [label="context-based refinement — situate against running context", shape=box];
+  "invoke" [label="proactive model invocation — only on high gain, not per observation", shape=box];
+  "seam" [label="model gateway — least-privilege seam", shape=box];
+  "ctx" [label="context + memory", shape=cylinder];
+  "aud" -> "buf" [label="temporally-atomic transcription"];
+  "scr" -> "buf" [label="temporally-atomic frame-scene"];
+  "reg" -> "buf" [label="temporally-atomic observation"];
+  "buf" -> "kernel" [label="async drain on own cadence — temporal decoupling", style=dashed];
+  "kernel" -> "gate";
+  "gate" -> "drop" [label="low significance"];
+  "gate" -> "refine" [label="worth attention"];
+  "refine" -> "invoke";
+  "invoke" -> "seam" [label="probe: model reads sensor output, never toggles sensor lifecycle", style=dashed];
+  "refine" -> "ctx" [label="durable observation"];
+}

@@ -1,0 +1,41 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Contract gateway — the only transport"; style="dashed,rounded"; color="#888888";
+    "health" [label="health — advertises active variant + state", shape=box];
+    "reqs" [label="request router", shape=diamond];
+    "stream" [label="[event stream — one-way fan-out]", shape=box];
+  }
+  subgraph cluster_1 {
+    label="Request endpoints mesh to subsystems"; style="dashed,rounded"; color="#888888";
+    "chats" [label="chats / history — memory", shape=box, style="rounded"];
+    "links" [label="links — notes graph", shape=box, style="rounded"];
+    "voice" [label="voice resolve — proactive", shape=box, style="rounded"];
+    "confirmacts" [label="action confirm — agency", shape=box, style="rounded"];
+    "cfg" [label="config — control plane, GUI equals CLI", shape=box, style="rounded"];
+  }
+  subgraph cluster_2 {
+    label="Event stream sources"; style="dashed,rounded"; color="#888888";
+    "deltas" [label="answer deltas — turn / model", shape=box, style="rounded"];
+    "findings" [label="findings — retrieval", shape=box, style="rounded"];
+    "voicEv" [label="voice events", shape=box, style="rounded"];
+    "notes2" [label="notifications", shape=box, style="rounded"];
+  }
+  "ui" [label="front-end — variant-blind, swappable", shape=box, style="rounded"];
+  "ui" -> "reqs" [label="request"];
+  "ui" -> "stream" [label="subscribe"];
+  "ui" -> "health";
+  "reqs" -> "chats";
+  "reqs" -> "links";
+  "reqs" -> "voice";
+  "reqs" -> "confirmacts";
+  "reqs" -> "cfg";
+  "deltas" -> "stream" [style=dashed];
+  "findings" -> "stream" [style=dashed];
+  "voicEv" -> "stream" [style=dashed];
+  "notes2" -> "stream" [style=dashed];
+  "stream" -> "ui" [label="push", style=dashed];
+}

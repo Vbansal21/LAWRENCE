@@ -1,0 +1,18 @@
+graph 1 13.514 3.8333
+node trg 5.875 3.5833 3.5556 0.5 "Webhook / Manual Trigger — operator verb" rounded box black lightgrey
+node route 5.875 2.5139 3.7088 0.5 "Switch — operation class" solid diamond black lightgrey
+node excfg 1.5139 1.3194 3.0278 0.5 "Execute Workflow — config get / set" solid box black lightgrey
+node exmem 4.7917 1.3194 2.8333 0.5 "Execute Workflow — memory ops" solid box black lightgrey
+node exdoc 8.1944 1.3194 3.2639 0.5 "Execute Workflow — diagnostics health" solid box black lightgrey
+node shell 11.847 1.3194 3.3333 0.5 "Execute Command — lifecycle on host\nn8n: process control is shell, not a node" solid box black lightgrey
+node resp 6.4861 0.25 1.6111 0.5 "Respond — result" rounded box black lightgrey
+edge trg route 4 5.875 3.3331 5.875 3.2074 5.875 3.05 5.875 2.9076 solid black
+edge route excfg 4 5.2868 2.3427 4.5817 2.154 3.3882 1.8347 2.5322 1.6057 config 4.0347 1.9167 solid black
+edge route exmem 4 5.6763 2.286 5.5176 2.1151 5.2921 1.8722 5.1085 1.6745 memory 5.6389 1.9167 solid black
+edge route exdoc 4 6.2477 2.3126 6.6109 2.1298 7.1692 1.849 7.5949 1.6349 doctor 7.3194 1.9167 solid black
+edge route shell 4 6.5954 2.3593 7.5603 2.1708 9.2908 1.8327 10.501 1.5964 lifecycle 9.2986 1.9167 solid black
+edge excfg resp 4 2.6422 1.0692 3.517 0.8859 4.7155 0.63483 5.5405 0.462 solid black
+edge exmem resp 4 5.1762 1.0692 5.4128 0.92371 5.7189 0.73554 5.9757 0.57767 solid black
+edge exdoc resp 4 7.8068 1.0692 7.5671 0.92305 7.2568 0.73383 6.9972 0.57552 solid black
+edge shell resp 4 10.631 1.0692 9.6615 0.88087 8.324 0.62099 7.4334 0.44795 solid black
+stop

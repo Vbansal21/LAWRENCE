@@ -1,0 +1,22 @@
+graph 1 12.382 6.875
+node trg 5.1736 6.625 5.5 0.5 "Execute Workflow Trigger — items: role, messages, schema, priority" rounded box black lightgrey
+node route 5.1736 5.3611 7.1389 0.88889 "Switch — provider router by role\nn8n: routing table in Static Data / Variables" solid diamond black lightgrey
+node policy 2.0069 3.7778 4.0139 0.5 "Code — redaction gate before any external node" solid box black lightgrey
+node http 2.0069 2.3889 3.4583 0.5 "HTTP Request — external provider, opt-in" solid box black lightgrey
+node ifbusy 8.3681 3.7778 8.0278 0.88889 "IF — local slot busy\nn8n: no single-slot scheduler; check shared state" solid diamond black lightgrey
+node wait 5.8125 2.3889 3.4444 0.5 "Wait — requeue lower-priority call\nn8n: no preemption; cooperative requeue" solid box black lightgrey
+node llm 9.2986 2.3889 2.8333 0.5 "Basic LLM Chain — local model\nChat Model sub: llama.cpp server" solid box black lightgrey
+node parse 4.2986 1.3194 3.9722 0.5 "Structured Output Parser — schema-constrained" solid box black lightgrey
+node resp 4.2986 0.25 2.4583 0.5 "Respond — structured result" rounded box black lightgrey
+node fail 9.2986 1.3194 3.7917 0.5 "NoOp — empty result on failure, caller no-ops" rounded box black lightgrey
+edge trg route 4 5.1736 6.3728 5.1736 6.2516 5.1736 6.0985 5.1736 5.949 solid black
+edge route policy 4 4.4708 5.002 3.9165 4.7297 3.151 4.3537 2.6211 4.0933 "cloud opt-in" 4.0694 4.5694 solid black
+edge route ifbusy 4 5.8786 5.0039 6.3613 4.7689 7.0042 4.4558 7.5157 4.2067 "local default" 7.2361 4.5694 solid black
+edge policy http 4 2.0069 3.5268 2.0069 3.3212 2.0069 3.0199 2.0069 2.781 solid black
+edge http parse 4 2.527 2.1386 2.8598 1.9873 3.2943 1.7898 3.6497 1.6283 solid black
+edge ifbusy wait 4 7.6966 3.4063 7.2887 3.189 6.7735 2.9146 6.385 2.7077 "busy and droppable" 7.6389 2.9861 solid black
+edge ifbusy llm 4 8.6422 3.3629 8.7742 3.1699 8.9309 2.9406 9.0581 2.7545 "free or high priority" 9.5486 2.9861 solid black
+edge llm parse 4 8.164 2.1386 7.3919 1.9778 6.369 1.7647 5.5694 1.5981 solid black
+edge llm fail 4 9.2986 2.1386 9.2986 2.013 9.2986 1.8555 9.2986 1.7132 dashed black
+edge parse resp 4 4.2986 1.0692 4.2986 0.94355 4.2986 0.78606 4.2986 0.64376 solid black
+stop

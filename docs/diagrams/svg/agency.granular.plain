@@ -1,0 +1,28 @@
+graph 1 12.943 7.2917
+node proposer 3.7206 7.0417 3.6806 0.5 "kernel proactive / model — proposes actions" rounded box black lightgrey
+node allow 3.7206 5.9722 7.4412 0.5 "least-privilege allowlist — only known operation kinds" solid diamond black lightgrey
+node reject 3.0678 4.7778 2.2361 0.5 "refuse — outside allowlist" rounded box black lightgrey
+node stage 7.2484 4.7778 5.4167 0.5 "stage pending + mint confirmation token + bind to context-version" solid box black lightgrey
+node confirm 9.4289 3.7083 5.2679 0.5 "confirmation gate — explicit approve" solid diamond black lightgrey
+node stale 8.04 2.5139 4.2049 0.5 "context-version still current?" solid diamond black lightgrey
+node expired 10.832 1.3194 2.375 0.5 "reject — stale / superseded" rounded box black lightgrey
+node exec 7.8317 1.3194 2.9306 0.5 "execute via the owning subsystem" solid box black lightgrey
+node tasks 5.7345 0.25 1.0278 0.5 "task store" rounded box black lightgrey
+node sched 7.0956 0.25 1 0.5 scheduler rounded box black lightgrey
+node artifact 8.5817 0.25 1.2639 0.5 "artifact store" solid cylinder black lightgrey
+node audit 10.651 0.25 2.1667 0.5 "append-only action audit" solid cylinder black lightgrey
+node ui 11.623 4.7778 2.6389 0.5 "UI / user — approves or denies" rounded box black lightgrey
+edge proposer allow 4 3.7206 6.7914 3.7206 6.6658 3.7206 6.5083 3.7206 6.366 solid black
+edge allow reject 4 3.5916 5.7278 3.4998 5.5638 3.3747 5.3402 3.2698 5.1526 "unknown kind" 3.8664 5.375 solid black
+edge allow stage 4 4.315 5.7617 4.8852 5.5732 5.752 5.2865 6.3957 5.0737 allowed 5.8317 5.375 solid black
+edge stage confirm 4 7.7432 4.5275 8.083 4.3652 8.5342 4.1496 8.8842 3.9824 solid black
+edge confirm stale 4 9.1742 3.4805 8.9575 3.2984 8.6437 3.0349 8.4011 2.8311 approve 9.0331 3.1111 solid black
+edge confirm expired 7 9.6396 3.4739 9.9024 3.1987 10.318 2.7639 10.318 2.7639 10.318 2.7639 10.546 2.1278 10.699 1.7039 deny 10.658 2.5139 solid black
+edge stale expired 4 8.4824 2.3151 8.9255 2.1299 9.6143 1.8421 10.132 1.6259 no 9.6095 1.9167 solid black
+edge stale exec 4 7.9979 2.2639 7.9695 2.1052 7.9316 1.8927 7.8991 1.7108 yes 8.0539 1.9167 solid black
+edge exec tasks 4 7.3558 1.0692 7.0539 0.91922 6.6606 0.72386 6.3369 0.56312 solid black
+edge exec sched 4 7.6647 1.0692 7.5703 0.93562 7.4504 0.76604 7.3451 0.61699 solid black
+edge exec artifact 4 8.0019 1.0692 8.0981 0.93562 8.2201 0.76604 8.3275 0.61699 solid black
+edge exec audit 4 8.4715 1.0692 8.8896 0.91469 9.4382 0.71203 9.8804 0.54866 solid black
+edge ui confirm 4 11.125 4.5275 10.782 4.3646 10.326 4.1482 9.9736 3.9808 solid black
+stop

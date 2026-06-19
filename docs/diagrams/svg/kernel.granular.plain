@@ -1,0 +1,40 @@
+graph 1 20.742 10.486
+node sensors 17.103 9.6944 2.4028 0.5 "transient observation buffer" solid cylinder black lightgrey
+node sched 19.589 9.6944 1.8611 0.5 "due temporal intents" solid cylinder black lightgrey
+node retr 14.145 2.5139 1.7917 0.5 "retrieval subsystem" rounded box black lightgrey
+node seam 12.214 1.3194 3.25 0.5 "model gateway — least-privilege seam" solid box black lightgrey
+node eff 15.853 2.5139 0.93056 0.5 effectors rounded box black lightgrey
+node journal 17.506 2.5139 1.6667 0.5 "journal subsystem" rounded box black lightgrey
+node turns 11.742 2.5139 2.3194 0.5 "live turns — higher priority" rounded box black lightgrey
+node clock 4.5474 1.3194 9.0948 0.5 "{self-pacing heartbeat — backs off when idle, resets when active}" solid diamond black lightgrey
+node fire 18.867 0.25 3.0139 0.5 "fire due intents — no model needed" solid box black lightgrey
+node drain 17.186 8.5 2.4167 0.5 "drain observations this beat" solid box black lightgrey
+node reflecthook 17.297 3.9722 2.0833 0.5 "per-beat reflection hook" solid box black lightgrey
+node idle 7.0196 7.4306 2.0316 0.5 "any events?" solid diamond black lightgrey
+node backoff 2.9779 6.2361 1.6111 0.5 "lengthen cadence" solid box black lightgrey
+node arbiter 7.0196 6.2361 4.0417 0.5 "significance arbiter — pick most-significant event" solid box black lightgrey
+node tier 7.0196 5.1667 4.0867 0.5 "clears action-tier threshold?" solid diamond black lightgrey
+node drop 4.8529 3.9722 1.6944 0.5 "no action this beat" rounded box black lightgrey
+node action 8.9502 3.9722 4.7639 0.5 "at most ONE droppable action — preemptible by live turns" solid box black lightgrey
+node heal 6.3113 2.5139 3.8889 0.5 "self-heal — model down: no-op, retry next beat" solid box black lightgrey
+edge sensors drain 4 17.12 9.4388 17.131 9.2813 17.146 9.0726 17.159 8.8933 async 17.332 9.0972 dashed black
+edge sched fire 10 19.586 9.4388 19.582 9.0971 19.575 8.5139 19.575 8.5139 19.575 8.5139 19.575 8.5139 19.575 1.3056 19.575 1.3056 19.314 0.92089 19.108 0.61907 solid black
+edge turns seam 4 11.84 2.2583 11.905 2.0976 11.991 1.8837 12.065 1.702 "preempt droppable work" 12.777 1.9167 solid black
+edge clock fire 4 6.3974 1.171 9.2125 0.96619 14.528 0.57954 17.218 0.38384 solid black
+edge fire drain 10 18.867 0.50026 18.867 0.80759 18.867 1.3056 18.867 1.3056 18.867 7.4444 18.867 7.4444 18.867 7.4444 18.867 7.4444 18.184 7.8676 17.689 8.1745 solid black
+edge drain reflecthook 10 17.208 8.2497 17.237 7.9424 17.283 7.4444 17.283 7.4444 17.283 7.4444 17.283 7.4444 17.283 5.1528 17.283 5.1528 17.289 4.7102 17.293 4.3703 solid black
+edge drain idle 4 15.975 8.362 13.878 8.1472 9.6258 7.7115 7.8392 7.5284 solid black
+edge reflecthook journal 4 17.332 3.7221 17.364 3.4995 17.413 3.1623 17.451 2.9029 dashed black
+edge idle backoff 4 6.5755 7.2885 5.9403 7.1051 4.7569 6.7635 3.9212 6.5223 no 5.2002 6.8333 solid black
+edge idle arbiter 4 7.0196 7.1749 7.0196 7.0175 7.0196 6.8087 7.0196 6.6294 yes 7.1307 6.8333 solid black
+edge backoff clock 10 2.8771 5.9859 2.746 5.6785 2.5335 5.1806 2.5335 5.1806 2.5335 5.1806 2.5335 5.1806 2.5335 2.5 2.5335 2.5 3.4551 1.9661 4.0514 1.6206 "next beat" 2.8391 3.9722 dashed black
+edge arbiter tier 4 7.0196 5.9859 7.0196 5.8602 7.0196 5.7027 7.0196 5.5604 solid black
+edge tier drop 4 6.6618 4.9601 6.3234 4.7779 5.8103 4.5016 5.4168 4.2897 no 6.0752 4.5694 solid black
+edge tier action 4 7.3471 4.9549 7.6441 4.7754 8.0869 4.5078 8.432 4.2993 yes 8.1446 4.5694 solid black
+edge drop clock 10 4.46 3.7208 4.0889 3.4966 3.5891 3.1944 3.5891 3.1944 3.5891 3.1944 3.5891 2.2639 3.5891 2.2639 3.5891 2.2639 3.9372 1.9259 4.2138 1.6573 "next beat" 3.8946 2.5139 dashed black
+edge action retr 7 10.227 3.7219 11.439 3.4975 13.075 3.1944 13.075 3.1944 13.075 3.1944 13.368 3.0121 13.647 2.8382 "proactive need" 12.853 3.375 dashed black
+edge action seam 7 8.9756 3.7192 9.0254 3.2521 9.1307 2.2639 9.1307 2.2639 9.1307 2.2639 10.383 1.886 11.291 1.6119 "proactive invocation" 9.7696 2.5139 dashed black
+edge action eff 10 11.003 3.7217 12.173 3.5868 13.408 3.4444 13.408 3.4444 13.408 3.4444 15.214 3.1944 15.214 3.1944 15.214 3.1944 15.371 3.0311 15.529 2.8662 solid black
+edge action heal 4 8.5144 3.7221 8.0656 3.4788 7.3642 3.0986 6.8738 2.8327 solid black
+edge heal clock 4 5.9501 2.2611 5.6737 2.0783 5.291 1.8252 4.9951 1.6295 "next beat" 5.7835 1.9167 dashed black
+stop

@@ -1,0 +1,24 @@
+%% n8n-PARALLEL — Perception / sensors rebuilt in n8n's node library.
+%% KEY RESTRICTION surfaced: n8n CANNOT host a realtime 60-FPS capture loop. Native
+%% sensors stay native and only PUSH events; n8n begins at the event boundary.
+%% Labels marked  n8n:  call out a real n8n restriction.
+flowchart TD
+  native>Native sensors push observations — outside n8n\nn8n: no realtime capture; ingress only via trigger]
+  trg([Webhook / MQTT Trigger — one execution per observation\nn8n: stateless per execution])
+  norm[Set — normalize: timestamp, modality, payload]
+  sig[Code — cheap significance score]
+  ifsig{IF — above attention threshold}
+  noop[NoOp — discard / log only]
+  exctx[Execute Workflow — context subsystem\nn8n: running context lives in another workflow + external store]
+  refine[Basic LLM Chain — situate against running context]
+  ifgain{IF — high info gain}
+  agent[AI Agent — proactive model invocation\nChat Model sub: local llama]
+  exmem[Execute Workflow — memory subsystem upsert]
+
+  native -.->|event| trg
+  trg ==> norm ==> sig ==> ifsig
+  ifsig -->|low| noop
+  ifsig -->|worth attention| exctx ==> refine ==> ifgain
+  ifgain -->|low gain| exmem
+  ifgain -->|high gain| agent
+  agent ==> exmem

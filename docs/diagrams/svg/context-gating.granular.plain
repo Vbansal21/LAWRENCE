@@ -1,0 +1,25 @@
+graph 1 9.5417 8.3611
+node obs 4.7222 8.1111 3.4583 0.5 "raw observations — from perception gear" rounded box black lightgrey
+node score 4.7222 7.0417 4.9444 0.5 "cheap-first significance scorer — heuristics before any model" solid box black lightgrey
+node gate 4.7222 5.9722 6.0474 0.5 "attention gate — threshold / back-pressure" solid diamond black lightgrey
+node drop 0.68056 4.7778 1.3611 0.5 "drop / log only" rounded box black lightgrey
+node extract 4.7222 4.7778 6.0139 0.5 "boundary-respecting extraction — structured content from the observation" solid box black lightgrey
+node distill 4.7222 3.7083 6.6944 0.5 "distillation — compress into coherent context, escalate to model only on high value" solid box black lightgrey
+node seam 3.3056 2.5139 4.0417 0.5 "model gateway — least-privilege, escalation only" solid box black lightgrey
+node tiers 7.0278 1.4444 3.4583 0.5 "tiered context store — rolling working set" solid cylinder black lightgrey
+node writer 7.0278 2.5139 2.7166 0.5 "single writer — I1" solid diamond black lightgrey
+node kernel 8.8056 4.7778 1.4722 0.5 "cognitive kernel" rounded box black lightgrey
+node retr 6.25 0.25 0.90278 0.5 retrieval rounded box black lightgrey
+node mem 7.8056 0.25 1.5139 0.5 "durable memory" rounded box black lightgrey
+edge obs score 4 4.7222 7.8609 4.7222 7.7352 4.7222 7.5777 4.7222 7.4354 solid black
+edge score gate 4 4.7222 6.7914 4.7222 6.6658 4.7222 6.5083 4.7222 6.366 solid black
+edge gate drop 4 4.0818 5.7735 3.384 5.5721 2.2656 5.2492 1.5033 5.0292 below 3.0208 5.375 solid black
+edge gate extract 4 4.7222 5.7166 4.7222 5.5591 4.7222 5.3504 4.7222 5.171 admit 4.9097 5.375 solid black
+edge gate kernel 4 5.3647 5.7748 6.0565 5.5771 7.1612 5.2615 7.9316 5.0414 "significance events" 7.5 5.375 dashed black
+edge extract distill 4 4.7222 4.5275 4.7222 4.4019 4.7222 4.2444 4.7222 4.1021 solid black
+edge distill seam 7 4.2638 3.4556 4.0063 3.3214 3.7361 3.1806 3.7361 3.1806 3.7361 3.1806 3.641 3.0363 3.5402 2.8835 "escalate only when cheap path is unsure" 5.0278 3.1111 dashed black
+edge distill writer 7 5.4729 3.4571 5.8987 3.3224 6.3472 3.1806 6.3472 3.1806 6.3472 3.1806 6.5377 2.9979 6.7171 2.8258 solid black
+edge tiers retr 7 6.7243 1.1917 6.5539 1.0575 6.375 0.91667 6.375 0.91667 6.375 0.91667 6.35 0.78624 6.3224 0.64199 "current context" 6.875 0.84722 solid black
+edge tiers mem 7 7.2021 1.1917 7.3 1.0575 7.4028 0.91667 7.4028 0.91667 7.4028 0.91667 7.49 0.77526 7.5833 0.62408 promote 7.7569 0.84722 solid black
+edge writer tiers 4 7.0278 2.2636 7.0278 2.138 7.0278 1.9805 7.0278 1.8382 solid black
+stop

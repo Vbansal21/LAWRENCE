@@ -1,0 +1,63 @@
+graph 1 12.91 26.5
+node trg 9.3681 26.25 3.8056 0.5 "Execute Workflow Trigger\nitems: need short_ctx long_ctx proactive deep" rounded box black lightgrey
+node knobs 9.3681 25.181 5.0972 0.5 "Set — knobs max_iter depth top_k fresh min_results categories\nn8n: no live env per call -> Workflow Static Data / Variables" solid box black lightgrey
+node iflong 9.3681 24.111 3.4017 0.5 "IF — long_ctx is empty" solid diamond black lightgrey
+node vrecall 8.3403 22.861 3.0417 0.61111 "Vector Store notes — Get Many k=4\n+ Embeddings sub-node" solid cylinder black lightgrey
+node fmt 8.5764 21.611 2.4306 0.5 "Code — format_recall digest" solid box black lightgrey
+node discern 9.4792 20.542 4.9861 0.5 "Basic LLM Chain — DISCERN\nChat Model sub: local llama / Output Parser: RETRIEVAL_PLAN" solid box black lightgrey
+node clean 9.4792 19.472 3.9306 0.5 "Code — clean queries + enforce FR-003 fallback" solid box black lightgrey
+node rounds 9.4792 18.403 6.8611 0.5 "Loop Over Items — rounds max_iter\nn8n: conditional loop only via batch cap + early-exit IF, or Execute Workflow recursion" solid box black lightgrey
+node sw 5.9236 17.139 8.4444 0.88889 "Switch — active categories\nn8n: arms are STATIC branches, not a dynamic pool" solid diamond black lightgrey
+node nGet 8.9653 15.75 3.4722 0.5 "Vector Store notes — Get Many per query" solid cylinder black lightgrey
+node nRank 8.9514 13.903 3.5139 0.5 "Code — merge by best rank -> candidates" solid box black lightgrey
+node dGet 1.7569 15.75 3.5139 0.5 "Vector Store docs — Get Many, filter file://" solid cylinder black lightgrey
+node dRank 2.0903 12.347 3.7222 0.5 "Code — dedup + MAX_PER_URL + BM25 rank" solid box black lightgrey
+node wGet 5.3681 15.75 3.0139 0.5 "Vector Store webcache — Get Many" solid cylinder black lightgrey
+node wUnder 5.3681 14.681 3.9922 0.5 "IF — hits under min_results" solid diamond black lightgrey
+node wSearch 5.0764 13.125 2.4722 0.5 "HTTP Request — web search" solid box black lightgrey
+node wFetch 4.9792 11.569 2.5556 0.5 "HTTP Request — fetch + read" solid box black lightgrey
+node wExtract 4.6319 10.375 2.0417 0.5 "Code — extract chunks" solid box black lightgrey
+node wUpsert 4.5486 9.1806 3.6806 0.5 "Vector Store webcache — Insert, cache back" solid cylinder black lightgrey
+node wRank 5.7431 8.1111 2.4167 0.5 "Code — dedup + BM25 rank" solid box black lightgrey
+node mrg 5.7431 7.0417 4.1944 0.5 "Merge — combine arms\nn8n: branch recombination needs an explicit Merge" solid box black lightgrey
+node underq 7.5764 5.9722 3.1944 0.5 "Code — which arms under min_results" solid box black lightgrey
+node ifunder 7.5764 4.9028 5.6695 0.5 "IF — any arm under and assess enabled" solid diamond black lightgrey
+node assess 9.2569 3.7083 2.8889 0.5 "Basic LLM Chain — ASSESS\nOutput Parser: RETRIEVAL_ASSESS" solid box black lightgrey
+node ifsuff 9.2569 2.5139 2.2914 0.5 "IF — sufficient" solid diamond black lightgrey
+node fuse 7.5764 1.3194 2.9722 0.5 "Code — RRF x BM25 fuse + top_k\nn8n: no native fusion node -> Code" solid box black lightgrey
+node resp 7.5764 0.25 5.5139 0.5 "Respond — GatherResult: understanding evidence queries iterations" rounded box black lightgrey
+node prog 3.9514 5.9722 3.3472 0.5 "NoOp / HTTP notify — progress\nn8n: no token streaming between nodes" solid cds black lightgrey
+edge trg knobs 4 9.3681 26 9.3681 25.874 9.3681 25.717 9.3681 25.574 solid black
+edge knobs iflong 4 9.3681 24.93 9.3681 24.805 9.3681 24.647 9.3681 24.505 solid black
+edge iflong vrecall 4 9.189 23.884 9.0483 23.717 8.8482 23.479 8.6777 23.276 true 9.0556 23.514 solid black
+edge iflong discern 13 9.5227 23.881 9.7196 23.606 10.035 23.167 10.035 23.167 10.035 23.167 10.035 22.556 10.035 22.556 10.035 22.556 9.9653 21.361 9.9653 21.361 9.9653 21.361 9.8259 21.13 9.6964 20.915 false 10.167 22.208 solid black
+edge vrecall fmt 4 8.3974 22.551 8.4292 22.387 8.4691 22.18 8.5031 22.004 solid black
+edge fmt discern 4 8.7812 21.361 8.8993 21.225 9.0498 21.051 9.1808 20.9 solid black
+edge discern clean 4 9.4792 20.291 9.4792 20.166 9.4792 20.008 9.4792 19.866 solid black
+edge clean rounds 4 9.4792 19.222 9.4792 19.096 9.4792 18.939 9.4792 18.797 solid black
+edge rounds sw 4 8.7978 18.152 8.2927 17.976 7.5939 17.733 7.0118 17.531 solid black
+edge sw nGet 4 6.703 16.776 7.2001 16.554 7.8372 16.269 8.3086 16.058 notes 7.9861 16.347 solid black
+edge sw dGet 4 4.9256 16.799 4.2228 16.569 3.2915 16.265 2.6206 16.046 doc 3.8472 16.347 solid black
+edge sw wGet 4 5.7539 16.709 5.6794 16.527 5.5926 16.314 5.5202 16.137 web 5.7639 16.347 solid black
+edge nGet nRank 4 8.9635 15.498 8.9611 15.193 8.9571 14.66 8.9543 14.298 solid black
+edge nRank mrg 10 8.8516 13.65 8.6719 13.22 8.3125 12.361 8.3125 12.361 8.3125 12.361 8.3125 12.361 8.3125 8.0972 8.3125 8.0972 7.2194 7.6541 6.4591 7.3459 solid black
+edge dGet dRank 4 1.7804 15.499 1.8374 14.921 1.9837 13.44 2.0529 12.739 solid black
+edge dRank mrg 10 2.1002 12.092 2.1162 11.705 2.1458 10.986 2.1458 10.986 2.1458 10.986 2.1458 10.986 2.1458 8.0972 2.1458 8.0972 3.7273 7.6393 4.793 7.3307 solid black
+edge wGet wUnder 4 5.3681 15.5 5.3681 15.374 5.3681 15.217 5.3681 15.074 solid black
+edge wUnder wSearch 4 5.3238 14.435 5.2773 14.192 5.2037 13.806 5.1488 13.518 under 5.4653 13.903 solid black
+edge wUnder wRank 10 5.5843 14.454 6.0118 14.034 6.9236 13.139 6.9236 13.139 6.9236 13.139 6.9236 13.139 6.9236 9.1667 6.9236 9.1667 6.4641 8.7612 6.1184 8.4562 enough 7.1667 10.972 solid black
+edge wSearch wFetch 4 5.0612 12.872 5.0456 12.628 5.0212 12.245 5.0031 11.959 solid black
+edge wFetch wExtract 4 4.9072 11.314 4.8599 11.155 4.797 10.943 4.7433 10.763 solid black
+edge wExtract wUpsert 4 4.6147 10.119 4.6034 9.9619 4.5885 9.7532 4.5757 9.5738 solid black
+edge wUpsert wRank 4 4.8196 8.9303 4.9804 8.7901 5.1866 8.6103 5.3634 8.4561 solid black
+edge wRank mrg 4 5.7431 7.8609 5.7431 7.7352 5.7431 7.5777 5.7431 7.4354 solid black
+edge mrg underq 4 6.1591 6.7914 6.4174 6.6446 6.7523 6.4543 7.0317 6.2956 solid black
+edge mrg prog 4 5.3365 6.7914 5.084 6.6446 4.7567 6.4543 4.4837 6.2956 dashed black
+edge underq ifunder 4 7.5764 5.722 7.5764 5.5963 7.5764 5.4388 7.5764 5.2965 solid black
+edge ifunder assess 4 7.8807 4.6776 8.1368 4.4999 8.5068 4.243 8.7987 4.0404 yes 8.5903 4.3056 solid black
+edge ifunder fuse 4 7.5764 4.6501 7.5764 4.0454 7.5764 2.4496 7.5764 1.7143 no 7.6597 3.1111 solid black
+edge assess ifsuff 4 9.2569 3.4527 9.2569 3.2952 9.2569 3.0865 9.2569 2.9072 solid black
+edge ifsuff rounds 13 9.5588 2.7006 10.029 2.9697 10.882 3.4583 10.882 3.4583 10.882 3.4583 11.229 3.6944 11.229 3.6944 11.229 17.153 11.229 17.153 11.229 17.153 11.229 17.153 10.454 17.7 9.9358 18.066 "refine queries" 11.667 9.7778 dashed black
+edge ifsuff fuse 4 8.998 2.3203 8.7428 2.1431 8.3472 1.8685 8.0381 1.6538 sufficient 8.7778 1.9167 solid black
+edge fuse resp 4 7.5764 1.0692 7.5764 0.94355 7.5764 0.78606 7.5764 0.64376 solid black
+stop

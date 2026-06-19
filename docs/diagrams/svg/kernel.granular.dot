@@ -1,0 +1,50 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Meshes — inputs"; style="dashed,rounded"; color="#888888";
+    "sensors" [label="transient observation buffer", shape=cylinder];
+    "sched" [label="due temporal intents", shape=cylinder];
+  }
+  subgraph cluster_1 {
+    label="Meshes — drives"; style="dashed,rounded"; color="#888888";
+    "retr" [label="retrieval subsystem", shape=box, style="rounded"];
+    "seam" [label="model gateway — least-privilege seam", shape=box];
+    "eff" [label="effectors", shape=box, style="rounded"];
+    "journal" [label="journal subsystem", shape=box, style="rounded"];
+    "turns" [label="live turns — higher priority", shape=box, style="rounded"];
+  }
+  "clock" [label="{self-pacing heartbeat — backs off when idle, resets when active}", shape=diamond];
+  "fire" [label="fire due intents — no model needed", shape=box];
+  "drain" [label="drain observations this beat", shape=box];
+  "reflecthook" [label="per-beat reflection hook", shape=box];
+  "idle" [label="any events?", shape=diamond];
+  "backoff" [label="lengthen cadence", shape=box];
+  "arbiter" [label="significance arbiter — pick most-significant event", shape=box];
+  "tier" [label="clears action-tier threshold?", shape=diamond];
+  "drop" [label="no action this beat", shape=box, style="rounded"];
+  "action" [label="at most ONE droppable action — preemptible by live turns", shape=box];
+  "heal" [label="self-heal — model down: no-op, retry next beat", shape=box];
+  "sched" -> "fire";
+  "clock" -> "fire";
+  "fire" -> "drain";
+  "sensors" -> "drain" [label="async", style=dashed];
+  "drain" -> "reflecthook";
+  "reflecthook" -> "journal" [style=dashed];
+  "drain" -> "idle";
+  "idle" -> "backoff" [label="no"];
+  "backoff" -> "clock" [label="next beat", style=dashed];
+  "idle" -> "arbiter" [label="yes"];
+  "arbiter" -> "tier";
+  "tier" -> "drop" [label="no"];
+  "drop" -> "clock" [label="next beat", style=dashed];
+  "tier" -> "action" [label="yes"];
+  "action" -> "retr" [label="proactive need", style=dashed];
+  "action" -> "seam" [label="proactive invocation", style=dashed];
+  "action" -> "eff";
+  "action" -> "heal";
+  "heal" -> "clock" [label="next beat", style=dashed];
+  "turns" -> "seam" [label="preempt droppable work", penwidth=2.2];
+}

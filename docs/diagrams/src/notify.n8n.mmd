@@ -1,0 +1,28 @@
+%% n8n-PARALLEL — Notifications in n8n's node library.
+%% RESTRICTION: multiple independent sources -> separate triggers feeding one shared
+%% notify sub-workflow (n8n has no shared event bus); de-dup window needs external state.
+flowchart TD
+  t1([Execute Workflow Trigger — reminder fired])
+  t2([Execute Workflow Trigger — proactive finding])
+  t3([Execute Workflow Trigger — error / health])
+  merge[Merge — single stream]
+  dedup{Remove Duplicates + Code rate-limit\nn8n: window state in Static Data}
+  drop[NoOp — suppressed]
+  route{Switch — channel by urgency}
+  http1[HTTP Request — in-app SSE push]
+  http2[HTTP Request — desktop popup endpoint]
+  http3[HTTP Request — OS notification service]
+  audit[(Data store — delivery record)]
+
+  t1 ==> merge
+  t2 ==> merge
+  t3 ==> merge
+  merge ==> dedup
+  dedup -->|repeat| drop
+  dedup -->|deliver| route
+  route --> http1
+  route --> http2
+  route --> http3
+  http1 ==> audit
+  http2 ==> audit
+  http3 ==> audit

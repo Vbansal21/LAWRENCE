@@ -1,0 +1,28 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trgw" [label="Execute Workflow Trigger — WRITE: the only mutator path\nn8n: I1 enforced by convention, one shared workflow", shape=box, style="rounded"];
+  "classify" [label="Switch — write kind", shape=diamond];
+  "vstore" [label="Vector Store — Insert + Embeddings", shape=cylinder];
+  "kv" [label="Data store node — tiered records", shape=cylinder];
+  "edge" [label="HTTP / Data store — upsert graph edge with weight", shape=box];
+  "trgr" [label="Execute Workflow Trigger — RECALL: query", shape=box, style="rounded"];
+  "emb" [label="Embeddings — query vector", shape=box];
+  "vget" [label="Vector Store — Get Many", shape=cylinder];
+  "kget" [label="Data store — recent / lexical", shape=cylinder];
+  "gget" [label="Code — graph neighbourhood + weights", shape=box];
+  "fuse" [label="Code — fuse lexical + vector + graph + recency\nn8n: no native fusion", shape=box];
+  "resp" [label="Respond — recall digest", shape=box, style="rounded"];
+  "trgw" -> "classify" [penwidth=2.2];
+  "classify" -> "vstore" [label="content"];
+  "classify" -> "kv" [label="record"];
+  "classify" -> "edge" [label="link / delete"];
+  "trgr" -> "emb" [penwidth=2.2];
+  "emb" -> "vget" [penwidth=2.2];
+  "vget" -> "fuse";
+  "kget" -> "fuse";
+  "gget" -> "fuse";
+  "fuse" -> "resp" [penwidth=2.2];
+}

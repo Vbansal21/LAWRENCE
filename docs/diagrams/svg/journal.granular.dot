@@ -1,0 +1,33 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "beat" [label="kernel reflection hook — every beat, active or idle", shape=box, style="rounded"];
+  "floor" [label="own time-floor elapsed?", shape=diamond];
+  "sig" [label="events significant enough?", shape=diamond];
+  "skip" [label="skip — no write", shape=box, style="rounded"];
+  "dispatch" [label="dispatch to background — never blocks the cadence", shape=box];
+  "recall" [label="recall prior entries + fold memory and web/doc", shape=box];
+  "mem" [label="memory gear", shape=box, style="rounded"];
+  "seam" [label="model gateway — least-privilege", shape=box];
+  "revise" [label="first-person rolling revision of the standing entry", shape=box];
+  "budget" [label="within cost budget?", shape=diamond];
+  "writer" [label="single writer — I1", shape=diamond];
+  "store" [label="journal = shared long-term episodic mind", shape=cylinder];
+  "back" [label="feeds recall digest / global context", shape=box, style="rounded"];
+  "beat" -> "floor";
+  "floor" -> "skip" [label="no"];
+  "floor" -> "sig" [label="yes"];
+  "sig" -> "skip" [label="no"];
+  "sig" -> "dispatch" [label="yes"];
+  "dispatch" -> "recall";
+  "recall" -> "mem" [dir=both];
+  "recall" -> "revise";
+  "revise" -> "seam" [label="revision reasoning", style=dashed];
+  "revise" -> "budget";
+  "budget" -> "revise" [label="room remains"];
+  "budget" -> "writer" [label="bound reached"];
+  "writer" -> "store";
+  "store" -> "back" [style=dashed];
+}

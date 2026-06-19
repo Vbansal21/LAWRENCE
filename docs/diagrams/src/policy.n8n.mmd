@@ -1,0 +1,17 @@
+%% n8n-PARALLEL — Policy / privacy / redaction in n8n's node library.
+%% RESTRICTION: n8n cannot force every other workflow through this gate; it is a shared
+%% sub-workflow that each outbound path MUST Execute before any external (HTTP) node.
+%% Convention-enforced, like the single-writer rule.
+flowchart TD
+  trg([Execute Workflow Trigger — payload + destination])
+  classify[Code — classify personal vs shareable + secret scan]
+  decide{IF — external allowed}
+  block[NoOp — force local, deny external]
+  redact[Code — redact / sanitize]
+  resp([Respond — cleared payload])
+  note>Downstream HTTP nodes call this FIRST\nn8n: gate is convention, not enforced]
+
+  trg ==> classify ==> decide
+  decide -->|no| block
+  decide -->|yes| redact ==> resp
+  note -.-> trg

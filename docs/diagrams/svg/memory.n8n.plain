@@ -1,0 +1,24 @@
+graph 1 19.868 4.9028
+node trgw 4.8194 4.6528 4.7222 0.5 "Execute Workflow Trigger — WRITE: the only mutator path\nn8n: I1 enforced by convention, one shared workflow" rounded box black lightgrey
+node classify 4.8194 3.5833 3.0001 0.5 "Switch — write kind" solid diamond black lightgrey
+node vstore 1.5278 2.3889 3.0556 0.5 "Vector Store — Insert + Embeddings" solid cylinder black lightgrey
+node kv 4.8194 2.3889 2.8333 0.5 "Data store node — tiered records" solid cylinder black lightgrey
+node "edge" 8.6944 2.3889 4.2222 0.5 "HTTP / Data store — upsert graph edge with weight" solid box black lightgrey
+node trgr 12.264 4.6528 3.5556 0.5 "Execute Workflow Trigger — RECALL: query" rounded box black lightgrey
+node emb 12.264 3.5833 2.4306 0.5 "Embeddings — query vector" solid box black lightgrey
+node vget 12.264 2.3889 2.2083 0.5 "Vector Store — Get Many" solid cylinder black lightgrey
+node kget 14.944 2.3889 2.4722 0.5 "Data store — recent / lexical" solid cylinder black lightgrey
+node gget 18.194 2.3889 3.3472 0.5 "Code — graph neighbourhood + weights" solid box black lightgrey
+node fuse 14.944 1.3194 3.9861 0.5 "Code — fuse lexical + vector + graph + recency\nn8n: no native fusion" solid box black lightgrey
+node resp 14.944 0.25 2.1111 0.5 "Respond — recall digest" rounded box black lightgrey
+edge trgw classify 4 4.8194 4.4025 4.8194 4.2769 4.8194 4.1194 4.8194 3.9771 solid black
+edge classify vstore 4 4.3618 3.4072 3.8373 3.2213 2.9682 2.9133 2.3305 2.6873 content 3.5278 2.9861 solid black
+edge classify kv 4 4.8194 3.3277 4.8194 3.1702 4.8194 2.9615 4.8194 2.7822 record 5.0278 2.9861 solid black
+edge classify "edge" 4 5.326 3.4169 5.9463 3.2302 7.0086 2.9103 7.7746 2.6797 "link / delete" 7.2431 2.9861 solid black
+edge trgr emb 4 12.264 4.4025 12.264 4.2769 12.264 4.1194 12.264 3.9771 solid black
+edge emb vget 4 12.264 3.3277 12.264 3.1702 12.264 2.9615 12.264 2.7822 solid black
+edge vget fuse 4 12.872 2.1386 13.267 1.9853 13.783 1.7846 14.202 1.6219 solid black
+edge kget fuse 4 14.944 2.1386 14.944 2.013 14.944 1.8555 14.944 1.7132 solid black
+edge gget fuse 4 17.457 2.1386 16.97 1.9827 16.331 1.7777 15.819 1.6135 solid black
+edge fuse resp 4 14.944 1.0692 14.944 0.94355 14.944 0.78606 14.944 0.64376 solid black
+stop

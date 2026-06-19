@@ -1,0 +1,34 @@
+%% SYSTEMS ARCHITECTURE (generalized, yet granular) — Perception / sensors as gears.
+%% Emphasis (per directive): realtime, transient, INDEPENDENT sensors; temporally-atomic
+%% transcriptions; context-based refinement; proactive model invocation; probe-not-control.
+%% (obs/ + sensor.py + ctx/gate.py + kernel/tick.py)
+flowchart TD
+  subgraph S[Always-on sensors — independent lifecycle, USER-controlled]
+    aud([audio capture — realtime stream])
+    scr([screen capture — realtime])
+    reg([region / window capture — realtime])
+  end
+
+  buf[(transient observation buffer — fire-and-forget, never blocks sensors)]
+  aud -->|temporally-atomic transcription| buf
+  scr -->|temporally-atomic frame-scene| buf
+  reg -->|temporally-atomic observation| buf
+
+  kernel{{cognitive kernel — cadence-paced consumer}}
+  buf -.->|async drain on own cadence — temporal decoupling| kernel
+
+  gate[significance + context gating — cheap-first filter / back-pressure]
+  kernel --> gate
+  drop([discard / log only])
+  gate -->|low significance| drop
+
+  refine[context-based refinement — situate against running context]
+  gate -->|worth attention| refine
+
+  invoke[proactive model invocation — only on high gain, not per observation]
+  refine --> invoke
+  seam[model gateway — least-privilege seam]
+  invoke -.->|probe: model reads sensor output, never toggles sensor lifecycle| seam
+
+  ctx[(context + memory)]
+  refine -->|durable observation| ctx

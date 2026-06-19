@@ -859,13 +859,21 @@ MVP-done unless it satisfies **all four**:
 4. **DEPLOYMENT-ACCEPTED — N-62 stands.** The deployment-stress sink (N-59/60/61→N-62)
    remains the acceptance gate, now gated additionally by N-63 (voice regression).
 
-**Explicitly POST-MVP (not required for acceptance):** the *full* production-serving
-research menu (N-65 advanced: dynamic KV compaction, speculative decoding), the *full*
-n8n migration + composition UI (N-64), and the *rich* diagram deliverable (N-68 beyond a
-first legible pass). MVP needs only the *minimum* of each to satisfy 1–4. **Open scope
-decision for the user:** confirm whether INTEGRITY (#1) and the local-latency floor (#3)
-are blocking for MVP acceptance, or tracked as immediate post-MVP — I have assumed
-*blocking for #1, latency-floor-only for #3*.
+**SCOPE DECISION (user 2026-06-19, RESOLVED): N-65, N-66, N-67, N-68 are ALL hard MVP
+requirements — "hard + refined".** No longer "minimum-to-satisfy"; each must reach its
+refined bar for acceptance:
+- **N-65** must hit the verified CPU-only target (**≥15 tok/s decode @ 32K+, pure CPU, no
+  speculative decoding** — see N-65; warm/hot-KV steady-state regime).
+- **N-66** atomic/nodal refactor of the subsystem set is required, not aspirational.
+- **N-67** the full UI integrity matrix must be clean (every control real or honestly off).
+- **N-68** the legible diagram set is a required deliverable.
+Both INTEGRITY (#1) and the local-latency floor (#3) are therefore **blocking for MVP**.
+
+**Still genuinely POST-MVP (not required):** the *full* n8n migration + composition UI
+(N-64) beyond making subsystems node-shaped; advanced KV compaction (H2O/SnapKV-class)
+*if* the verified target is already met without it; speculative decoding (the user reached
+the target without it). The MVP diagram set (N-68) is required; an exhaustive every-edge
+atlas is not.
 
 ### §K.1 — Stage 1 BUILD artifact
 
@@ -2468,45 +2476,50 @@ usability lever (§K.0.1 #3).
 6. **Model + KV quantization** review (model GGUF quant level vs quality; KV q8/q4 with flash
    attn). 7. **Speculative decoding** (`--model-draft`) for local latency. (advanced → post-MVP.)
 **Anchor.** *Soul:* "the whole system optimised for local" — a watcher that takes minutes
-fails the responsiveness bar. **Deferral.** Items 1–2–5 are the MVP latency floor (§K.0.1
-#3); 3 is high-value next; 4–6–7 are advanced/post-MVP. **Edges.** `--concretizes--> N-32`
+fails the responsiveness bar. **MVP scope (hard, per §K.0.1 RESOLVED):** items **1, 2, 3**
+(KV prefix reuse + context-shift + slot save/restore) ARE the MVP — they create the verified
+warm/hot-KV regime — plus `-fa`-always + KV-q8 + physical-core threads. Item 4 (dynamic KV
+compaction) and item 7 (speculative decoding) stay post-MVP; spec-decode is explicitly NOT
+in the target path (target is met without it). **Edges.** `--concretizes--> N-32`
 load-bearing · `--extends--> D-37` (KV slots → content-cache) · `--constraint--> D-36`
 (must stay random-turn compatible) · `--feeds--> N-62` (usable-local acceptance lane).
 **Ambiguity.** Per-block KV-cache eviction policy `crystallizes-during`; context-shift vs
 app-trim boundary `resolve-before-start`; GPU availability on this host `crystallizes-during`.
 
-**Performance TARGET (user 2026-06-19): ≥ 14–15 tok/s decode at 32K+ context, PURE CPU
-— no GPU, no NPU.** GPU/NPU are bonus (raise expectations if available, never required).
-This is an aggressive CPU-only bar for a Gemma-4-class model at 32K (decode there is
-**memory-bandwidth-bound on KV reads**), so the strategy is: shrink the per-token KV
-read + cut the tokens the big model must actually decode.
-**Web-researched CPU-only mechanics (2026-06-19, ranked by impact at the CPU 32K target):**
-- **Speculative decoding (`--model-draft` + `--spec-*`) — the #1 CPU decode multiplier.** A
-  tiny draft model (e.g. a 0.5–1B Gemma) proposes tokens the target verifies in parallel;
-  ~2× reported on high-context long output. On CPU this is the most realistic path to the
-  target. Needs a compatible small draft GGUF + tuned draft length/acceptance.
-- **Flash attention `-fa on` ALWAYS** — 1.3–2× faster prefill, smaller KV/token, and a **hard
-  prerequisite for KV quantization** (without `-fa` the KV is dequantized every step → slower
-  than no quant). Works on CPU. Currently only conditional → make it default-on for Gemma 4.
+**Performance TARGET (user 2026-06-19, VERIFIED BY USER): ≥ 15 tok/s decode at 32K+
+context, PURE CPU — no GPU, no NPU, AND NO SPECULATIVE DECODING.** The user has *tested
+and confirmed* this is achievable on the deployment host. **Measurement regime (user-
+specified, this is what the target is defined against):** steady-state decode **excluding
+TTFT**, with **warm caches, a hot server, and a hot KV** — i.e. the prompt prefix is
+already resident in KV and we are measuring token generation, not first-token latency.
+**Consequence for the build:** the levers that *create and preserve the hot-KV warm regime*
+are the MVP-critical ones — not raw decode tricks. Spec-decode is explicitly OUT of the
+target path (it is a bonus, not a requirement, and the bar is met without it).
+**CPU-only mechanics, RE-RANKED for the warm/hot-KV target (2026-06-19):**
+- **(MVP-critical) Keep the KV hot across turns — cross-turn prefix reuse.** The whole
+  target assumes the prefix is already in KV. So `cache_prompt:true` on every completion +
+  llama.cpp **`--cache-reuse N`**, and **stop app-layer trimming (`tail_for_model`) from
+  defeating prefix identity**. This is item 1 above — promoted to the dominant lever because
+  the verified regime *is* the warm-KV regime.
+- **(MVP-critical) Server-side context-shift with a FIXED prefix** (item 2: `--keep` +
+  context-shift; BOS + system + tool/skill/MCP defs + pinned context never re-evaluated).
+  This keeps the hot region stable so warm decode stays warm as the rolling middle moves.
+- **(MVP-critical) KV slot save/restore for hot content** (item 3, extends D-37): restoring
+  a saved KV *is* "hot KV without paying TTFT" — the literal mechanism behind the regime.
+- **Flash attention `-fa on` ALWAYS** — smaller KV/token + **hard prerequisite for KV
+  quant** (without `-fa`, quantized KV is dequantized every step → slower). Make default-on.
 - **KV-cache quant `--cache-type-k/v q8_0`** — halves KV bytes → **less memory bandwidth per
-  decoded token**, the dominant CPU cost at 32K (q8_0 = safe quality). Requires `-fa`.
-  (advanced/CPU-pending: TurboQuant 3–4× K-quant; KVQuant.)
-- **Quant level for CPU = go smaller.** On CPU, decode speed tracks memory bandwidth, so a
-  smaller weight quant is *faster*: prefer **Q4_K_M**, evaluate **Q4_0 with online repack
-  (`--cpu-moe`/repacked AVX2/AVX-512 kernels)** which llama.cpp accelerates on CPU; measure
-  quality. This is a primary CPU lever (unlike GPU, where it's secondary).
-- **Threads `-t` = PHYSICAL cores** (not hardcoded 9), pin with `--cpu-mask`/NUMA
-  (`--numa distribute|isolate`) — CPU-specific throughput levers we set none of today.
-- **`--ubatch-size`/`--batch-size` 1024–2048** — dominant PREFILL lever to cut 32K TTFT.
-- **Build matters on CPU** — ensure `third_party/llama.cpp` includes the 2026 Gemma-4
-  KV-cache fix (~40% context-heavy memory cut) and is built with the right ISA
-  (AVX-512/AMX where the CPU supports it) — that is the one legit *compile* lever that is
-  actually a serving concern.
-- **Honest feasibility.** A 4B Gemma at Q4 on a strong modern many-core CPU does ~10–20
-  tok/s at small context; at 32K, KV attention drags it down. `-fa` + KV-q8 + spec-decode +
-  physical-core threads + a small quant is the credible recipe to hold ~14–15 tok/s at 32K;
-  report measured p50/p95 (D-36) rather than assume. If CPU-only can't reach it on this host,
-  spec-decode draft size + quant level are the tuning knobs before conceding. Sources in §O.
+  decoded token**, the dominant steady-state CPU cost at 32K. Requires `-fa`. (q8_0 = safe.)
+- **Quant level for CPU = go smaller** — decode tracks memory bandwidth, so a smaller weight
+  quant is *faster*: prefer **Q4_K_M**; evaluate **Q4_0 online-repacked AVX2/AVX-512/AMX
+  kernels** that llama.cpp accelerates on CPU; measure quality.
+- **Threads `-t` = PHYSICAL cores** (not hardcoded 9) + `--cpu-mask`/`--numa` pinning.
+- **`--ubatch-size`/`--batch-size` 1024–2048** — prefill lever (affects TTFT, which the
+  target *excludes*, but still matters for the cold path → warm transition).
+- **Build** — `third_party/llama.cpp` must carry the 2026 Gemma-4 KV-cache fix (~40%
+  context-heavy memory cut) and be built for the host ISA (AVX-512/AMX).
+- **Validation.** Reproduce the user's measurement (warm/hot-KV, TTFT-excluded) and record
+  p50/p95 decode tok/s @ 32K in D-36 to confirm ≥15 holds in our harness. Sources in §O.
 
 ### N-67 (UI-AUDIT) — Exposed-feature integrity audit `[ ]` — FULL — extends N-10, re-checks D-35/D-39/D-40/D-41
 **Directive (user 2026-06-19).** Go through the current UI; cross-check **every single
@@ -2525,7 +2538,36 @@ D-35/D-39/D-40/D-41` · `--feeds--> N-61` (desktop/UI stress) · `--gated-by--> 
 **Ambiguity.** "Elegant/non-obstructive" thresholds `crystallizes-during` (start with
 functional truth, polish second).
 
-### N-68 (DIAGRAMS) — Dense, legible system diagrams `[ ]` — medium
+### N-68 (DIAGRAMS) — Dense, legible system diagrams `[~]` — HARD MVP (user 2026-06-19: N-65→68 in MVP)
+**STATUS 2026-06-19 — FULL SET DRAWN (28 diagrams), level corrected after user review.**
+Contract (user-clarified, after 3 wrong attempts — see below): **every LAWRENCE subsystem
+whose code runs in the live process gets TWO diagrams.** (1) **granular = systems
+architecture, generalized yet granular** — real components as GENERALIZED ROLES (not impl
+names like BM25/RRF/MemoryIndex) + **how the subsystem meshes with the others (the gears)**
+with the NATURE of each coupling labelled on the edge (realtime/transient/independent ·
+temporally-atomic · async-decoupled · least-privilege seam · proactive invocation ·
+context-refined · single-writer · persist-before-act). NOT source-code transcription, NOT
+generic boxes. (2) **n8n = the same subsystem rebuilt from the real n8n node library**,
+honoring n8n's real restrictions (each forcing-restriction called out inline `n8n:` —
+no realtime capture, stateless-per-execution, loop-only-via-Loop-Over-Items/recursion,
+explicit Merge, **no SSE/token-streaming**, invariants enforced by convention not engine).
+**14 subsystems × 2 = 28 diagrams, all legibility-OK (0 overlaps):** S1 sensors · S2
+context-gating · S3 kernel/proactive · S4 retrieval · S5 memory+notes · S6 journal · S7
+model+serving · S8 agency · S9 scheduler · S10 notify · S11 policy · S12 capability-resolve
+· S13 ui-bridge · S14 control/CLI. Index + level-definitions + legend in
+[docs/diagrams/README.md](../docs/diagrams/README.md). Pipeline: mermaid `src/*.mmd` →
+`tools/mmd2svg.py` → Graphviz `dot` (Sugiyama layering + barycenter crossing-min) → SVG +
+geometry lint (crossings≤12/rank≤9/nodes≤40/overlaps=0).
+**Process note (lesson):** first pass was rejected twice — (a) too abstract (generic
+process/store boxes), then (b) too code-literal (method signatures). The accepted level is
+generalized-architecture-WITH-inter-subsystem-interactions. The earlier "n8n-substrate" and
+"hard question (transitive realtime components)" framings were MY inventions and were cut.
+**Remaining for full close:** (a) true raster *visual* check — blocked in sandbox (no
+chromium/cairosvg/rsvg); SVGs render in browser/VSCode/GitHub, geometry lint is the gate
+meanwhile; (b) re-grade vs N-66 once service boundaries are refactored.
+
+**Original spec (unchanged):**
+### N-68 (DIAGRAMS) — Dense, legible system diagrams — medium
 **Directive (user 2026-06-19).** Prepare dense diagrams of how the subsystems work — for
 **every looped / feedback / agentic / retrieval / web-call / tool-call** system — using
 mermaid.js. Ensure **legibility**: render to **SVG and check visually**, detect + handle

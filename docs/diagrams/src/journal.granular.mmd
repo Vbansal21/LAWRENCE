@@ -1,0 +1,32 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Journal (WS-J).
+%% Autonomous, first-person, rolling-revision episodic memory; triggered by the kernel,
+%% time-floored + significance-gated, non-blocking, cost-bounded. (kernel/journal.py)
+flowchart TD
+  beat([kernel reflection hook — every beat, active or idle])
+  floor{own time-floor elapsed?}
+  sig{events significant enough?}
+  skip([skip — no write])
+  dispatch[dispatch to background — never blocks the cadence]
+  recall[recall prior entries + fold memory and web/doc]
+  mem([memory gear])
+  seam[model gateway — least-privilege]
+  revise[first-person rolling revision of the standing entry]
+  budget{within cost budget?}
+  writer{single writer — I1}
+  store[(journal = shared long-term episodic mind)]
+  back([feeds recall digest / global context])
+
+  beat --> floor
+  floor -->|no| skip
+  floor -->|yes| sig
+  sig -->|no| skip
+  sig -->|yes| dispatch
+  dispatch --> recall
+  recall <--> mem
+  recall --> revise
+  revise -.->|revision reasoning| seam
+  revise --> budget
+  budget -->|room remains| revise
+  budget -->|bound reached| writer
+  writer --> store
+  store -.-> back

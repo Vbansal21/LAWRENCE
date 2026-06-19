@@ -1,0 +1,21 @@
+graph 1 7.5347 8.75
+node trg 4.6875 8.5 4.5278 0.5 "Execute Workflow Trigger — reflection hook with events" rounded box black lightgrey
+node iffloor 4.6875 7.2361 5.6944 0.88889 "IF — time-floor elapsed\nn8n: last-write time in Static Data" solid diamond black lightgrey
+node ifsig 3.4931 5.8472 3.4017 0.5 "IF — events significant" solid diamond black lightgrey
+node skip 5.8819 4.6528 1.25 0.5 "NoOp — skip" solid box black lightgrey
+node exrecall 2.8125 4.6528 4.1806 0.5 "Execute Workflow — memory recall + fold web/doc" solid box black lightgrey
+node loop 2.8125 3.5833 3.2222 0.5 "Loop Over Items — revise until budget\nn8n: bounded loop, not open-ended" solid box black lightgrey
+node llm 1.6458 2.5139 3.2917 0.5 "Basic LLM Chain — first-person revision" solid box black lightgrey
+node ifbudget 2.8125 1.4444 3.7796 0.5 "IF — cost budget reached" solid diamond black lightgrey
+node exwrite 2.8125 0.25 4 0.5 "Execute Workflow — memory write, single writer" solid box black lightgrey
+edge trg iffloor 4 4.6875 8.2478 4.6875 8.1266 4.6875 7.9735 4.6875 7.824 solid black
+edge iffloor ifsig 4 4.3548 6.8431 4.1724 6.6353 3.9489 6.3805 3.7752 6.1826 yes 4.1597 6.4444 solid black
+edge iffloor skip 7 4.9255 6.8288 5.1218 6.5043 5.3681 6.0972 5.3681 6.0972 5.3681 6.0972 5.5965 5.4611 5.7488 5.0373 no 5.6181 5.8472 solid black
+edge ifsig skip 4 3.8663 5.651 4.2413 5.4679 4.8257 5.1825 5.2689 4.9661 no 4.8403 5.25 solid black
+edge ifsig exrecall 4 3.365 5.6139 3.2693 5.4498 3.1363 5.2217 3.0247 5.0305 yes 3.2847 5.25 solid black
+edge exrecall loop 4 2.8125 4.4025 2.8125 4.2769 2.8125 4.1194 2.8125 3.9771 solid black
+edge loop llm 4 2.5478 3.3331 2.3922 3.1942 2.1931 3.0164 2.0216 2.8633 solid black
+edge llm ifbudget 4 1.9106 2.2636 2.0776 2.1145 2.2949 1.9205 2.4743 1.7603 solid black
+edge ifbudget loop 10 2.9874 1.6742 3.1808 1.9128 3.4653 2.2639 3.4653 2.2639 3.4653 2.2639 3.4653 2.7639 3.4653 2.7639 3.4653 2.7639 3.271 3.0036 3.0944 3.2215 room 3.6319 2.5139 solid black
+edge ifbudget exwrite 4 2.8125 1.1888 2.8125 1.0313 2.8125 0.8226 2.8125 0.64327 done 2.9722 0.84722 solid black
+stop

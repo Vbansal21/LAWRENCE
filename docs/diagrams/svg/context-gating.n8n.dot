@@ -1,0 +1,26 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trg" [label="Execute Workflow Trigger — observation in", shape=box, style="rounded"];
+  "score" [label="Code — cheap significance score", shape=box];
+  "ifgate" [label="IF — above attention threshold", shape=diamond];
+  "noop" [label="NoOp — drop / log", shape=box];
+  "extract" [label="Code — extract structured content", shape=box];
+  "ifhard" [label="IF — cheap path unsure", shape=diamond];
+  "llm" [label="Basic LLM Chain — distill / summarize", shape=box];
+  "set" [label="Set — assemble context entry", shape=box];
+  "exmem" [label="Execute Workflow — memory subsystem write\nn8n: tiered store is external state", shape=box];
+  "emit" [label="NoOp — emit significance event\nn8n: no event bus; downstream is a separate trigger", shape=cds];
+  "trg" -> "score" [penwidth=2.2];
+  "score" -> "ifgate" [penwidth=2.2];
+  "ifgate" -> "noop" [label="below"];
+  "ifgate" -> "extract" [label="admit"];
+  "extract" -> "ifhard" [penwidth=2.2];
+  "ifhard" -> "set" [label="sure"];
+  "ifhard" -> "llm" [label="unsure"];
+  "llm" -> "set" [penwidth=2.2];
+  "set" -> "exmem" [penwidth=2.2];
+  "ifgate" -> "emit" [style=dashed];
+}

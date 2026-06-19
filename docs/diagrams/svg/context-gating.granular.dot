@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "obs" [label="raw observations — from perception gear", shape=box, style="rounded"];
+  "score" [label="cheap-first significance scorer — heuristics before any model", shape=box];
+  "gate" [label="attention gate — threshold / back-pressure", shape=diamond];
+  "drop" [label="drop / log only", shape=box, style="rounded"];
+  "extract" [label="boundary-respecting extraction — structured content from the observation", shape=box];
+  "distill" [label="distillation — compress into coherent context, escalate to model only on high value", shape=box];
+  "seam" [label="model gateway — least-privilege, escalation only", shape=box];
+  "tiers" [label="tiered context store — rolling working set", shape=cylinder];
+  "writer" [label="single writer — I1", shape=diamond];
+  "kernel" [label="cognitive kernel", shape=box, style="rounded"];
+  "retr" [label="retrieval", shape=box, style="rounded"];
+  "mem" [label="durable memory", shape=box, style="rounded"];
+  "obs" -> "score";
+  "score" -> "gate";
+  "gate" -> "drop" [label="below"];
+  "gate" -> "extract" [label="admit"];
+  "extract" -> "distill";
+  "distill" -> "seam" [label="escalate only when cheap path is unsure", style=dashed];
+  "distill" -> "writer";
+  "writer" -> "tiers";
+  "gate" -> "kernel" [label="significance events", style=dashed];
+  "tiers" -> "retr" [label="current context"];
+  "tiers" -> "mem" [label="promote"];
+}

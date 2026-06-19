@@ -1,0 +1,35 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Memory + associative notes graph.
+%% The durable mind: a single-writer tiered store fused with an associative graph; serves
+%% recall to every other gear. (retrieval/memory.py + ctx/notes.py store.py chats.py)
+flowchart TD
+  subgraph writers[Write demand — all funnel through ONE writer]
+    wturn([turn outcomes])
+    wjournal([journal entries])
+    wctx([distilled context])
+  end
+  writer{single writer — I1, the only mutator}
+
+  tiers[(tiered store — working / rolling / deep)]
+  compact[compaction — summarize + promote across tiers]
+  graph[(associative graph — backlinked notes, chats, messages as nodes)]
+  weights[link = relevance boost / delete = relevance penalty]
+
+  recallq([recall demand — query])
+  hybrid[hybrid recall — lexical + vector + graph + recency]
+  rankrecall[rank + assemble digest]
+  digest([recall digest])
+
+  consumers([retrieval notes-arm / proactive / journal / UI])
+
+  wturn --> writer
+  wjournal --> writer
+  wctx --> writer
+  writer --> tiers
+  writer --> graph
+  tiers <--> compact
+  graph --- weights
+  recallq --> hybrid
+  tiers --> hybrid
+  graph --> hybrid
+  hybrid --> rankrecall ==> digest
+  digest ==> consumers

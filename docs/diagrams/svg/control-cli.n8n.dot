@@ -1,0 +1,22 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trg" [label="Webhook / Manual Trigger — operator verb", shape=box, style="rounded"];
+  "route" [label="Switch — operation class", shape=diamond];
+  "excfg" [label="Execute Workflow — config get / set", shape=box];
+  "exmem" [label="Execute Workflow — memory ops", shape=box];
+  "exdoc" [label="Execute Workflow — diagnostics health", shape=box];
+  "shell" [label="Execute Command — lifecycle on host\nn8n: process control is shell, not a node", shape=box];
+  "resp" [label="Respond — result", shape=box, style="rounded"];
+  "trg" -> "route" [penwidth=2.2];
+  "route" -> "excfg" [label="config"];
+  "route" -> "exmem" [label="memory"];
+  "route" -> "exdoc" [label="doctor"];
+  "route" -> "shell" [label="lifecycle"];
+  "excfg" -> "resp" [penwidth=2.2];
+  "exmem" -> "resp" [penwidth=2.2];
+  "exdoc" -> "resp" [penwidth=2.2];
+  "shell" -> "resp" [penwidth=2.2];
+}

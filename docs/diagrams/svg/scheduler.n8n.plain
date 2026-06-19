@@ -1,0 +1,20 @@
+graph 1 9.7014 7.0417
+node trgadd 1.7708 6.7917 3.5417 0.5 "Execute Workflow Trigger — register intent" rounded box black lightgrey
+node append1 1.7708 5.7222 2.7222 0.5 "Data store — append add event" solid cylinder black lightgrey
+node cron 5.3403 6.7917 2.8889 0.5 "Schedule Trigger — poll cadence\nn8n: cron is the poll, not the timer" rounded box black lightgrey
+node fold 5.3403 5.7222 3.2222 0.5 "Code — fold event log to current state" solid box black lightgrey
+node due 5.3403 4.6528 2.125 0.5 "Filter — intents due now" solid box black lightgrey
+node ifany 5.3403 3.5833 2.1497 0.5 "IF — any due" solid diamond black lightgrey
+node noop 5.0486 2.3889 1.6528 0.5 "NoOp — none due" solid box black lightgrey
+node append2 7.9653 2.3889 3.4722 0.5 "Data store — append fired BEFORE acting" solid cylinder black lightgrey
+node fire 7.9653 1.3194 3.4306 0.5 "Execute Workflow — fire intent, no model" solid box black lightgrey
+node exnotify 7.9653 0.25 3.1944 0.5 "Execute Workflow — notify subsystem" solid box black lightgrey
+edge trgadd append1 4 1.7708 6.5414 1.7708 6.4158 1.7708 6.2583 1.7708 6.116 solid black
+edge cron fold 4 5.3403 6.5414 5.3403 6.4158 5.3403 6.2583 5.3403 6.116 solid black
+edge fold due 4 5.3403 5.472 5.3403 5.3463 5.3403 5.1888 5.3403 5.0465 solid black
+edge due ifany 4 5.3403 4.4025 5.3403 4.2769 5.3403 4.1194 5.3403 3.9771 solid black
+edge ifany noop 4 5.284 3.3445 5.2437 3.183 5.1884 2.9618 5.1415 2.7743 no 5.2986 2.9861 solid black
+edge ifany append2 4 5.6889 3.4145 6.0985 3.2324 6.7874 2.9263 7.3003 2.6983 yes 6.8403 2.9861 solid black
+edge append2 fire 4 7.9653 2.1386 7.9653 2.013 7.9653 1.8555 7.9653 1.7132 solid black
+edge fire exnotify 4 7.9653 1.0692 7.9653 0.94355 7.9653 0.78606 7.9653 0.64376 solid black
+stop

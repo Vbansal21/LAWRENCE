@@ -1,0 +1,24 @@
+graph 1 8.6667 10.5
+node native 2.3611 10.25 4.0278 0.5 "Native sensors push observations — outside n8n\nn8n: no realtime capture; ingress only via trigger" solid cds black lightgrey
+node trg 2.3611 9.0556 4.7222 0.5 "Webhook / MQTT Trigger — one execution per observation\nn8n: stateless per execution" rounded box black lightgrey
+node norm 2.3611 7.9861 3.9306 0.5 "Set — normalize: timestamp, modality, payload" solid box black lightgrey
+node sig 2.3611 6.9167 2.7778 0.5 "Code — cheap significance score" solid box black lightgrey
+node ifsig 2.3611 5.8472 4.4883 0.5 "IF — above attention threshold" solid diamond black lightgrey
+node noop 2.0417 4.6528 2.2639 0.5 "NoOp — discard / log only" solid box black lightgrey
+node exctx 6.0972 4.6528 5.1389 0.5 "Execute Workflow — context subsystem\nn8n: running context lives in another workflow + external store" solid box black lightgrey
+node refine 6.0972 3.5833 4.1667 0.5 "Basic LLM Chain — situate against running context" solid box black lightgrey
+node ifgain 6.0972 2.5139 2.8584 0.5 "IF — high info gain" solid diamond black lightgrey
+node agent 4.9444 1.3194 3.25 0.5 "AI Agent — proactive model invocation\nChat Model sub: local llama" solid box black lightgrey
+node exmem 6.0972 0.25 3.9306 0.5 "Execute Workflow — memory subsystem upsert" solid box black lightgrey
+edge native trg 4 2.3611 9.9944 2.3611 9.8369 2.3611 9.6282 2.3611 9.4488 event 2.5417 9.6528 dashed black
+edge trg norm 4 2.3611 8.8053 2.3611 8.6797 2.3611 8.5222 2.3611 8.3799 solid black
+edge norm sig 4 2.3611 7.7359 2.3611 7.6102 2.3611 7.4527 2.3611 7.3104 solid black
+edge sig ifsig 4 2.3611 6.6664 2.3611 6.5408 2.3611 6.3833 2.3611 6.241 solid black
+edge ifsig noop 4 2.298 5.6028 2.2544 5.4435 2.1954 5.228 2.145 5.0439 low 2.3333 5.25 solid black
+edge ifsig exctx 4 2.9204 5.6587 3.5248 5.47 4.4963 5.1666 5.206 4.945 "worth attention" 4.8403 5.25 solid black
+edge exctx refine 4 6.0972 4.4025 6.0972 4.2769 6.0972 4.1194 6.0972 3.9771 solid black
+edge refine ifgain 4 6.0972 3.3331 6.0972 3.2074 6.0972 3.05 6.0972 2.9076 solid black
+edge ifgain agent 4 5.8964 2.2968 5.7261 2.1244 5.4784 1.8737 5.2783 1.6712 "high gain" 5.8542 1.9167 solid black
+edge ifgain exmem 10 6.2422 2.2888 6.4307 2.0143 6.7361 1.5694 6.7361 1.5694 6.7361 1.5694 6.7361 1.0694 6.7361 1.0694 6.7361 1.0694 6.546 0.82971 6.3732 0.6118 "low gain" 7 1.3194 solid black
+edge agent exmem 4 5.206 1.0692 5.3597 0.93033 5.5564 0.75256 5.7259 0.59938 solid black
+stop

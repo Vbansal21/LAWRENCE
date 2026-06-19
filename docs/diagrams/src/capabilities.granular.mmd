@@ -1,0 +1,22 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Capability resolution.
+%% Reconciles a REQUESTED decoding/sampling config against what the chosen provider+model
+%% actually supports, so callers never send an invalid request. (capabilities.py)
+flowchart TD
+  req([requested decoding config — for kind, provider, model])
+  table[(capability table — supported sampling per provider+model)]
+  resolve[resolve — intersect requested with supported]
+  drop[drop unsupported params]
+  clamp[clamp out-of-range values]
+  defaults[apply role defaults for the gaps]
+  eff([effective config])
+  summary([capability summary — surfaced to UI / config])
+
+  gateway([model gateway — before invoke])
+  ui([config / UI])
+
+  req --> resolve
+  table --> resolve
+  resolve --> drop --> clamp --> defaults --> eff
+  eff ==> gateway
+  defaults --> summary
+  summary -.-> ui

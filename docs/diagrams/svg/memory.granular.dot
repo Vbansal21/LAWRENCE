@@ -1,0 +1,35 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Write demand — all funnel through ONE writer"; style="dashed,rounded"; color="#888888";
+    "wturn" [label="turn outcomes", shape=box, style="rounded"];
+    "wjournal" [label="journal entries", shape=box, style="rounded"];
+    "wctx" [label="distilled context", shape=box, style="rounded"];
+  }
+  "writer" [label="single writer — I1, the only mutator", shape=diamond];
+  "tiers" [label="tiered store — working / rolling / deep", shape=cylinder];
+  "compact" [label="compaction — summarize + promote across tiers", shape=box];
+  "graph" [label="associative graph — backlinked notes, chats, messages as nodes", shape=cylinder];
+  "weights" [label="link = relevance boost / delete = relevance penalty", shape=box];
+  "recallq" [label="recall demand — query", shape=box, style="rounded"];
+  "hybrid" [label="hybrid recall — lexical + vector + graph + recency", shape=box];
+  "rankrecall" [label="rank + assemble digest", shape=box];
+  "digest" [label="recall digest", shape=box, style="rounded"];
+  "consumers" [label="retrieval notes-arm / proactive / journal / UI", shape=box, style="rounded"];
+  "wturn" -> "writer";
+  "wjournal" -> "writer";
+  "wctx" -> "writer";
+  "writer" -> "tiers";
+  "writer" -> "graph";
+  "tiers" -> "compact" [dir=both];
+  "graph" -> "weights" [dir=none];
+  "recallq" -> "hybrid";
+  "tiers" -> "hybrid";
+  "graph" -> "hybrid";
+  "hybrid" -> "rankrecall";
+  "rankrecall" -> "digest" [penwidth=2.2];
+  "digest" -> "consumers" [penwidth=2.2];
+}

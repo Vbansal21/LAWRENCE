@@ -1,0 +1,30 @@
+%% n8n-PARALLEL — Cognitive kernel / proactive loop in n8n's node library.
+%% RESTRICTION: n8n has no always-resident cognitive thread; the heartbeat is a Schedule
+%% Trigger, and "at most one droppable action that yields to live turns" has no native
+%% preemption — modelled as a priority check against shared state.
+flowchart TD
+  cron([Schedule Trigger — heartbeat cadence\nn8n: no resident loop; cron stands in])
+  exsched[Execute Workflow — scheduler: fetch due intents]
+  iffire{IF — any due intents}
+  fire[Execute Workflow — fire intents, no model]
+  exdrain[Execute Workflow — drain observation buffer]
+  exreflect[Execute Workflow — journal reflection hook]
+  ifevents{IF — any events}
+  backoff[Set — lengthen cadence in Static Data\nn8n: cadence state across runs = Static Data]
+  sortsig[Sort + Limit 1 — most-significant event]
+  iftier{IF — clears action tier}
+  noop[NoOp — no action]
+  ifbusy{IF — live turn in progress\nn8n: no native preemption; check shared state}
+  drop2[NoOp — yield to live turn]
+  agent[AI Agent — one droppable proactive action\nTools: retrieval, effectors as sub-workflows]
+
+  cron ==> exsched ==> iffire
+  iffire -->|yes| fire --> exdrain
+  iffire -->|no| exdrain
+  exdrain ==> exreflect ==> ifevents
+  ifevents -->|no| backoff
+  ifevents -->|yes| sortsig ==> iftier
+  iftier -->|no| noop
+  iftier -->|yes| ifbusy
+  ifbusy -->|busy| drop2
+  ifbusy -->|free| agent

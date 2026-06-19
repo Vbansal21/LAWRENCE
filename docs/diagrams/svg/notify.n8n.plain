@@ -1,0 +1,25 @@
+graph 1 14.09 6.3611
+node t1 1.7639 6.1111 3.5278 0.5 "Execute Workflow Trigger — reminder fired" rounded box black lightgrey
+node t2 5.7361 6.1111 3.7222 0.5 "Execute Workflow Trigger — proactive finding" rounded box black lightgrey
+node t3 9.6806 6.1111 3.4583 0.5 "Execute Workflow Trigger — error / health" rounded box black lightgrey
+node merge 5.7361 5.0417 2.0417 0.5 "Merge — single stream" solid box black lightgrey
+node dedup 5.7361 3.7778 6.1944 0.88889 "Remove Duplicates + Code rate-limit\nn8n: window state in Static Data" solid diamond black lightgrey
+node drop 5.3194 2.3889 1.8194 0.5 "NoOp — suppressed" solid box black lightgrey
+node route 8.7083 2.3889 4.2757 0.5 "Switch — channel by urgency" solid diamond black lightgrey
+node http1 5.2361 1.3194 2.8056 0.5 "HTTP Request — in-app SSE push" solid box black lightgrey
+node http2 8.7083 1.3194 3.4306 0.5 "HTTP Request — desktop popup endpoint" solid box black lightgrey
+node http3 12.431 1.3194 3.3194 0.5 "HTTP Request — OS notification service" solid box black lightgrey
+node audit 8.7083 0.25 2.4861 0.5 "Data store — delivery record" solid cylinder black lightgrey
+edge t1 merge 4 2.6652 5.8609 3.2688 5.7026 4.065 5.4938 4.6955 5.3284 solid black
+edge t2 merge 4 5.7361 5.8609 5.7361 5.7352 5.7361 5.5777 5.7361 5.4354 solid black
+edge t3 merge 4 8.7855 5.8609 8.1862 5.7026 7.3955 5.4938 6.7695 5.3284 solid black
+edge merge dedup 4 5.7361 4.7894 5.7361 4.6682 5.7361 4.5152 5.7361 4.3656 solid black
+edge dedup drop 4 5.6088 3.3481 5.5529 3.1655 5.4878 2.9528 5.4335 2.7754 repeat 5.7361 2.9861 solid black
+edge dedup route 4 6.4556 3.4344 6.9833 3.1928 7.6885 2.8698 8.1684 2.6501 deliver 7.7986 2.9861 solid black
+edge route http1 4 8.1389 2.2042 7.6029 2.0434 6.7909 1.7998 6.1619 1.6111 solid black
+edge route http2 4 8.7083 2.1386 8.7083 2.013 8.7083 1.8555 8.7083 1.7132 solid black
+edge route http3 4 9.3064 2.2076 9.8832 2.0462 10.766 1.7991 11.447 1.6086 solid black
+edge http1 audit 4 6.024 1.0692 6.5508 0.91114 7.2457 0.70269 7.7964 0.53746 solid black
+edge http2 audit 4 8.7083 1.0692 8.7083 0.94355 8.7083 0.78606 8.7083 0.64376 solid black
+edge http3 audit 4 11.586 1.0692 11.017 0.90992 10.265 0.69945 9.6722 0.53363 solid black
+stop

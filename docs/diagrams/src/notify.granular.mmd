@@ -1,0 +1,28 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Notifications.
+%% Fan-in of things worth surfacing, fan-out to the right channel, de-duplicated and
+%% rate-limited so the watcher is present but not noisy. (notify.py)
+flowchart TD
+  subgraph sources[Fan-in — what wants to surface]
+    s1([fired reminders — scheduler])
+    s2([proactive findings — kernel])
+    s3([errors / health])
+  end
+  dedup{de-dup + rate-limit — suppress repeats / floods}
+  drop([suppressed])
+  route{channel router — by urgency + focus state}
+  inui([in-app SSE — live UI])
+  popup([desktop overlay popup])
+  osn([OS notification])
+  ack[(delivery + ack record)]
+
+  s1 --> dedup
+  s2 --> dedup
+  s3 --> dedup
+  dedup -->|repeat / over budget| drop
+  dedup -->|deliver| route
+  route --> inui
+  route --> popup
+  route --> osn
+  inui --> ack
+  popup --> ack
+  osn --> ack

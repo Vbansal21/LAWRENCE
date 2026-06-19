@@ -1,0 +1,30 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  subgraph cluster_0 {
+    label="Fan-in — what wants to surface"; style="dashed,rounded"; color="#888888";
+    "s1" [label="fired reminders — scheduler", shape=box, style="rounded"];
+    "s2" [label="proactive findings — kernel", shape=box, style="rounded"];
+    "s3" [label="errors / health", shape=box, style="rounded"];
+  }
+  "dedup" [label="de-dup + rate-limit — suppress repeats / floods", shape=diamond];
+  "drop" [label="suppressed", shape=box, style="rounded"];
+  "route" [label="channel router — by urgency + focus state", shape=diamond];
+  "inui" [label="in-app SSE — live UI", shape=box, style="rounded"];
+  "popup" [label="desktop overlay popup", shape=box, style="rounded"];
+  "osn" [label="OS notification", shape=box, style="rounded"];
+  "ack" [label="delivery + ack record", shape=cylinder];
+  "s1" -> "dedup";
+  "s2" -> "dedup";
+  "s3" -> "dedup";
+  "dedup" -> "drop" [label="repeat / over budget"];
+  "dedup" -> "route" [label="deliver"];
+  "route" -> "inui";
+  "route" -> "popup";
+  "route" -> "osn";
+  "inui" -> "ack";
+  "popup" -> "ack";
+  "osn" -> "ack";
+}

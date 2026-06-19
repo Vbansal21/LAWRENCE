@@ -1,0 +1,29 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "t1" [label="Execute Workflow Trigger — reminder fired", shape=box, style="rounded"];
+  "t2" [label="Execute Workflow Trigger — proactive finding", shape=box, style="rounded"];
+  "t3" [label="Execute Workflow Trigger — error / health", shape=box, style="rounded"];
+  "merge" [label="Merge — single stream", shape=box];
+  "dedup" [label="Remove Duplicates + Code rate-limit\nn8n: window state in Static Data", shape=diamond];
+  "drop" [label="NoOp — suppressed", shape=box];
+  "route" [label="Switch — channel by urgency", shape=diamond];
+  "http1" [label="HTTP Request — in-app SSE push", shape=box];
+  "http2" [label="HTTP Request — desktop popup endpoint", shape=box];
+  "http3" [label="HTTP Request — OS notification service", shape=box];
+  "audit" [label="Data store — delivery record", shape=cylinder];
+  "t1" -> "merge" [penwidth=2.2];
+  "t2" -> "merge" [penwidth=2.2];
+  "t3" -> "merge" [penwidth=2.2];
+  "merge" -> "dedup" [penwidth=2.2];
+  "dedup" -> "drop" [label="repeat"];
+  "dedup" -> "route" [label="deliver"];
+  "route" -> "http1";
+  "route" -> "http2";
+  "route" -> "http3";
+  "http1" -> "audit" [penwidth=2.2];
+  "http2" -> "audit" [penwidth=2.2];
+  "http3" -> "audit" [penwidth=2.2];
+}

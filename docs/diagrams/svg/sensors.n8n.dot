@@ -1,0 +1,28 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "native" [label="Native sensors push observations — outside n8n\nn8n: no realtime capture; ingress only via trigger", shape=cds];
+  "trg" [label="Webhook / MQTT Trigger — one execution per observation\nn8n: stateless per execution", shape=box, style="rounded"];
+  "norm" [label="Set — normalize: timestamp, modality, payload", shape=box];
+  "sig" [label="Code — cheap significance score", shape=box];
+  "ifsig" [label="IF — above attention threshold", shape=diamond];
+  "noop" [label="NoOp — discard / log only", shape=box];
+  "exctx" [label="Execute Workflow — context subsystem\nn8n: running context lives in another workflow + external store", shape=box];
+  "refine" [label="Basic LLM Chain — situate against running context", shape=box];
+  "ifgain" [label="IF — high info gain", shape=diamond];
+  "agent" [label="AI Agent — proactive model invocation\nChat Model sub: local llama", shape=box];
+  "exmem" [label="Execute Workflow — memory subsystem upsert", shape=box];
+  "native" -> "trg" [label="event", style=dashed];
+  "trg" -> "norm" [penwidth=2.2];
+  "norm" -> "sig" [penwidth=2.2];
+  "sig" -> "ifsig" [penwidth=2.2];
+  "ifsig" -> "noop" [label="low"];
+  "ifsig" -> "exctx" [label="worth attention"];
+  "exctx" -> "refine" [penwidth=2.2];
+  "refine" -> "ifgain" [penwidth=2.2];
+  "ifgain" -> "exmem" [label="low gain"];
+  "ifgain" -> "agent" [label="high gain"];
+  "agent" -> "exmem" [penwidth=2.2];
+}

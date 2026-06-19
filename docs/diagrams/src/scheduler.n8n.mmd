@@ -1,0 +1,21 @@
+%% n8n-PARALLEL — Scheduler / temporal intents in n8n's node library.
+%% RESTRICTION: n8n's own Schedule Trigger is cron, not a durable one-shot timer store;
+%% exactly-once + crash-safety must be enforced in an external event log, with the cron
+%% only acting as the poll. The "persist-before-act" ordering is explicit node ordering.
+flowchart TD
+  trgadd([Execute Workflow Trigger — register intent])
+  append1[(Data store — append add event)]
+  trgadd ==> append1
+
+  cron([Schedule Trigger — poll cadence\nn8n: cron is the poll, not the timer])
+  fold[Code — fold event log to current state]
+  due[Filter — intents due now]
+  ifany{IF — any due}
+  noop[NoOp — none due]
+  append2[(Data store — append fired BEFORE acting)]
+  fire[Execute Workflow — fire intent, no model]
+  exnotify[Execute Workflow — notify subsystem]
+
+  cron ==> fold ==> due ==> ifany
+  ifany -->|no| noop
+  ifany -->|yes| append2 ==> fire ==> exnotify

@@ -1,0 +1,26 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trg" [label="Execute Workflow Trigger — items: role, messages, schema, priority", shape=box, style="rounded"];
+  "route" [label="Switch — provider router by role\nn8n: routing table in Static Data / Variables", shape=diamond];
+  "policy" [label="Code — redaction gate before any external node", shape=box];
+  "http" [label="HTTP Request — external provider, opt-in", shape=box];
+  "ifbusy" [label="IF — local slot busy\nn8n: no single-slot scheduler; check shared state", shape=diamond];
+  "wait" [label="Wait — requeue lower-priority call\nn8n: no preemption; cooperative requeue", shape=box];
+  "llm" [label="Basic LLM Chain — local model\nChat Model sub: llama.cpp server", shape=box];
+  "parse" [label="Structured Output Parser — schema-constrained", shape=box];
+  "resp" [label="Respond — structured result", shape=box, style="rounded"];
+  "fail" [label="NoOp — empty result on failure, caller no-ops", shape=box, style="rounded"];
+  "trg" -> "route" [penwidth=2.2];
+  "route" -> "policy" [label="cloud opt-in"];
+  "policy" -> "http" [penwidth=2.2];
+  "http" -> "parse" [penwidth=2.2];
+  "route" -> "ifbusy" [label="local default"];
+  "ifbusy" -> "wait" [label="busy and droppable"];
+  "ifbusy" -> "llm" [label="free or high priority"];
+  "llm" -> "parse" [penwidth=2.2];
+  "parse" -> "resp" [penwidth=2.2];
+  "llm" -> "fail" [style=dashed];
+}

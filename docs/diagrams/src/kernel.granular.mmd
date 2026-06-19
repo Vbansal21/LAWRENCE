@@ -1,0 +1,50 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Cognitive kernel / proactive loop as the
+%% central gear that meshes sensors, scheduler, retrieval, model, journal, and live turns.
+%% (kernel/tick.py + invoke.py + elevate.py)
+flowchart TD
+  clock{{self-pacing heartbeat — backs off when idle, resets when active}}
+
+  subgraph inflow[Meshes — inputs]
+    sensors[(transient observation buffer)]
+    sched[(due temporal intents)]
+  end
+
+  fire[fire due intents — no model needed]
+  drain[drain observations this beat]
+  reflecthook[per-beat reflection hook]
+  idle{any events?}
+  backoff[lengthen cadence]
+  arbiter[significance arbiter — pick most-significant event]
+  tier{clears action-tier threshold?}
+  drop([no action this beat])
+  action[at most ONE droppable action — preemptible by live turns]
+  heal[self-heal — model down: no-op, retry next beat]
+
+  subgraph outflow[Meshes — drives]
+    retr([retrieval subsystem])
+    seam[model gateway — least-privilege seam]
+    eff([effectors])
+    journal([journal subsystem])
+    turns([live turns — higher priority])
+  end
+
+  sched --> fire
+  clock --> fire
+  fire --> drain
+  sensors -.->|async| drain
+  drain --> reflecthook
+  reflecthook -.-> journal
+  drain --> idle
+  idle -->|no| backoff
+  backoff -.->|next beat| clock
+  idle -->|yes| arbiter
+  arbiter --> tier
+  tier -->|no| drop
+  drop -.->|next beat| clock
+  tier -->|yes| action
+  action -.->|proactive need| retr
+  action -.->|proactive invocation| seam
+  action --> eff
+  action --> heal
+  heal -.->|next beat| clock
+  turns ==>|preempt droppable work| seam

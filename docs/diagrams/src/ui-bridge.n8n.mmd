@@ -1,0 +1,27 @@
+%% n8n-PARALLEL — Desktop UI bridge in n8n's node library.
+%% RESTRICTION: this is where n8n fits WORST. n8n has Webhook (request/response) but NO
+%% native server-sent event stream and NO token streaming, so the live delta/event channel
+%% cannot be an n8n workflow — it stays native. n8n can only serve the request endpoints.
+flowchart TD
+  hook([Webhook — one per request endpoint])
+  route{Switch — endpoint}
+  exchats[Execute Workflow — chats / memory]
+  exlinks[Execute Workflow — links / graph]
+  exvoice[Execute Workflow — voice resolve]
+  exacts[Execute Workflow — action confirm]
+  excfg[Execute Workflow — config]
+  resp([Respond to Webhook])
+  native>Live event stream / token streaming stays NATIVE\nn8n: no SSE, no inter-node streaming]
+
+  hook ==> route
+  route --> exchats
+  route --> exlinks
+  route --> exvoice
+  route --> exacts
+  route --> excfg
+  exchats ==> resp
+  exlinks ==> resp
+  exvoice ==> resp
+  exacts ==> resp
+  excfg ==> resp
+  native -.-> hook

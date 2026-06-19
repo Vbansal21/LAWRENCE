@@ -1,0 +1,20 @@
+graph 1 7.5139 7.1667
+node add 2.0139 6.9167 3.4028 0.5 "new intent — from user / model / agency" rounded box black lightgrey
+node log 2.0139 5.8472 3.9444 0.5 "event-sourced log — add / fired / done / remove" solid cylinder black lightgrey
+node state 4.9861 4.6528 3.0417 0.5 "current state = fold of the event log" solid box black lightgrey
+node poll 4.9861 3.5833 4.8899 0.5 "kernel poll — any intent due now?" solid diamond black lightgrey
+node none 4.9861 2.3889 1.1667 0.5 "nothing due" rounded box black lightgrey
+node persist 2.0278 2.3889 4.0556 0.5 "record fired BEFORE acting — exactly-once guard" solid box black lightgrey
+node fire 2.0278 1.3194 2.5972 0.5 "fire intent — no model needed" solid box black lightgrey
+node surface 2.0278 0.25 2.8194 0.5 "notify / agency — surface to user" rounded box black lightgrey
+node restart 5.0139 5.8472 1.3472 0.5 "restart / crash" rounded box black lightgrey
+edge add log 4 2.0139 6.6664 2.0139 6.5408 2.0139 6.3833 2.0139 6.241 solid black
+edge log state 4 2.6189 5.5958 3.091 5.4105 3.7488 5.1523 4.2512 4.9551 solid black
+edge state poll 4 4.9861 4.4025 4.9861 4.2769 4.9861 4.1194 4.9861 3.9771 solid black
+edge poll none 4 4.9861 3.3277 4.9861 3.1702 4.9861 2.9615 4.9861 2.7822 no 5.0694 2.9861 solid black
+edge poll persist 4 4.5042 3.3794 4.0318 3.1931 3.3053 2.9066 2.7612 2.692 yes 3.7083 2.9861 solid black
+edge persist log 4 2.0268 2.6392 2.0245 3.2236 2.0183 4.7402 2.0154 5.4529 solid black
+edge persist fire 4 2.0278 2.1386 2.0278 2.013 2.0278 1.8555 2.0278 1.7132 solid black
+edge fire surface 4 2.0278 1.0692 2.0278 0.94355 2.0278 0.78606 2.0278 0.64376 solid black
+edge restart state 4 5.0081 5.5916 5.0044 5.4341 4.9994 5.2254 4.9951 5.046 "replay log -> exact state, no double-fire" 6.2569 5.25 dashed black
+stop

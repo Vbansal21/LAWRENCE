@@ -1,0 +1,25 @@
+graph 1 13.236 7.1667
+node trg 2.3958 6.9167 3.375 0.5 "Execute Workflow Trigger — proposals in" rounded box black lightgrey
+node allow 2.3958 5.8472 4.7482 0.5 "Switch — operation kind allowlist" solid diamond black lightgrey
+node reject 1.2569 4.6528 2.5139 0.5 "NoOp — refuse unknown kind" solid box black lightgrey
+node set 4.8264 4.6528 3.9306 0.5 "Set — stage pending + token + context-version" solid box black lightgrey
+node wait 4.8264 3.5833 3.4306 0.5 "Wait for Webhook — pause until approval\nn8n: cross-execution human-in-loop" solid box black lightgrey
+node ifok 4.8264 2.5139 6.1183 0.5 "IF — approved AND context-version current" solid diamond black lightgrey
+node expired 3.8125 1.3194 1.9861 0.5 "NoOp — denied / stale" solid box black lightgrey
+node route 7.2847 1.3194 4.2757 0.5 "Switch — dispatch to effector" solid diamond black lightgrey
+node extask 2.8403 0.25 2.6389 0.5 "Execute Workflow — task store" solid box black lightgrey
+node exsched 5.8125 0.25 2.6111 0.5 "Execute Workflow — scheduler" solid box black lightgrey
+node http 8.7569 0.25 2.5833 0.5 "HTTP Request — write artifact" solid box black lightgrey
+node audit 11.812 0.25 2.8472 0.5 "Data store — append action audit" solid cylinder black lightgrey
+edge trg allow 4 2.3958 6.6664 2.3958 6.5408 2.3958 6.3833 2.3958 6.241 solid black
+edge allow reject 4 2.1816 5.6139 2.0153 5.4435 1.7815 5.2041 1.5907 5.0086 unknown 2.1667 5.25 solid black
+edge allow set 4 2.8027 5.6381 3.1864 5.4539 3.767 5.1752 4.208 4.9635 allowed 3.9236 5.25 solid black
+edge set wait 4 4.8264 4.4025 4.8264 4.2769 4.8264 4.1194 4.8264 3.9771 solid black
+edge wait ifok 4 4.8264 3.3331 4.8264 3.2074 4.8264 3.05 4.8264 2.9076 solid black
+edge ifok expired 4 4.6309 2.2751 4.4837 2.1057 4.2793 1.8705 4.1116 1.6775 no 4.4375 1.9167 solid black
+edge ifok route 4 5.2546 2.2968 5.6715 2.0989 6.3062 1.7977 6.7548 1.5848 yes 6.2431 1.9167 solid black
+edge route extask 4 6.6097 1.1473 5.9139 0.98426 4.8162 0.727 3.9845 0.53206 solid black
+edge route exsched 4 6.9974 1.1022 6.7907 0.95602 6.5078 0.75582 6.2702 0.58773 solid black
+edge route http 4 7.5721 1.1022 7.7787 0.95602 8.0617 0.75582 8.2993 0.58773 solid black
+edge route audit 4 7.9675 1.1485 8.6836 0.98373 9.8212 0.722 10.674 0.5259 solid black
+stop

@@ -1,0 +1,22 @@
+graph 1 8.0371 6.4583
+node router 6.1667 0.47222 1.9306 0.5 "model provider router" rounded box black lightgrey
+node webarm 4.0417 0.47222 1.625 0.5 "retrieval web arm" rounded box black lightgrey
+node notif 2.2778 0.47222 1.1944 0.5 notifications rounded box black lightgrey
+node logs 0.77778 0.47222 1.1111 0.5 "logs / audit" solid cylinder black lightgrey
+node req 4.6944 6.2083 6.0417 0.5 "any outbound or sensitive op — model route / web query / notification / log" rounded box black lightgrey
+node classify 4.6944 5.1389 4.1389 0.5 "classify — personal vs shareable, secret detection" solid box black lightgrey
+node decide 4.6944 4.0694 6.6852 0.5 "policy decision — local-only vs external-allowed" solid diamond black lightgrey
+node localonly 6.1667 2.875 1.4444 0.5 "force local path" rounded box black lightgrey
+node redact 3.2361 2.875 3.7083 0.5 "redact / sanitize — strip secrets + identifiers" solid box black lightgrey
+node ok 3.5 1.8056 2.1806 0.5 "release to external seam" rounded box black lightgrey
+edge req classify 4 4.6944 5.9581 4.6944 5.8324 4.6944 5.675 4.6944 5.5326 solid black
+edge classify decide 4 4.6944 4.8886 4.6944 4.763 4.6944 4.6055 4.6944 4.4632 solid black
+edge decide localonly 4 4.9714 3.8361 5.1924 3.661 5.5054 3.4129 5.7556 3.2146 "personal, no opt-in" 6.0625 3.4722 solid black
+edge decide redact 4 4.4201 3.8361 4.2012 3.661 3.8912 3.4129 3.6433 3.2146 "external allowed" 4.5139 3.4722 solid black
+edge localonly router 4 6.1667 2.6247 6.1667 2.2132 6.1667 1.362 6.1667 0.86654 dashed black
+edge redact logs 7 2.9415 2.6238 2.6465 2.3862 2.2361 2.0556 2.2361 2.0556 2.2361 2.0556 1.5257 1.291 1.0965 0.82917 dashed black
+edge redact ok 4 3.296 2.6247 3.3282 2.4978 3.3686 2.3383 3.4049 2.1948 solid black
+edge ok router 7 4.0689 1.5538 4.5033 1.3721 5.0278 1.1528 5.0278 1.1528 5.0278 1.1528 5.342 0.96883 5.6404 0.79418 dashed black
+edge ok webarm 4 3.5994 1.5522 3.6803 1.3571 3.7959 1.0784 3.8887 0.85486 dashed black
+edge ok notif 4 3.2758 1.5522 3.0863 1.3498 2.8125 1.0572 2.5995 0.8298 dashed black
+stop

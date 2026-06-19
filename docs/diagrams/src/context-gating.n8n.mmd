@@ -1,0 +1,23 @@
+%% n8n-PARALLEL — Context gating + distillation in n8n's node library.
+%% RESTRICTION: cheap-first / escalate-only is natural in n8n (IF before the LLM node),
+%% but the rolling tiered store is external (n8n is stateless per run -> Execute Workflow
+%% to the memory subsystem; tier state never lives in the workflow).
+flowchart TD
+  trg([Execute Workflow Trigger — observation in])
+  score[Code — cheap significance score]
+  ifgate{IF — above attention threshold}
+  noop[NoOp — drop / log]
+  extract[Code — extract structured content]
+  ifhard{IF — cheap path unsure}
+  llm[Basic LLM Chain — distill / summarize]
+  set[Set — assemble context entry]
+  exmem[Execute Workflow — memory subsystem write\nn8n: tiered store is external state]
+  emit>NoOp — emit significance event\nn8n: no event bus; downstream is a separate trigger]
+
+  trg ==> score ==> ifgate
+  ifgate -->|below| noop
+  ifgate -->|admit| extract ==> ifhard
+  ifhard -->|sure| set
+  ifhard -->|unsure| llm ==> set
+  set ==> exmem
+  ifgate -.-> emit

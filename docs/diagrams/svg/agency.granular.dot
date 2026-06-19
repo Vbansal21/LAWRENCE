@@ -1,0 +1,32 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "proposer" [label="kernel proactive / model — proposes actions", shape=box, style="rounded"];
+  "allow" [label="least-privilege allowlist — only known operation kinds", shape=diamond];
+  "reject" [label="refuse — outside allowlist", shape=box, style="rounded"];
+  "stage" [label="stage pending + mint confirmation token + bind to context-version", shape=box];
+  "confirm" [label="confirmation gate — explicit approve", shape=diamond];
+  "stale" [label="context-version still current?", shape=diamond];
+  "expired" [label="reject — stale / superseded", shape=box, style="rounded"];
+  "exec" [label="execute via the owning subsystem", shape=box];
+  "tasks" [label="task store", shape=box, style="rounded"];
+  "sched" [label="scheduler", shape=box, style="rounded"];
+  "artifact" [label="artifact store", shape=cylinder];
+  "audit" [label="append-only action audit", shape=cylinder];
+  "ui" [label="UI / user — approves or denies", shape=box, style="rounded"];
+  "proposer" -> "allow";
+  "allow" -> "reject" [label="unknown kind"];
+  "allow" -> "stage" [label="allowed"];
+  "stage" -> "confirm";
+  "ui" -> "confirm";
+  "confirm" -> "expired" [label="deny"];
+  "confirm" -> "stale" [label="approve"];
+  "stale" -> "expired" [label="no"];
+  "stale" -> "exec" [label="yes"];
+  "exec" -> "tasks";
+  "exec" -> "sched";
+  "exec" -> "artifact";
+  "exec" -> "audit";
+}

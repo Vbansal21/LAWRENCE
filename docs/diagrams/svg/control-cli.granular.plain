@@ -1,0 +1,22 @@
+graph 1 17.785 4.0972
+node life 6.8819 1.4444 4.5592 0.5 "lifecycle — start / stop / rebuild" solid diamond black lightgrey
+node cfg 10.215 1.4444 1.4167 0.5 "config get / set" solid box black lightgrey
+node memops 13.021 1.4444 3.5 0.5 "memory ops — inspect / compact / export" solid box black lightgrey
+node doctor 16.34 1.4444 2.4306 0.5 "diagnostics — health probes" solid box black lightgrey
+node op 11.618 3.8472 1.7778 0.5 "operator — lk verbs" rounded box black lightgrey
+node parse 11.618 2.7778 1.125 0.5 "verb router" solid box black lightgrey
+node rebuild 2.4653 0.25 4.9306 0.5 "rebuild = COMPILE ONLY — starts/stops nothing, N-63 lesson" solid box black lightgrey
+node procs 6.8819 0.25 3.2083 0.5 "process lifecycle — kernel / bridge / UI" rounded box black lightgrey
+node store 10.34 0.25 3.0139 0.5 "single config source — same as GUI" solid cylinder black lightgrey
+node subsys 14.965 0.25 2.7917 0.5 "every subsystem — admin reach" rounded box black lightgrey
+edge life rebuild 4 6.2491 1.2634 5.5318 1.0739 4.3515 0.76215 3.4998 0.53715 rebuild 5.0347 0.84722 solid black
+edge life procs 4 6.8819 1.1888 6.8819 1.0313 6.8819 0.8226 6.8819 0.64327 "start / stop" 7.2292 0.84722 solid black
+edge cfg store 4 10.256 1.0463 10.27 0.91558 10.286 0.76975 10.3 0.63974 solid black
+edge memops subsys 4 13.419 1.1916 13.715 1.0139 14.122 0.76972 14.444 0.57647 solid black
+edge doctor subsys 4 16.055 1.1888 15.853 1.0172 15.579 0.78461 15.356 0.59562 solid black
+edge op parse 4 11.618 3.597 11.618 3.4713 11.618 3.3138 11.618 3.1715 solid black
+edge parse life 4 11.051 2.6077 10.198 2.3726 8.5833 1.9273 7.6331 1.6654 solid black
+edge parse cfg 4 11.361 2.5244 11.141 2.3202 10.823 2.0241 10.578 1.7958 solid black
+edge parse memops 4 11.875 2.5244 12.095 2.3202 12.413 2.0241 12.658 1.7958 solid black
+edge parse doctor 7 12.184 2.6555 13.135 2.4732 14.951 2.125 14.951 2.125 14.951 2.125 15.348 1.9345 15.718 1.7571 solid black
+stop

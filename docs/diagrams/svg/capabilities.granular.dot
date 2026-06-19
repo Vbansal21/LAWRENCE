@@ -1,0 +1,25 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "req" [label="requested decoding config — for kind, provider, model", shape=box, style="rounded"];
+  "table" [label="capability table — supported sampling per provider+model", shape=cylinder];
+  "resolve" [label="resolve — intersect requested with supported", shape=box];
+  "drop" [label="drop unsupported params", shape=box];
+  "clamp" [label="clamp out-of-range values", shape=box];
+  "defaults" [label="apply role defaults for the gaps", shape=box];
+  "eff" [label="effective config", shape=box, style="rounded"];
+  "summary" [label="capability summary — surfaced to UI / config", shape=box, style="rounded"];
+  "gateway" [label="model gateway — before invoke", shape=box, style="rounded"];
+  "ui" [label="config / UI", shape=box, style="rounded"];
+  "req" -> "resolve";
+  "table" -> "resolve";
+  "resolve" -> "drop";
+  "drop" -> "clamp";
+  "clamp" -> "defaults";
+  "defaults" -> "eff";
+  "eff" -> "gateway" [penwidth=2.2];
+  "defaults" -> "summary";
+  "summary" -> "ui" [style=dashed];
+}

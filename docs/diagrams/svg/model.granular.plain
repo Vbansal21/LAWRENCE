@@ -1,0 +1,30 @@
+graph 1 18.812 7.7083
+node c1 1.6389 6.9167 2.8333 0.5 "turn — synchronous, high priority" rounded box black lightgrey
+node c2 4.5 6.9167 2.1806 0.5 "retrieval discern / assess" rounded box black lightgrey
+node c3 6.9444 6.9167 2 0.5 "proactive — droppable" rounded box black lightgrey
+node c4 8.6806 6.9167 0.77778 0.5 journal rounded box black lightgrey
+node seam 5.7083 5.8472 4.0833 0.5 "role-based gateway — caller asks for a ROLE only" solid box black lightgrey
+node router 9.2083 4.7778 6.1419 0.5 "provider router — local-default, cloud opt-in" solid diamond black lightgrey
+node policy 14.611 3.5833 4.1806 0.5 "privacy / redaction gate — before any external call" solid box black lightgrey
+node cloud 14.611 2.3889 2.2778 0.5 "external provider — opt-in" solid cylinder black lightgrey
+node gate 9.2083 3.5833 5.9293 0.5 "priority gate — single local slot, serialized" solid diamond black lightgrey
+node preempt 9.4722 2.3889 4.0556 0.5 "higher-priority turn preempts droppable proactive" solid box black lightgrey
+node serve 9.9306 1.3194 1.7917 0.5 "local serving engine" solid box black lightgrey
+node warm 15.597 0.25 6.4306 0.5 "warm-KV regime — prefix reuse, fixed-prefix context-shift, slot save and restore" solid box black lightgrey
+node decode 5.4861 0.25 4.0278 0.5 "schema-constrained decode + structured extract" solid box black lightgrey
+node degrade 9.9444 0.25 4.1806 0.5 "backend down: empty result, caller treats as no-op" rounded box black lightgrey
+edge c1 seam 4 2.5623 6.6664 3.183 6.5075 4.0027 6.2977 4.6497 6.1321 solid black
+edge c2 seam 4 4.7742 6.6664 4.9368 6.5262 5.1454 6.3464 5.3242 6.1922 solid black
+edge c3 seam 4 6.664 6.6664 6.4976 6.5262 6.2842 6.3464 6.1013 6.1922 solid black
+edge c4 seam 7 8.3008 6.6654 8.2031 6.6044 8.125 6.5556 8.125 6.5556 8.125 6.5556 7.3446 6.3313 6.6707 6.1377 solid black
+edge seam router 4 6.5025 5.597 7.0851 5.4236 7.8715 5.1895 8.4464 5.0184 solid black
+edge router policy 4 10.006 4.5917 10.895 4.3998 12.344 4.0868 13.379 3.8633 "opt-in" 12.257 4.1806 dashed black
+edge router gate 4 9.2083 4.5222 9.2083 4.3647 9.2083 4.1559 9.2083 3.9766 "personal-data, default" 9.9028 4.1806 solid black
+edge policy cloud 4 14.611 3.3277 14.611 3.1702 14.611 2.9615 14.611 2.7822 solid black
+edge gate preempt 4 9.2617 3.3334 9.2976 3.1747 9.3457 2.9621 9.3868 2.7802 solid black
+edge preempt serve 4 9.5762 2.1386 9.6332 2.009 9.7052 1.8455 9.7693 1.6998 solid black
+edge serve warm 4 10.97 1.1146 11.868 0.9495 13.174 0.70933 14.17 0.52625 solid black
+edge serve decode 4 9.0312 1.0948 8.3399 0.93274 7.3801 0.70778 6.6335 0.5328 solid black
+edge serve degrade 4 9.9337 1.0692 9.9354 0.94355 9.9375 0.78606 9.9394 0.64376 dashed black
+edge decode seam 10 5.4893 0.50026 5.4934 0.80759 5.5 1.3056 5.5 1.3056 5.5 4.7917 5.5 4.7917 5.5 4.7917 5.5 4.7917 5.5736 5.1594 5.6332 5.4579 "structured result" 6.0347 2.9861 solid black
+stop

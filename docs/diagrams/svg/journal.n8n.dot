@@ -1,0 +1,25 @@
+digraph G {
+  rankdir=TB;
+  graph [splines=polyline, nodesep=0.35, ranksep=0.55, fontname="Helvetica"];
+  node  [fontname="Helvetica", fontsize=11, margin="0.12,0.06"];
+  edge  [fontname="Helvetica", fontsize=9];
+  "trg" [label="Execute Workflow Trigger — reflection hook with events", shape=box, style="rounded"];
+  "iffloor" [label="IF — time-floor elapsed\nn8n: last-write time in Static Data", shape=diamond];
+  "ifsig" [label="IF — events significant", shape=diamond];
+  "skip" [label="NoOp — skip", shape=box];
+  "exrecall" [label="Execute Workflow — memory recall + fold web/doc", shape=box];
+  "loop" [label="Loop Over Items — revise until budget\nn8n: bounded loop, not open-ended", shape=box];
+  "llm" [label="Basic LLM Chain — first-person revision", shape=box];
+  "ifbudget" [label="IF — cost budget reached", shape=diamond];
+  "exwrite" [label="Execute Workflow — memory write, single writer", shape=box];
+  "trg" -> "iffloor" [penwidth=2.2];
+  "iffloor" -> "skip" [label="no"];
+  "iffloor" -> "ifsig" [label="yes"];
+  "ifsig" -> "skip" [label="no"];
+  "ifsig" -> "exrecall" [label="yes"];
+  "exrecall" -> "loop" [penwidth=2.2];
+  "loop" -> "llm" [penwidth=2.2];
+  "llm" -> "ifbudget" [penwidth=2.2];
+  "ifbudget" -> "loop" [label="room"];
+  "ifbudget" -> "exwrite" [label="done"];
+}

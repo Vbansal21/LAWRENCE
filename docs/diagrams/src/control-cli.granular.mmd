@@ -1,0 +1,29 @@
+%% SYSTEMS ARCHITECTURE (generalized) — Control plane / CLI.
+%% Operator surface over the same contract the GUI uses (GUI equals CLI parity): lifecycle,
+%% config, memory ops, diagnostics. (cli.py ctl.py admin.py memops.py config.py)
+flowchart TD
+  op([operator — lk verbs])
+  parse[verb router]
+
+  subgraph ops[Operation classes]
+    life{lifecycle — start / stop / rebuild}
+    cfg[config get / set]
+    memops[memory ops — inspect / compact / export]
+    doctor[diagnostics — health probes]
+  end
+
+  rebuild[rebuild = COMPILE ONLY — starts/stops nothing, N-63 lesson]
+  procs([process lifecycle — kernel / bridge / UI])
+  store[(single config source — same as GUI)]
+  subsys([every subsystem — admin reach])
+
+  op --> parse
+  parse --> life
+  parse --> cfg
+  parse --> memops
+  parse --> doctor
+  life -->|rebuild| rebuild
+  life -->|start / stop| procs
+  cfg <--> store
+  memops --> subsys
+  doctor --> subsys
