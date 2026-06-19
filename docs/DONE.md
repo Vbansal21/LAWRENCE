@@ -23,6 +23,12 @@
 > "local-first default" wording records the state at that task's completion; the
 > current selected runtime is cloud-first (Gemini) until MVP acceptance, while
 > local llama.cpp compatibility remains mandatory.
+>
+> **Deployment stress overlay (2026-06-19):** historical completion is preserved,
+> but D-28…D-42 are not treated as deployment-current until PLAN N-59…N-62 pass.
+> Their existing smoke evidence proves a working path; the new gate adds sustained
+> load, repeated lifecycle transitions, live sensor endurance, and Windows-host
+> installation stress. This is a revalidation edge, not a rollback of implemented work.
 
 ---
 
@@ -36,7 +42,8 @@
 >
 > **Legend** — ✅ offline gate (`make check`, ~39 suites — **re-run & PASS 2026-06-19**)
 > + source inspected this session · ⚠ live behavior documented from prior runs,
-> **NOT re-run this session** (needs running bridge + network + Gemini key) · ➖ superseded
+> **NOT re-run this session** (needs running bridge + network + Gemini key) ·
+> ⏳ implemented, but deployment stress revalidation is open in N-59…N-62 · ➖ superseded
 > (its behaviors survive as regression guards inside a later node).
 
 | D | Node | One-line | Verified |
@@ -68,25 +75,32 @@
 | D-25 | recall in turn (N-06 core) | `[RECALLED MEMORY]` block injected per turn | ✅ |
 | D-26 | unified engine (N-05) | discern→parallel arms→assess/refine→RRF+BM25 cited bundle | ✅ |
 | D-27 | MVP substrate verify | honest current-state boundary (lists runtime caveats) | ✅ (as honest doc) |
-| D-28 | cloud-first smoke | `make mvp-smoke`: start→cited turn→index→stop | ⚠ |
-| D-29 | model-indep sensors | observers start from config, not model modality | ✅ gate · ⚠ live hour |
-| D-30 | frozen context | immutable versioned `ContextSnapshot` per run | ✅ |
-| D-31 | retrieval quality | labeled corpus recall@5/MRR + live corpus | ✅ gate · ⚠ live smoke |
-| D-32 | unattended autonomy | proactive/journal fire; cooldown-on-success | ✅ gate · ⚠ live smoke/hour |
-| D-33 | privacy boundary | redact/gate/audit (hash-only); confirm effectors | ✅ |
-| D-34 | confirmed agency | allowlist + one-use token; atomic artifact write | ✅ code · ⚠ live smoke |
-| D-35 | truthful classic UI | no fabricated answers; real reminders/chats/actions | ✅ gate · ⚠ live DOM harness |
-| D-36 | local llama.cpp compat | random-turn parity; p50 31.8s/p95 98.6s CPU | ⚠ |
-| D-37 | local KV checkpoint | profile-keyed text-only slot save/restore | ⚠ |
-| D-38 | running e2e MVP accept | SOUL loop runs as one system (aggregated terminal evidence) | ⚠ |
+| D-28 | cloud-first smoke | `make mvp-smoke`: start→cited turn→index→stop | ⏳ N-59/N-61 |
+| D-29 | model-indep sensors | observers start from config, not model modality | ⏳ N-60 |
+| D-30 | frozen context | immutable versioned `ContextSnapshot` per run | ⏳ N-59 |
+| D-31 | retrieval quality | labeled corpus recall@5/MRR + live corpus | ⏳ N-59 |
+| D-32 | unattended autonomy | proactive/journal fire; cooldown-on-success | ⏳ N-59/N-60 |
+| D-33 | privacy boundary | redact/gate/audit (hash-only); confirm effectors | ⏳ N-59 |
+| D-34 | confirmed agency | allowlist + one-use token; atomic artifact write | ⏳ N-59 |
+| D-35 | truthful classic UI | no fabricated answers; real reminders/chats/actions | ⏳ N-61 |
+| D-36 | local llama.cpp compat | random-turn parity; p50 31.8s/p95 98.6s CPU | ⏳ N-59 |
+| D-37 | local KV checkpoint | profile-keyed text-only slot save/restore | ⏳ N-59/N-61 |
+| D-38 | running e2e MVP accept | SOUL loop runs as one system (aggregated terminal evidence) | ⏳ N-62 |
+| D-39 | voice/runtime repair | compile-only rebuild + segmented voice + 10s pending gate | 🔴 REGRESSED → N-63 (rebuild still restart-popups; VAD -45 starves capture; inline whisper stalls; voice-render half D-40/41/42 OK) |
+| D-40 | bottom telemetry | truthful subsystem state + token/reset + trajectory | ⏳ N-61 |
+| D-41 | chat viewport/lifecycle | stable scroll + clear/save/archive/restore | ⏳ N-61 |
+| D-42 | current-first interpretation | current evidence governs; history supplies trajectory | ⏳ N-59/N-62 |
 
-**Net (2026-06-19).** D-01…D-26 plus the **offline-testable portions** of D-27…D-38
-are ✅ gate+code verified by me this session. The **live MVP behaviors** (D-28/31/32/34/36/37/38
-smoke runs, the unattended hour, local latency, KV restart) are ⚠ — the code is real and
-the offline gate is green, but their *live numbers* are prior-run documentation I did **not**
-reproduce here (no running server / network / Gemini key). Runtime posture is **cloud-first
-(Gemini)**; **no local embed GGUF installed**, so the vector arm degrades to lexical+graph
-locally. To upgrade any ⚠ to ✅: run the relevant `make *-smoke` against a live bridge.
+**Net (2026-06-19).** D-01…D-42 remain the implementation record. Component gates
+and prior live smokes show the paths exist, but deployment-sensitive nodes are ⏳
+until N-59 core load, N-60 live sensor endurance, N-61 desktop/Windows-host stress,
+and N-62 convergence acceptance pass against the same commit. Runtime posture is
+**cloud-first (Gemini)**; local llama.cpp compatibility remains mandatory. No local
+embed GGUF is installed, so the vector arm degrades to lexical+graph locally.
+**Correction (2026-06-19):** D-39 (voice/runtime) is **🔴 regressed** — its rebuild +
+audio-capture claims do not match the running code (rebuild still restart-popups; VAD
+default -45 starves WSLg capture; inline whisper stalls). Re-opened as **N-63**, which
+now gates N-60. D-40/D-41/D-42 (telemetry/chat/grounding) are unaffected.
 
 ---
 
@@ -973,6 +987,18 @@ The microphone pipeline is replay-tested; this host's live input remained silent
 non-silent hardware validation is an operational follow-up, not fabricated evidence.
 
 ## D-39 — Live voice/runtime repair (2026-06-19)
+> **🔴 REGRESSED 2026-06-19 (post-Codex audio fix) → re-opened as PLAN §M.5 / N-63.**
+> A code read contradicts the "live-verified" claims below: (1) `cmd_rebuild` still ends
+> with `_desktopctl("restart-popup")` — NOT compile-only; (2) `obs/audio.py` defaults the
+> VAD gate to `-45 dB`, which the file's own notes say rejects real WSLg-mic speech (`-55`
+> needed) → capture rarely opens an utterance, so voice/transcription/proactive read as
+> "none working"; (3) transcription runs inline in `_capture_loop` and stalls capture /
+> overflows the ~2 s PCM pipe; (4) gain-normalization dropped to dead code; (5) a short
+> read discards the open utterance; (6) the green `stress_sensors §F` mocks the threshold,
+> decode, AND gate, hiding all of it. **The chat-render/telemetry/grounding halves
+> (→ D-40/D-41/D-42) are unaffected and remain done.** Remediation contract = N-63.
+> Legacy "implemented/verified" text is kept below as the (unmet) intended contract.
+
 **Implemented and live-verified.** `lk rebuild` now only compiles; it starts, stops,
 or restarts nothing. Runtime config enables passive audio at boot. The live bridge
 reports model, vision, audio, tick, and journal healthy; `parec` is running against
@@ -1073,7 +1099,13 @@ D-19→N-03,N-05,N-12,N-13 · **D-20→N-02 (vector arm),N-06,N-07,N-08** ·
 **D-35→D-38 (truthful human interaction boundary)** ·
 **D-36→D-37,D-38 (local replacement boundary)** ·
 **D-37→D-38 (warm-restart boundary)** · **D-38 terminal MVP sink** ·
-**D-39→N-45,N-55** · **D-40→N-49** · **D-41→N-49** · **D-42→N-48**.
+**D-39→N-45,N-55,N-63 (🔴 regressed; N-63 remediates)** · **D-40→N-49** · **D-41→N-49** · **D-42→N-48**.
 
-*D-38 is intentionally a settled MVP sink. D-39/D-40/D-41/D-42 retain explicit
-post-MVP edges; no completed remediation node is silently treated as terminal.*
+**Deployment revalidation overlay:** D-28,D-30…D-34,D-36,D-37→N-59 ·
+D-29,D-32,**N-63 (gates)**→N-60 · D-28,D-35,D-37,D-40,D-41→N-61 ·
+D-38,D-39,D-40,D-41,D-42,N-59,N-60,N-61→N-62.
+
+*D-38 remains the historical MVP implementation sink, but N-62 is now the
+deployment-current acceptance sink. D-39/D-40/D-41/D-42 retain their post-MVP
+edges and also feed deployment revalidation; no completed node is silently
+treated as production-current.*

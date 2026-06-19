@@ -353,25 +353,51 @@ def _crop_signature(crop) -> bytes:
 
 # ── OCR ───────────────────────────────────────────────────────────────────────
 
+def _ocr_image_bytes(path: Path) -> bytes:
+    """Bound OCR memory/latency by shrinking oversized native screen captures."""
+    from PIL import Image, ImageOps  # type: ignore
+    with Image.open(path) as image:
+        image = ImageOps.autocontrast(image.convert("L"))
+        image.thumbnail((1920, 1200))
+        buf = io.BytesIO()
+        image.save(buf, format="PNG")
+        return buf.getvalue()
+
+
 def run_ocr(path: Path, max_chars: int = 600) -> str:
-    if shutil.which("tesseract"):
-        try:
-            # psm 3 (auto page segmentation) reads real page/document content on
-            # full-window captures; psm 11 (sparse) returned mostly UI chrome.
-            r = subprocess.run(
-                ["tesseract", str(path), "stdout", "--psm", "3", "-l", "eng"],
-                capture_output=True, text=True, timeout=15,
-            )
-            t = r.stdout.strip()
-            if t:
-                return t[:max_chars]
-        except Exception:
-            pass
+    binary = shutil.which("tesseract")
+    digest = ""
     try:
         digest = hashlib.sha1(path.read_bytes()).hexdigest()[:12]
-        return f"[ocr-unavailable:{digest}]"
     except Exception:
-        return "[ocr-unavailable]"
+        pass
+    if binary:
+        try:
+            image = _ocr_image_bytes(path)
+        except Exception:
+            image = path.read_bytes()
+        errors: list[str] = []
+        for psm in ("3", "11"):
+            try:
+                r = subprocess.run(
+                    [binary, "stdin", "stdout", "--psm", psm, "-l", "eng"],
+                    input=image, capture_output=True, timeout=30,
+                )
+            except subprocess.TimeoutExpired:
+                errors.append("timeout")
+                continue
+            except Exception:
+                errors.append("launch")
+                continue
+            text = r.stdout.decode("utf-8", errors="replace").strip()
+            if text:
+                return text[:max_chars]
+            if r.returncode != 0:
+                errors.append(f"exit-{r.returncode}")
+        if errors:
+            return f"[ocr-error:{errors[-1]}:{digest}]" if digest else f"[ocr-error:{errors[-1]}]"
+        return f"[ocr-no-text:{digest}]" if digest else "[ocr-no-text]"
+    return "[ocr-error:tesseract-missing]"
 
 
 # ── heuristic diff ────────────────────────────────────────────────────────────
@@ -546,7 +572,7 @@ class VisionObserver(threading.Thread):
             return True                # nothing changed in the active window — handled
 
         ocr = run_ocr(fg, max_chars=800)
-        if ocr and not ocr.startswith("[ocr-unavailable"):
+        if ocr and not ocr.startswith("[ocr-"):
             block = f"[{title[:80]}]\n{ocr}"
         else:
             block = ocr
@@ -639,7 +665,7 @@ class VisionObserver(threading.Thread):
         blocks: list[str] = []
         for reg in sorted(tracked, key=lambda x: (x.ibox[1], x.ibox[0])):
             txt = reg.ocr.strip()
-            if txt and not txt.startswith("[ocr-unavailable"):
+            if txt and not txt.startswith("[ocr-"):
                 blocks.append(f"[{reg.title[:60]}]\n{txt}")
         combined = "\n".join(blocks)
         if not combined:

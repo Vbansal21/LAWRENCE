@@ -30,7 +30,7 @@ def section(t): print(f"\n=== {t} ===")
 # ─────────────────────── A. vision change-detection gate ───────────────────────
 section("A. pixel_change_score: forces first write, silent on no change, scales")
 from collections import deque
-from lk.obs.vision import VisionObserver, frame_novelty_score, pixel_change_score
+from lk.obs.vision import VisionObserver, frame_novelty_score, pixel_change_score, run_ocr
 a = bytes([10, 20, 30, 40] * 64)
 b = bytes([10, 20, 30, 40] * 64)
 c = bytes([250, 5, 250, 5] * 64)
@@ -52,6 +52,15 @@ frame_novelty_score(history, c)
 check("returning to a recent state is not a new boundary",
       frame_novelty_score(history, a) == 0.0)
 check("visual history stays bounded", len(history) == 3)
+if shutil.which("tesseract"):
+    from PIL import Image, ImageDraw
+    ocr_path = Path(tempfile.mkdtemp(prefix="lk-ocr-")) / "screen.png"
+    image = Image.new("RGB", (900, 240), "white")
+    ImageDraw.Draw(image).text((30, 80), "LAWRENCE LOCAL VISION", fill="black")
+    image.save(ocr_path)
+    check("OCR reads a bounded screen image under the local-model path",
+          "LAWRENCE" in run_ocr(ocr_path, 200))
+    shutil.rmtree(ocr_path.parent, ignore_errors=True)
 
 
 # ─────────────────────── B. spool delivery / ordering / robustness ───────────────────────

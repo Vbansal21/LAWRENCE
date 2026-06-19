@@ -418,8 +418,8 @@ function metric(label, value, status = "ok", attrs = "") {
 
 function textStatus(value) {
   const text = String(value || "").toLowerCase();
-  if (/(fail|error|unavailable|unreachable|refused|retry|stopped)/.test(text)) return "fail";
-  if (/(pending|loading|queued|capture|record)/.test(text)) return "warn";
+  if (/(fail|error|unavailable|unreachable|refused|retry|stopped|ocr-error)/.test(text)) return "fail";
+  if (/(pending|loading|queued|capture|record|ocr-no-text)/.test(text)) return "warn";
   return "ok";
 }
 

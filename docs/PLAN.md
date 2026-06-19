@@ -258,6 +258,10 @@ start` (reuse WS-J, scoped).
 ---
 
 ## §C — §1 WS-U UI redesign
+> **DECISION (user 2026-06-19): the current (classic) UI is CANONICAL — one UI, refined
+> heavily (N-10). The separate `palette` variant (N-11) is superseded/folded in. The N-09
+> variant seam stays (swappability + future N-64 workflow-composition surface), but we do
+> not maintain two chat front-ends.**
 
 ### N-09 (U0) — UI seam (Track 0) `[x]` — FULL — **DONE 2026-06-18 → D-23**
 **Done note.** Shipped exactly as planned: `web/lib/bridge.js` (sole transport) +
@@ -282,16 +286,30 @@ stress_ui seam assertions. O(1) indirection; one SSE parse point.
 `uiVariant` precedence `resolve-before-start` (config canonical, `/health` mirrors,
 `?uiVariant=` dev-only).
 
-### N-10 (UA) — Track A `classic` refactor `[ ]` — medium ↩ folds §5(D-11)
-Hard-dep N-09. Drop `localDraft`, truthful toggles (from `/health`+SSE), vendored md,
-config off the bar. Closes the popup half of D-11. Self-align: `grep -c localDraft`→0;
-bridge-down ⇒ honest error. Deferral: MUST-defer-until N-09.
+### N-10 (UA) — **Canonical UI: classic, heavily refined** `[ ]` — FULL ↩ folds §5(D-11) **— user 2026-06-19: classic IS the canonical UI**
+**Directive (user 2026-06-19).** Make the **current (classic) UI canonical** and **refine
+it heavily.** It is no longer "Track A pending a palette successor" — there is one UI, and
+it must be excellent. This absorbs N-11's intent (palette is no longer a separate variant;
+its good ideas — command-palette ergonomics, ⌘K, settings window, turn-id elevation,
+backlink chips — are folded INTO the canonical classic surface where they earn their place).
+**Scope (heavy refinement, on the N-09 seam):** drop `localDraft` + all fabricated/hollow
+state; truthful toggles from `/health`+SSE; vendored markdown; config off the main bar;
+then the **deep pass** — ergonomics, layout, the folded UI nodes (N-12 ingest, N-13 PTT,
+N-14 reminders, N-15 capability markers), session/recall/link rendering (N-08), typed
+evidence cards (FR-008), and the workflow-composition surface (N-64) as it matures. Every
+control must pass the **N-67 integrity audit** (no broadcast-without-substance, §K.0.1 #1).
+**Self-align:** `grep -c localDraft`→0; bridge-down ⇒ honest error; each control real or
+visibly-disabled-with-reason. **Edges:** `--depends-on--> N-09` · `--absorbs--> N-11` ·
+`--gated-by--> N-67` (integrity) · `--hosts--> N-12/13/14/15` · `--renders--> N-08, FR-008`.
 
-### N-11 (UB) — Track B `palette` variant `[ ]` — medium + deferral
-Hard-dep N-09; soft-dep N-08 (renders sessions/recall/links). Command-palette overlay
-(U1 geometry, ⌘K, settings window, U4 by turn-id, U5). Hosts N-12/13/14/15. Deferral:
-MUST-defer-until N-09; CAN-defer-until after N-16 (functional UI ships on classic).
-Ambiguity: magnetic panels (FR-010) `crystallizes-during` (in-app snapping first).
+### N-11 (UB) — ~~Track B `palette` variant~~ `[superseded → N-10]` — **user 2026-06-19: no second UI**
+**Superseded.** The separate `palette` variant is dropped: there is one **canonical UI**
+(classic, N-10). Its concepts (grow-to-content command-palette geometry, ⌘K menu, settings
+window, ⌘L cross-chat link flow + backlink chips, U4 turn-id elevation, native vibrancy) are
+**folded into N-10** to adopt where they improve the canonical surface — NOT built as a rival
+front-end. The N-09 variant *seam* stays (it is what makes the UI swappable / hosts the
+future N-64 workflow-composition surface), but we do not maintain two chat UIs. Mockup
+`docs/mockups/palette.html` is now a *design reference for N-10*, not a build target.
 
 ### N-12 (U6) — Ingest UI button `[ ]` — one line
 Hard-dep N-09; real value needs N-04. "Save to KB" → status (FR-005 UI half).
@@ -817,6 +835,37 @@ For this phase, **cloud-first generation is intentional until the MVP works**, b
 the implementation must preserve zero-shot/random-turn llama.cpp compatibility.
 Cloud-first does not authorize cloud-only state, hidden raw-data upload, or
 provider-specific orchestration.
+
+### §K.0.1 — Refined MVP goal (2026-06-19, user-directed) — **REPLACES the bare "it runs" bar**
+
+The SOUL is unchanged. What "MVP-done" *means* is sharpened by three hard-won lessons
+this session (the D-39 over-claim; the Codex audio regression hidden behind a mocked
+test; the realization that subsystems must become n8n-composable nodes). A node is not
+MVP-done unless it satisfies **all four**:
+
+1. **INTEGRITY — no feature broadcasts more than it delivers.** Every control/endpoint/
+   claim exposed to the user (UI button, CLI verb, DONE entry) must be backed by an
+   implementation as deep/robust/seamless/non-obstructive/well-integrated as it advertises,
+   OR be visibly unavailable with a reason. "Done from wiring alone" and mocked-only test
+   evidence do **not** count. (Drives **N-67** UI audit; re-grades D-39.)
+2. **ATOMIC + NODAL — one subsystem, one objective, one contract.** Each subsystem is a
+   single-responsibility service behind a stable contract (HTTP+MCP), shaped to be a node
+   in the future n8n graph (N-64). MVP refactors *toward* this even before n8n exists.
+   (Drives **N-66**.)
+3. **USABLE LOCAL — correct *and* responsive.** Local llama.cpp must not just produce
+   correct output (D-36) but serve it with real production optimizations (KV reuse/restore,
+   server-side context-shift, GPU offload) so a turn is interactively usable, not minutes.
+   (Drives **N-65**; ties N-32.)
+4. **DEPLOYMENT-ACCEPTED — N-62 stands.** The deployment-stress sink (N-59/60/61→N-62)
+   remains the acceptance gate, now gated additionally by N-63 (voice regression).
+
+**Explicitly POST-MVP (not required for acceptance):** the *full* production-serving
+research menu (N-65 advanced: dynamic KV compaction, speculative decoding), the *full*
+n8n migration + composition UI (N-64), and the *rich* diagram deliverable (N-68 beyond a
+first legible pass). MVP needs only the *minimum* of each to satisfy 1–4. **Open scope
+decision for the user:** confirm whether INTEGRITY (#1) and the local-latency floor (#3)
+are blocking for MVP acceptance, or tracked as immediate post-MVP — I have assumed
+*blocking for #1, latency-floor-only for #3*.
 
 ### §K.1 — Stage 1 BUILD artifact
 
@@ -1742,6 +1791,82 @@ before any code.) Recorded now as the agreed method; the phases themselves are d
 small-model-drivable** — the orchestration/tooling paths must work with a simple local
 model, with frontier models as an enhancement, not a requirement.
 
+### §L.7 — Atomic-services + n8n workflow substrate `[concept]` (N-64) *(user 2026-06-19, scope extension)*
+*Direction (eventually/later, NOT MVP): stop hardcoding each subsystem's workflow in
+Python and instead (1) factor every capability into an **atomic service** behind a stable
+contract, then (2) **compose them as graphs/workflows in self-hosted n8n (community ed.,
+local)** so new looped/feedback workflows can be integrated / developed / composed
+**on the fly** — deep research, NotebookLM-like, Claude-Research-like, DeepThink/Qwen-
+Deep-Think-like, an OpenCode-class coding-agent harness, etc. The point is not coding per
+se but a **general capacity for any looped/feedbacked workflow**. This concretizes N-50
+Phase-2's "workflow-orchestration (n8n/LangGraph-class)" bucket into the chosen substrate
+and extends N-17 (L6 tools/MCP/skills) + N-45 (perception cascade) + N-25 (effectors).*
+
+**Two layers (the core of the concept).**
+- **Atomic capability services** (each independently testable, single-responsibility,
+  contract-first):
+  - *perception*: per-sensor capture→consolidate→categorize→extract→info-gain services
+    (the N-45 cascade), **multi-stage / parallel / realtime / async, N-modality-extensible**;
+  - *externalization*: atomic-log writer, contextual rolling-revision journal, tiered
+    rolling memory + compaction/compression, **KV-cache management** (incl. doc/web KV
+    caching) — the write-side complexities currently tangled in kernel/ctx code;
+  - *tool loops* (each with its own dynamic loop): tasks, reminders, notes, scheduled
+    tasks, web retrieval, doc retrieval, ranking/re-ranking, semantic search, associative
+    memory, associative graph, and a **PDA-like (stack/push-down) I/O channel for the
+    model** (structured, resumable tool I/O rather than flat single-shot calls).
+- **Orchestration graphs (n8n).** The above services are nodes; n8n wires them into
+  workflows (the research/NotebookLM/DeepThink/coding-harness systems above), with loops,
+  branches, feedback, and human-in-loop **only at finalization** (N-50). On-the-fly
+  composition = adding/editing an n8n workflow, not a code change.
+- **Workflow-composition UI (user 2026-06-19).** A **separate, later UI** to **compose /
+  select / toggle workflows and connect assemblies of workflows** on the fly — LAWRENCE
+  surfaces its own n8n workflow library as a first-class user surface (enable/disable a
+  workflow, wire one workflow's output into another, compose assemblies). Sibling to the
+  WS-U UI track (a `web/variants/` surface or dedicated window) reading the n8n workflow
+  registry. The user-facing half of "on-the-fly composable"; deferred with N-64; depends on
+  the service contract + N-49/N-50 UI methodology + N-68 diagram/view work.
+
+**Load-bearing design boundaries (flagged now so planning doesn't trip on them later):**
+1. **n8n is NOT the realtime path.** n8n's per-execution / JSON-between-nodes model is
+   wrong for the 60-FPS perception hot loop (N-45). Boundary: the **hot sensor cascade
+   stays native** and merely **emits events** (webhook/queue) that n8n *subscribes* to;
+   n8n owns the coarse-grained, second+-scale workflows (research, retrieval graphs,
+   journal/memory orchestration), not the frame loop.
+2. **Local-first / privacy is the hard gate (D-33, [[lawrence-local-first]]).** Self-hosted
+   n8n is local-OK, but it makes adding a cloud node trivial — every workflow MUST route
+   through the same `PolicyState`/redaction boundary; **no personal-data workflow defaults
+   to a cloud node.** Personal-data services stay off `BACKGROUND_ROLES`-style cloud paths.
+3. **Single-writer + provider-seam invariants survive (I1, I3).** n8n workflows call the
+   **memory/journal *service API*, never the store directly** (preserves the single-writer
+   contract); model/provider selection stays behind the `model.py` role seam — n8n picks a
+   *role*, not a provider. The atomic services are the invariant boundary; n8n is above it.
+4. **Small-model-drivable (N-50 cross-cut).** Workflow steps that invoke a model must work
+   with a local gemma-4-class tool-caller; frontier models are an enhancement.
+5. **Contract substrate.** Atomic services likely exposed as **HTTP + MCP servers** (reuse
+   the existing bridge endpoints; MCP makes them both n8n-composable AND directly model-
+   tool-callable) — one contract serves orchestration and tool-calling.
+
+**Why it fits the SOUL.** A watcher-assistant whose perception/memory/tools are atomic,
+inspectable services composed by editable graphs is *more* local-first, *more* swappable
+(workflows replaceable like the model/UI already are), and supports the §L feature vision
+(N-46 journal, N-47 retrieval, N-49 workspace) as composed workflows rather than bespoke code.
+
+**Ambiguity register (all deferred — concept only).**
+- n8n vs LangGraph-vs-Temporal-vs-custom for the *durable* loop engine `intentionally-open`
+  (n8n is the user's current pick; revisit at Phase-2 against realtime/local/embeddability).
+- Service contract = HTTP vs MCP vs both `resolve-before-start` (lean: MCP+HTTP dual).
+- Migration order `crystallizes-during` — which subsystem gets atomized + lifted to n8n
+  first (lowest-risk: a tool loop like web/doc retrieval; NOT the realtime sensor path).
+- How n8n state interacts with the frozen `ContextSnapshot` (D-30) / KV lifecycle (D-37)
+  `resolve-before-start` of the first migration.
+
+**Edges.** `N-64 --concretizes--> N-50` (Phase-2 orchestration bucket) · `N-64 --extends-->
+N-17` (L6 tools/MCP/skills become the service contract) · `N-64 --consumes--> N-45`
+(perception services are the realtime producers it subscribes to, never wraps) ·
+`N-64 --constraint--> N-25` (effector workflows still gate through confirm/audit) ·
+`N-64 --gated-by--> D-33` load-bearing (privacy boundary) · `--gated-by--> I1/I3`
+load-bearing (single-writer + provider seam). **Strictly post-MVP; nothing built.**
+
 ---
 
 > **Cross-references for whoever plans §L next.** N-45 supersedes the heuristic trigger
@@ -1761,9 +1886,11 @@ bubbles + double "Sources" block in chat; audio clipped at the start and the end
 utterance; capture needs long continuous speech and chokes on short atomic commands;
 "Rebuild popup" from the launcher restarts the whole stack (bridge + model); the global
 hotkey still does not summon. These are **fixes to the running MVP**, planned here first
-then implemented. IDs N-51…N-58. N-51…N-54 and N-56…N-58 are complete; N-55 remains
-open. Distinct from §L: N-53/N-54 are the **tactical** capture loop that §L.1
-(SenseVoice×sherpa-onnx) may later supersede behind the same observer contract.*
+then implemented. IDs N-51…N-58. **STATUS (revised 2026-06-19 §M.5):** N-52/N-56/N-57/N-58
+landed (→ D-40/41/42 + the chat-render half of D-39); **N-51/N-53/N-54 RE-OPENED as N-63**
+(D-39 over-claimed — see §M.5); N-55 still open. Distinct from §L: N-53/N-54 are the
+**tactical** capture loop that §L.1 (SenseVoice×sherpa-onnx) may later supersede behind
+the same observer contract.*
 
 ### §M.1 — Stage 1 BUILD snapshot
 
@@ -1989,6 +2116,447 @@ framework, or secondary protocol until the minimal helper proves reliable.
 
 ### §M.4 — Stage 3 REVISE + FINALIZE
 
-**Current executable frontier:** N-55 only within §M. N-51…N-54 and N-56…N-58 are
-complete and moved to D-39…D-42. N-45/N-48/N-49 remain broader post-MVP tracks, not
-implicit continuation work.
+**Current executable frontier:** N-55 (hotkey) **plus the re-opened N-63 (§M.5)**.
+N-52/N-56/N-57/N-58 (→ D-40/D-41/D-42 and the chat-render half of D-39) remain
+complete; **N-51 + N-53 + N-54 are RE-OPENED** by the §M.5 regression audit — D-39's
+voice/rebuild claims do not match the running code. N-45/N-48/N-49 remain broader
+post-MVP tracks, not implicit continuation work.
+
+### §M.5 — REGRESSION AUDIT (2026-06-19, post-Codex audio fix) — **D-39 RE-OPENED**
+
+*User live report after a Codex audio fix: "voice unavailable", "Proactive / Voice /
+Transcription, none of them working at all", "the rebuild process auto launches all
+server/kernel/ui/system — rebuild should only do rebuild." A code read confirms D-39's
+"live-verified" claims are **not** true of the current tree. D-39 is downgraded to
+REGRESSED in DONE.md §0; the chat-render/telemetry/grounding halves (N-52/56/57/58 →
+D-40/41/42) are unaffected. Remediation = **N-63** below.*
+
+#### N-63 (VOICE-FIX) — Voice/runtime regression remediation `[ ]` — FULL — re-opens D-39 (N-51/N-53/N-54)
+**Verified root causes (read this session, not speculation):**
+1. **Rebuild is not compile-only.** [ctl.py](../services/lk/ctl.py) `cmd_rebuild` ends with
+   `_desktopctl("restart-popup")`; that stops+relaunches the popup (and the popup boot
+   chains the bridge/observers back up) — contradicts N-51, the D-39 entry, and the
+   launcher hint "compile only; start or restart nothing" ([actions.py](../services/lk/launcher/actions.py)).
+2. **VAD gate too strict for WSLg.** [obs/audio.py](../services/lk/obs/audio.py) defaults
+   `LK_AUDIO_VAD_DB=-45`, but the file's own notes record that **-42 rejected real speech**
+   on the WSLg RDP virtual mic and **-55** was needed. At -45 the per-frame gate
+   `_rms_db_bytes(chunk) > vad_db` rarely fires → no utterance opens → voice/transcription/
+   proactive are all silent (matches "none working").
+3. **Transcription runs inline in the capture loop.** `_finish_utterance` / partials call
+   whisper synchronously inside `_capture_loop`; while it decodes (seconds, CPU), nothing
+   reads `proc.stdout`. The OS pipe holds ~2.05 s of PCM → overflow → dropped audio + the
+   loop blocks (re-introduces the "blocky / cut-off / needs repetition" symptom).
+4. **Gain-normalization silently dropped + dead code.** `transcribe()` no longer normalizes;
+   `_normalize_gain`/`rms_db`/`SILENCE_DB` are now referenced only in a comment — a real
+   degradation on the documented-quiet WSLg mic, dressed up as an "opt-in" that nothing can
+   invoke.
+5. **Short non-empty read discards the open utterance.** `if not chunk or len(chunk) <
+   frame_bytes: break` drops an in-progress `buf` without `_finish_utterance` → tail loss on
+   recorder churn (defeats the "no tail clip" goal).
+6. **The green test hides all of it.** `stress_sensors.py` §F mocks `_rms_db_bytes`,
+   `transcribe`, AND `audio_gate`, so `make check` passing exercises only loop bookkeeping —
+   not the threshold, decode, or stall. False confidence.
+
+**Fix (acceptance):**
+- `cmd_rebuild` is **compile-only** — returns after `desktopctl build`; starts/stops/
+  restarts nothing (the relaunch becomes a separate explicit `lk restart`); the running
+  bridge/model/popup PIDs are unchanged across a rebuild. (closes N-51 for real)
+- VAD default lowered to the documented working value (**-55**, single source of truth with
+  the windowed path) and made the live value; a short atomic command and a longer sentence
+  both open→close one utterance each with no onset/tail clip. (N-53)
+- Transcription moved OFF the capture thread (worker/queue) so `proc.stdout` is drained
+  continuously; capture never blocks on decode. (N-53)
+- Gain path resolved: either re-wire `_normalize_gain` on VAD-confirmed speech or delete the
+  dead symbols — no comment-only "feature." (N-53)
+- Short read finalizes the open utterance before reopening. (N-53)
+- A **non-mocked** decode smoke (real `_rms_db_bytes` over a known wav; one fixture utterance
+  → one transcript) replaces/augments the fully-mocked §F. (test gate)
+- Live cue test: user speaks; partials stream to one bubble; the silence badge appears;
+  proceed/dismiss/auto-fire works. (N-54, currently unreachable because step 2/3 starve it)
+
+**Edges.** `N-63 --reopens--> D-39` load-bearing · `N-63 --dependency--> N-60`
+load-bearing (live voice endurance can't be honestly stressed until capture actually
+fires) · `N-63 --constraint--> N-45` significant (the worker/observer seam must stay
+swappable for SenseVoice×sherpa-onnx). Order within §M: **N-63 → N-55**.
+
+---
+
+## §N — Deployment stress revalidation (2026-06-19) — **PLANNED, NOT RUN**
+
+> **SOUL:** LAWRENCE is a local-first watcher-assistant whose value is continuous,
+> grounded operation across perception, memory, autonomy, and safe action. Deployment
+> is acceptable only if that loop survives sustained use and lifecycle disruption,
+> not merely a single successful request.
+>
+> **Scope:** Revalidate the old completed MVP/remediation nodes with actual runtime
+> stress before calling the current tree deployable. Existing completion records stay
+> in DONE.md; this section adds a current deployment proof boundary. No implementation
+> or test execution is authorized by this planning update.
+
+### §N.1 — Stage 1 BUILD
+
+**Triage.**
+
+```text
+[N-59] centrality:H ambiguity:M — kernel/model/retrieval/agency load stress
+[N-60] centrality:H ambiguity:M — live vision/audio/voice endurance stress
+[N-61] centrality:H ambiguity:H — desktop lifecycle/UI/Windows-host stress
+[N-62] centrality:H ambiguity:L — terminal deployment acceptance
+```
+
+### N-59 (CORE-STRESS) — Sustained runtime and model-path stress `[ ]`
+
+**Pathway.** Parallel lanes exercise cloud and local turns, retrieval, context
+freezing, cancellation, autonomy, policy, agency proposals, and KV restart. They
+converge on one report containing latency percentiles, queue high-water mark, memory
+growth, error count, duplicate count, and process/port cleanup. This node does not
+test microphone, visual UI, or installer behavior.
+
+**Triple-anchor.**
+- Task-local: prove the kernel remains correct under repeated and overlapping work.
+- Implementation-scope: reuse existing `make *-smoke` entrypoints and bridge metrics;
+  add one orchestrator script whose sole job is repeated runtime stress.
+- Ideation-soul: continuous cognition is not credible if queues grow, context drifts,
+  memory corrupts, or provider replacement fails under repetition. Coherent.
+
+**Deferral.** No hard deferral beyond a configured cloud key and installed local
+model. Completing N-59 unblocks N-62's cognition lane.
+
+**Implementation specifics.** Standard-library process/HTTP/threading tooling is
+sufficient. Target: bounded batches rather than unlimited load—at least 50 mixed
+turns, cancellation during active work, repeated retrieval, 10 autonomous cycles,
+three bridge restarts, and three compatible/incompatible KV restarts. Assert zero
+torn durable records, zero stuck jobs, bounded queue depth, clean shutdown, and no
+silent provider fallback. Report p50/p95/max; do not add a benchmark framework.
+
+**Ambiguity register.**
+- `resolve-before-start`: exact concurrency ceiling based on the one-slot inference gate.
+- `crystallizes-during`: latency thresholds for local CPU versus cloud.
+- `intentionally-open`: provider network variance; correctness remains mandatory.
+
+### N-60 (SENSOR-STRESS) — Live perception and voice endurance stress `[ ]`
+
+**Pathway.** Vision and audio run concurrently through repeated foreground changes,
+speech/silence boundaries, short commands, long utterances, partial updates, dismiss,
+proceed, and auto-submit. The lane converges on observer health, transcript identity,
+capture latency, dropped-event count, CPU/RAM trend, and clean observer shutdown.
+
+**Triple-anchor.**
+- Task-local: prove proactive/vision/transcription/voice survive real continuous input.
+- Implementation-scope: attach to D-29/D-39 observer and pending-voice contracts;
+  retain deterministic replay as a control, but require non-silent hardware evidence.
+- Ideation-soul: perception is the watcher-assistant's input boundary. Coherent.
+
+**Deferral.** Hard-deferred only when no real microphone/display host is available.
+Completing N-60 unblocks N-62's perception lane.
+
+**Implementation specifics.** One sensor stress script, no new sensor abstraction.
+Run at least 30 minutes with scripted screen changes and a labeled audio set plus live
+microphone speech. Assert no onset/tail clipping in labeled samples, one utterance
+identity per query, timeout never below 10 seconds, bounded spool/temp files, no
+observer death, and no duplicate proactive turn from one utterance.
+
+**Ambiguity register.**
+- `resolve-before-start`: labeled audio fixture and acceptable word-error threshold.
+- `crystallizes-during`: host-specific silence floor.
+- `intentionally-open`: ambient hardware quality, recorded with the result.
+
+### N-61 (DESKTOP-STRESS) — Desktop lifecycle, feed, and native-host stress `[ ]`
+
+**Pathway.** Three tracks run in parallel: repeated build/rebuild/start/stop/restart;
+high-churn feed/chat/telemetry interaction; Windows ARM64 build/install/start and
+cross-boundary bridge recovery. They converge in one real Windows-host pass. N-55
+global hotkey remains independently open and is not allowed to hide failures in the
+rest of the deployment path.
+
+**Triple-anchor.**
+- Task-local: prove the shipped desktop stays stable through realistic lifecycle and UI churn.
+- Implementation-scope: reuse `desktopctl.sh`, the DOM harness, and Windows host scripts.
+- Ideation-soul: the assistant must remain reachable and truthful without destabilizing
+  its cognition services. Coherent.
+
+**Deferral.** The Windows lane is hard-deferred until run on the actual Windows ARM64
+host. Completing N-61 unblocks N-62's packaging/interaction lane.
+
+**Implementation specifics.** Keep separate single-purpose scripts: lifecycle stress,
+DOM/feed stress, and Windows host acceptance. Minimums: 20 compile-only rebuilds with
+unchanged service PIDs; 25 restart cycles with no duplicate listeners; 500 streamed
+messages with fixed manual scroll anchor; 100 chat create/archive/restore cycles;
+bridge loss/recovery while the popup remains honest; native install into a clean
+`%LOCALAPPDATA%\LAWRENCE`, launch, restart, update-over-install, and uninstall-by-
+directory removal. Record peak memory and orphan processes.
+
+**Ambiguity register.**
+- `resolve-before-start`: whether MVP distribution is portable install directory or
+  signed installer; choose portable directory unless the user requires signing.
+- `crystallizes-during`: Windows localhost-forwarding behavior.
+- `intentionally-open`: N-55 hotkey helper implementation; report it separately.
+
+### N-62 (DEPLOY-ACCEPT) — Current-tree MVP deployment acceptance `[ ]`
+
+**Pathway.** Diamond convergence: N-59 core stress, N-60 sensor endurance, and N-61
+desktop/host stress must all pass against the same commit and configuration manifest.
+N-62 only collects evidence and declares pass/fail; it does not repair failures.
+
+**Triple-anchor.**
+- Task-local: establish one reproducible deployable build and evidence bundle.
+- Implementation-scope: supersedes D-38 only as the current deployment proof boundary,
+  not as an implementation rewrite.
+- Ideation-soul: proves the complete watcher loop remains useful and safe under sustained
+  operation on the intended host. Coherent.
+
+**Deferral.** Hard-deferred until N-59, N-60, and N-61 pass. Completion makes the MVP
+ready for limited deployment; failures return only the affected lane to the frontier.
+
+**Implementation specifics.** Store commit, config hash, dependency versions, model
+profile, host details, test commands, measured results, and known degraded capabilities.
+Acceptance requires no unresolved data corruption, stuck process, false UI health,
+silent sensor death, or bypassed confirmation. N-55 may remain a declared access
+limitation only if manual summon works and the user accepts it.
+
+**Ambiguity register.**
+- `resolve-before-start`: target deployment audience—single-user current machine is
+  assumed for MVP.
+- `intentionally-open`: code signing and auto-update remain post-MVP unless required.
+
+### §N.2 — Stage 1 edge set
+
+```text
+[D-28,D-30,D-31,D-32,D-33,D-34,D-36,D-37] --{constraint}--> [N-59]
+  Weight: load-bearing
+  Meaning: previously smoke-verified cognition contracts must survive repeated mixed load.
+  Break condition: changing any runtime contract changes the stress scenario and invalidates its report.
+
+[D-29,D-32,D-39] --{constraint}--> [N-60]
+  Weight: load-bearing
+  Meaning: sensor, proactive, and repaired voice paths define the live endurance target.
+  Break condition: observer or utterance identity changes require sensor stress fixtures to change.
+
+[D-28,D-35,D-37,D-40,D-41] --{constraint}--> [N-61]
+  Weight: load-bearing
+  Meaning: lifecycle, UI truth, continuity, telemetry, and chat behavior must survive host churn.
+  Break condition: changing build/start/bridge/feed contracts invalidates desktop stress evidence.
+
+[N-59] --{dependency}--> [N-62]
+  Weight: load-bearing
+  Meaning: deployment cannot pass without sustained cognition correctness.
+  Break condition: any stuck job, corruption, unsafe action, or unexplained fallback fails acceptance.
+
+[N-60] --{dependency}--> [N-62]
+  Weight: load-bearing
+  Meaning: deployment cannot pass without live non-silent perception endurance.
+  Break condition: clipping, duplication, silent observer death, or unbounded capture files fails acceptance.
+
+[N-61] --{dependency}--> [N-62]
+  Weight: load-bearing
+  Meaning: deployment cannot pass without repeatable desktop lifecycle and host installation.
+  Break condition: duplicate processes, false health, scroll regression, or failed clean host install fails acceptance.
+
+[D-38,D-39,D-40,D-41,D-42] --{partial-completion}--> [N-62]
+  Weight: significant
+  Meaning: accepted MVP behavior and recent repairs are the baseline revalidated by the new deployment gate.
+  Break condition: modifying those behaviors requires rerunning all affected N-62 lanes.
+```
+
+### §N.3 — Stage 2 AUDIT findings
+
+- **Zero-incoming N-nodes:** none. N-59/N-60/N-61 inherit explicit completed
+  contracts; N-62 depends on all three.
+- **Zero-outgoing D-nodes:** D-38 was previously terminal. `[revised: D-38 now has a
+  partial-completion edge to N-62 because implementation acceptance is not current
+  deployment stress proof]`.
+- **Cycles:** none. Completed nodes feed stress lanes; stress lanes converge once at N-62.
+- **Diamond:** N-59, N-60, and N-61 are independent lanes that must converge at N-62.
+- **Triple-anchor recheck:** N-59, N-60, and N-61 each test a distinct product boundary;
+  no node introduces a new feature or post-MVP redesign.
+- **Assumption conflicts:** D-38 allowed replay-only microphone evidence and deferred
+  Windows packaging. `[revised: N-60 requires non-silent hardware evidence; N-61
+  requires a real Windows-host install]`.
+- **Deferral integrity:** N-59 unblocks N-62 cognition; N-60 unblocks N-62 perception;
+  N-61 unblocks N-62 packaging/interaction.
+- **Load-bearing integrity:** every endpoint exists and every break condition is
+  observable through jobs, files, processes, ports, UI state, or install artifacts.
+- **Unresolved edges:** none. N-55 remains an explicit limitation, not an untracked
+  dependency; N-62 requires user acceptance if it remains open.
+
+### §N.4 — Stage 3 REVISE + FINALIZE
+
+- `[revised: smoke is insufficient]` D-28…D-42 remain implemented, but DONE.md now
+  marks deployment-sensitive rows ⏳ until N-59…N-62 pass.
+- `[revised: KISS boundary]` Four nodes replace one oversized “test everything”
+  script. Each planned script has one objective and can fail independently.
+- `[revised: real-host evidence]` Replay remains a deterministic control, but cannot
+  substitute for live microphone/display and Windows ARM64 installation evidence.
+- `[revised: acceptance authority]` N-62 becomes the current deployability sink;
+  D-38 remains the historical MVP implementation sink.
+
+**Current executable frontier:** N-59 can run on the current WSL environment once
+credentials/model services are available. N-60 requires a real non-silent microphone
+and display session. N-61's Linux/DOM lanes can start now; its terminal lane requires
+Windows ARM64. N-62 is blocked by all three.
+
+### §N.5 — Confirmation gate
+
+Stop here. Do not implement or run N-59…N-62 until the user explicitly confirms
+this stress-revalidation scope.
+
+---
+
+## §O — Nodal substrate, production serving, UI integrity & system diagrams (2026-06-19) — **PLANNED**
+
+*Four user directives this session, captured plan-first. They sharpen the refined MVP
+goal (§K.0.1) and the post-MVP n8n substrate (N-64 / §L.7). IDs N-65…N-68.*
+
+```
+[N-65 SERVE]    centrality:H ambiguity:M — production-grade local llama.cpp serving
+[N-66 ATOMIC]   centrality:H ambiguity:M — drive subsystems to atomic/nodal services
+[N-67 UI-AUDIT] centrality:H ambiguity:L — every exposed feature audited for integrity
+[N-68 DIAGRAMS] centrality:M ambiguity:M — dense legible system diagrams (mermaid→SVG)
+```
+
+### N-66 (ATOMIC) — Drive subsystems to atomic, single-objective, nodal services `[ ]` — FULL
+**Directive (user 2026-06-19).** Refine the implementation so each subsystem, while
+achieving **one and only one** objective, is also a **well-defined node-level object** for
+the future n8n system (N-64). This is both a near-term *refactoring principle* applied to
+current work AND a tracked node. It is the bridge between today's hardcoded kernel and the
+N-64 substrate: do the atomization *now* (behind the existing in-process calls), lift to
+n8n *later*.
+**Anchor.** *Task-local:* every subsystem = a service with one responsibility + one stable
+contract (HTTP+MCP), no hidden cross-writes. *Impl-scope:* today perception/memory/journal/
+retrieval/tools are interwoven in `kernel/`+`ctx/`+`retrieval/`; many do >1 thing or write
+stores directly. *Soul:* atomic, inspectable, replaceable parts = more local-first + more
+swappable. **Coherent — it is N-64's precondition.**
+**Method.** Apply N-50 Phase-1 (abstraction DAG → shared primitives) + Phase-2 (where each
+lives). Output a **service inventory**: name · single objective · inputs/outputs · contract
+· current coupling to break · invariant it must preserve (I1 single-writer, I3 provider
+seam). Refactor in dependency order; each extraction is gate-guarded (behavior-preserving).
+**Invariants.** Memory/journal writes stay behind the single-writer service (I1); provider
+choice stays behind the `model.py` role seam (I3); no atomic service defaults personal data
+to cloud (D-33 / local-first). **Edges.** `--enables--> N-64` load-bearing · `--shapes-->
+N-65/N-67/N-68` (serving, UI, and diagrams all describe the same node set).
+
+### N-65 (SERVE) — Production-grade local llama.cpp serving `[ ]` — FULL — concretizes N-32, extends D-37
+**Directive (user 2026-06-19, "use brain").** The serving layer uses almost no production
+optimization — and this is about *serving*, not compiling with -O3. Current argv
+([services/lk/server.py](../services/lk/server.py) ~164–188): `--ctx-size`, `--threads 9`,
+**`--n-gpu-layers 0` (pure CPU default)**, `--defrag-thold 0.1`, `--mlock`, `--parallel 1`,
+`--slot-save-path`, optional `--flash-attn`/`--cache-type-k/v`/`--jinja`, `--reasoning off`.
+Real KV is *quantized* (cache-type) and a single text-only session slot is saved (D-37), but
+**every turn re-evaluates the full prompt** → D-36 p50 31.8s. This node is the
+usability lever (§K.0.1 #3).
+**Optimization menu (the substance — prioritized):**
+1. **Cross-turn KV prefix reuse.** Ensure `cache_prompt:true` on every completion + adopt
+   llama.cpp **`--cache-reuse N`** so a shifted prompt reuses the longest common KV prefix
+   instead of recomputing. Today trimming happens at the app layer (`tail_for_model`), which
+   *defeats* prefix reuse — align app-side context shaping with server-side KV identity.
+2. **Server-side sliding-window context-shift.** Keep **BOS + system prompt + tool/skill/
+   MCP/skill defs + pinned context FIXED** (llama.cpp `--keep` + context-shift) and trim
+   only the rolling middle — so the expensive stable prefix is never re-evaluated. Replaces
+   blunt app-layer truncation.
+3. **KV-as-content-cache (extends D-37 beyond a session slot).** Pre-compute + **save KV
+   slots for hot, reused content blocks** (frequently-loaded docs, web pages, notes, the
+   system/tool/skill/MCP def block) and **restore** them to skip attention recompute on
+   reuse — "dirty loads" of docs/web/notes into KV. Keyed by content+model+template hash
+   (reuse D-37's identity discipline); invalid → cold. KV is derivative, never canonical (I).
+4. **KV compaction via dynamic compression, not trimming.** Beyond cache-type quant: evaluate
+   importance-based KV eviction/compression (H2O/SnapKV/Scissorhands-class, or llama.cpp
+   native shift) so long context degrades gracefully instead of hard-trimming. (advanced →
+   post-MVP per §K.0.1.)
+5. **Compute placement.** GPU offload default when available (`--n-gpu-layers` auto from
+   `LLAMACPP_GPU_LAYERS` probe, not hardcoded 0); thread count = cores not fixed 9; tune
+   `--batch-size`/`--ubatch-size` for prompt-eval throughput.
+6. **Model + KV quantization** review (model GGUF quant level vs quality; KV q8/q4 with flash
+   attn). 7. **Speculative decoding** (`--model-draft`) for local latency. (advanced → post-MVP.)
+**Anchor.** *Soul:* "the whole system optimised for local" — a watcher that takes minutes
+fails the responsiveness bar. **Deferral.** Items 1–2–5 are the MVP latency floor (§K.0.1
+#3); 3 is high-value next; 4–6–7 are advanced/post-MVP. **Edges.** `--concretizes--> N-32`
+load-bearing · `--extends--> D-37` (KV slots → content-cache) · `--constraint--> D-36`
+(must stay random-turn compatible) · `--feeds--> N-62` (usable-local acceptance lane).
+**Ambiguity.** Per-block KV-cache eviction policy `crystallizes-during`; context-shift vs
+app-trim boundary `resolve-before-start`; GPU availability on this host `crystallizes-during`.
+
+**Performance TARGET (user 2026-06-19): ≥ 14–15 tok/s decode at 32K+ context, PURE CPU
+— no GPU, no NPU.** GPU/NPU are bonus (raise expectations if available, never required).
+This is an aggressive CPU-only bar for a Gemma-4-class model at 32K (decode there is
+**memory-bandwidth-bound on KV reads**), so the strategy is: shrink the per-token KV
+read + cut the tokens the big model must actually decode.
+**Web-researched CPU-only mechanics (2026-06-19, ranked by impact at the CPU 32K target):**
+- **Speculative decoding (`--model-draft` + `--spec-*`) — the #1 CPU decode multiplier.** A
+  tiny draft model (e.g. a 0.5–1B Gemma) proposes tokens the target verifies in parallel;
+  ~2× reported on high-context long output. On CPU this is the most realistic path to the
+  target. Needs a compatible small draft GGUF + tuned draft length/acceptance.
+- **Flash attention `-fa on` ALWAYS** — 1.3–2× faster prefill, smaller KV/token, and a **hard
+  prerequisite for KV quantization** (without `-fa` the KV is dequantized every step → slower
+  than no quant). Works on CPU. Currently only conditional → make it default-on for Gemma 4.
+- **KV-cache quant `--cache-type-k/v q8_0`** — halves KV bytes → **less memory bandwidth per
+  decoded token**, the dominant CPU cost at 32K (q8_0 = safe quality). Requires `-fa`.
+  (advanced/CPU-pending: TurboQuant 3–4× K-quant; KVQuant.)
+- **Quant level for CPU = go smaller.** On CPU, decode speed tracks memory bandwidth, so a
+  smaller weight quant is *faster*: prefer **Q4_K_M**, evaluate **Q4_0 with online repack
+  (`--cpu-moe`/repacked AVX2/AVX-512 kernels)** which llama.cpp accelerates on CPU; measure
+  quality. This is a primary CPU lever (unlike GPU, where it's secondary).
+- **Threads `-t` = PHYSICAL cores** (not hardcoded 9), pin with `--cpu-mask`/NUMA
+  (`--numa distribute|isolate`) — CPU-specific throughput levers we set none of today.
+- **`--ubatch-size`/`--batch-size` 1024–2048** — dominant PREFILL lever to cut 32K TTFT.
+- **Build matters on CPU** — ensure `third_party/llama.cpp` includes the 2026 Gemma-4
+  KV-cache fix (~40% context-heavy memory cut) and is built with the right ISA
+  (AVX-512/AMX where the CPU supports it) — that is the one legit *compile* lever that is
+  actually a serving concern.
+- **Honest feasibility.** A 4B Gemma at Q4 on a strong modern many-core CPU does ~10–20
+  tok/s at small context; at 32K, KV attention drags it down. `-fa` + KV-q8 + spec-decode +
+  physical-core threads + a small quant is the credible recipe to hold ~14–15 tok/s at 32K;
+  report measured p50/p95 (D-36) rather than assume. If CPU-only can't reach it on this host,
+  spec-decode draft size + quant level are the tuning knobs before conceding. Sources in §O.
+
+### N-67 (UI-AUDIT) — Exposed-feature integrity audit `[ ]` — FULL — extends N-10, re-checks D-35/D-39/D-40/D-41
+**Directive (user 2026-06-19).** Go through the current UI; cross-check **every single
+button/feature exposed to the user** — is it implemented as deeply / seamlessly / robustly /
+non-obstructively / well-integratedly / elegantly / in-a-well-defined-manner as it
+broadcasts itself? This operationalizes §K.0.1 #1 (integrity) and is the natural extension
+of N-10 (classic refactor: drop `localDraft`, truthful toggles).
+**Method.** Enumerate the full control surface (classic variant `app.js` toggles/buttons:
+voice, audio, retrieval, deep-search, vision, ingest, reminders, chats save/archive/restore,
+stop/cancel, actions confirm, telemetry strip, …). For each, produce an **integrity matrix
+row:** control → advertised behavior → actual backend path → verdict {real / partial /
+hollow / over-claimed} → fix. Then fix or honestly disable the gaps (no broadcast-without-
+substance). Cross-check against D-35 (truthful UI), D-39 (voice — known regressed), D-40
+(telemetry), D-41 (chat lifecycle). **Edges.** `--extends--> N-10` · `--re-grades-->
+D-35/D-39/D-40/D-41` · `--feeds--> N-61` (desktop/UI stress) · `--gated-by--> §K.0.1 #1`.
+**Ambiguity.** "Elegant/non-obstructive" thresholds `crystallizes-during` (start with
+functional truth, polish second).
+
+### N-68 (DIAGRAMS) — Dense, legible system diagrams `[ ]` — medium
+**Directive (user 2026-06-19).** Prepare dense diagrams of how the subsystems work — for
+**every looped / feedback / agentic / retrieval / web-call / tool-call** system — using
+mermaid.js. Ensure **legibility**: render to **SVG and check visually**, detect + handle
+**edge intersections**, and run a **graph algorithm to choose the best node ordering**
+(layering/topological + crossing-minimization) before presenting. Dual perspective:
+**(a) n8n view** (services as nodes, workflows as graphs) and **(b) granular view**
+(internal control flow). **Hard question to resolve:** how to display **transitive,
+realtime, independent components** (the always-on sensor cascade that *emits* events vs.
+the event-driven workflows that *consume* them) — likely separate swimlanes / a legend for
+"async event boundary," since they don't share a synchronous call graph.
+**Method.** Per subsystem: build the graph model → topological layering + barycenter/median
+crossing-reduction ordering → emit mermaid → render SVG (headless) → programmatic check
+(overflow, overlapping bounding boxes, crossing count) → iterate until legible → visual
+confirm. Keep diagrams in `docs/diagrams/`. **Subsystems to cover:** retrieval engine
+(discern→parallel arms→assess→RRF, §J), proactive loop (D-32), journal (D-05), turn
+pipeline (D-30/D-26), sensor cascade (N-45/N-33), agency (D-34), scheduler (D-12), memory
+tiers+recall (D-01/D-24), the voice path (N-63), and the n8n-substrate target (N-64).
+**Edges.** `--depends-on--> N-66` (the node set it draws) · `--serves--> N-64` (the n8n
+composition view) · `--serves--> N-29` (docs). **Ambiguity.** SVG legibility-check tooling
+`resolve-before-start` (mermaid-cli + a crossing/overlap linter); realtime-component
+notation `crystallizes-during`.
+
+### §O edges
+```
+N-66 --enables-----> N-64   load-bearing  atomic services are the n8n nodes
+N-66 --shapes------> N-65   significant   serving optimizes the same node boundary
+N-66 --shapes------> N-67   significant   UI audit checks node contracts end-to-end
+N-66 --shapes------> N-68   load-bearing  diagrams render the node set
+N-65 --concretizes-> N-32   load-bearing  the local-latency lever, made specific
+N-65 --extends-----> D-37   significant   session KV slot → content KV cache
+N-67 --extends-----> N-10   significant   truthful-UI refactor, audited exhaustively
+N-68 --serves------> N-64   significant   the composition/workflow view
+{N-65,N-67} --feed-> N-62   significant   usable-local + UI integrity acceptance lanes
+```
