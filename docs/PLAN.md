@@ -1751,3 +1751,244 @@ model, with frontier models as an enhancement, not a requirement.
 > D-23; N-10 classic refactor is the nearest existing surface) and depend on N-47/N-48
 > for grounding + scroll-to-chunk. DONE.md is intentionally untouched — nothing here is
 > built yet.
+
+---
+
+## §M — Live-defect remediation batch (2026-06-19) — **REVISED CURRENT STATE**
+
+*Defects observed in a live run (user, with screenshot): triple/blocky/repetitive voice
+bubbles + double "Sources" block in chat; audio clipped at the start and the end of an
+utterance; capture needs long continuous speech and chokes on short atomic commands;
+"Rebuild popup" from the launcher restarts the whole stack (bridge + model); the global
+hotkey still does not summon. These are **fixes to the running MVP**, planned here first
+then implemented. IDs N-51…N-58. N-51…N-54 and N-56…N-58 are complete; N-55 remains
+open. Distinct from §L: N-53/N-54 are the **tactical** capture loop that §L.1
+(SenseVoice×sherpa-onnx) may later supersede behind the same observer contract.*
+
+### §M.1 — Stage 1 BUILD snapshot
+
+**Triage.**
+- `[N-51] centrality:M ambiguity:L` — rebuild lifecycle boundary.
+- `[N-52] centrality:M ambiguity:L` — single voice/source rendering path.
+- `[N-53] centrality:H ambiguity:M` — continuous capture and utterance segmentation.
+- `[N-54] centrality:H ambiguity:M` — voice pending/auto-submit gate.
+- `[N-55] centrality:M ambiguity:H` — Windows-global summon replacement.
+- `[N-56] centrality:M ambiguity:L` — truthful bottom telemetry.
+- `[N-57] centrality:M ambiguity:L` — stable feed plus chat lifecycle.
+- `[N-58] centrality:H ambiguity:L` — current-context grounding precedence.
+
+### ~~N-51 (RBLD) — Rebuild must compile only~~ `✅ → D-39`
+- **Defect:** launcher *Rebuild* → `lk rebuild` → `cmd_rebuild` ([services/lk/ctl.py](../services/lk/ctl.py)) ends with
+  `_desktopctl("restart")`, and the `restart)` case in [desktopctl.sh](../apps/desktop/scripts/desktopctl.sh) does
+  `stop popup+bridge → start_bridge → start_app` — so rebuilding the **UI** tears down and
+  reloads the **bridge + model** (the "start all"). The web/ is embedded in the Tauri binary;
+  only the popup binary needs relaunching. Bridge/model are untouched by a web/Rust rebuild.
+- **Implemented `[revised: user clarified rebuild means rebuild only]`:** `cmd_rebuild`
+  delegates only to `desktopctl build`; no popup, bridge, kernel, observer, or model
+  process is started/stopped/restarted. Two real release builds preserved popup and
+  bridge PIDs. See D-39.
+
+### ~~N-52 (CHAT) — De-bloat chat voice/source rendering~~ `✅ → D-39`
+- **Defect A (triple voice bubble):** one utterance fires **two** SSE context events —
+  `kind:"audio"` (→ `addVoiceUserMessage(..., key="audio:"+t)`, badge *audio transcript*) and
+  `kind:"voice"` (→ `key="event:"+t`, badge *spoken audio*) in
+  [variants/classic/app.js](../apps/desktop/web/variants/classic/app.js) `connectEvents` —
+  whose different key **prefixes** defeat `seenVoiceTurns` dedup, **plus** the enqueued turn
+  renders a third user bubble. ⇒ 3 bubbles for one thing.
+- **Defect B (double "Sources"):** the model's answer text embeds its own `Sources:` markdown
+  list **and** the UI renders source cards/strip from `sources`/`citations` ⇒ two stacked
+  Sources blocks with differently-numbered, overlapping entries.
+- **Fix:** (1) **single voice path** — in voice-query mode the backend (N-53) emits **one**
+  evolving entry; the UI keys all voice dedup on the *normalised transcript only* (no
+  `audio:`/`event:` prefix) and never double-renders the heard text as both a context event
+  and a turn bubble. (2) **one Sources block** — strip a model-emitted trailing `Sources`/
+  `References` list from the answer body when the system will render its own cards (or render
+  exactly one, preferring the structured `sources`/`citations`). This is the near-term shim
+  for N-48 ("system formats citations, model only selects"). **Acceptance:** one utterance →
+  one user bubble; one answer → at most one Sources strip; gate green (`stress_ui.py`).
+
+### ~~N-53 (AUDSEG) — Utterance-segmented streaming capture~~ `✅ → D-39`
+- **Defect (issues 1/5 + follow-up):** [obs/audio.py](../services/lk/obs/audio.py) records
+  back-to-back **fixed 4 s windows** (`WINDOW_SECONDS=POLL_INTERVAL=4`), transcribes each in
+  isolation, gates on `audio_gate` (word-count ≥ 3 + Jaccard). Consequences:
+  - **onset clipped** — recording starts at the tick, not at speech start; a word spanning the
+    boundary is cut. **tail clipped** — speech after the last full window is dropped on the
+    silence flush.
+  - **repetition** — a sentence straddling two windows transcribes partially in each.
+  - **no atomic commands** — `audio_min_words ≥ 3` kills short commands; "coalesce while busy"
+    drops utterances; nothing accumulates.
+  - **no streaming** — each window is a new entry, never an evolving one.
+- **Fix — utterance loop with VAD boundaries + pre-roll + hangover:**
+  1. **Continuous short frames** (e.g. ~0.3–0.5 s reads) feeding a small **rolling pre-roll
+     ring buffer** (~0.5–1.0 s) so the captured utterance includes audio *before* the VAD
+     trip → **no onset clip**.
+  2. **VAD-gated segmentation:** speech onset (energy/VAD over the noise floor) opens an
+     utterance; **trailing-silence hangover** (configurable, ~0.6–1.0 s) before close →
+     **no tail clip**, and a short atomic command is a complete utterance on its own.
+  3. **Streaming partials:** transcribe the growing utterance incrementally and emit
+     **partial → partial → final** updates of **one** UI entry (id-keyed), not N bubbles.
+  4. **Backend-swappable:** keep faster-whisper now; isolate capture/segmentation from the
+     ASR call so §L.1's SenseVoice×sherpa-onnx (+ streaming ASR) drops in behind the same
+     interface. Keep the silence/`no_speech_prob`/`avg_logprob` anti-hallucination guards.
+  5. **Relax the gate** for segmented utterances: a VAD-confirmed segment need not clear
+     `audio_min_words` (atomic commands pass); keep Jaccard dedup against the *previous final*
+     only (not per-window).
+  - **New config (round-trips via `lk config`, GUI==CLI):** `audio_preroll_ms`,
+    `audio_hangover_ms`, `audio_frame_ms`, `audio_max_utterance_s` (hard cap),
+    `audio_partial_interval_ms`. All optional, lazy, default-on, degrade gracefully (I4).
+- **Acceptance:** a 1–2 word command is captured whole; a long sentence is one entry with no
+  start/end clipping and no internal repeat; streaming partials visibly update one bubble.
+
+### ~~N-54 (SILTO) — Silence-timeout voice query gate~~ `✅ → D-39`
+- **Goal (issue 6):** after an utterance closes (N-53) and a **configurable** silence
+  timeout elapses, the pending transcript is auto-submitted as a (proactive) query —
+  **but** the UI first shows a **countdown badge/notification** that is **Dismiss** (cancel,
+  drop it) / **Proceed now** (fire immediately) / (let it) **time-out → auto-fire**.
+- **Fix:** backend holds the closed-utterance transcript in a pending slot with a timer;
+  emits an SSE `voice_pending` event (`{transcript, timeoutMs}`); on timeout (or a `proceed`
+  control) enqueues the turn, on `dismiss` drops it. UI renders the countdown chip near the
+  composer with the three affordances. **New config:** `voice_silence_timeout_ms`
+  (minimum/default 10000), `voice_autoquery` (on/off). **Acceptance:** speak → badge
+  counts down for at least 10 seconds → auto-fires; Dismiss cancels; Proceed fires now.
+
+### ~~N-56 (TEL) — Truthful bottom metrics and trajectory~~ `✅ → D-40`
+- Per-subsystem chips now carry `ok|active|warn|fail` state, including explicit
+  failure highlighting. Session text-token use is estimated transparently and can
+  be reset. The compact trajectory reports `user|proactive › stage · context use`.
+- **Alignment:** serves the SOUL by exposing real system state without adding a
+  second telemetry subsystem. Browser state remains presentation-only.
+
+### ~~N-57 (CHATCTL) — Stable feed and durable chat lifecycle~~ `✅ → D-41`
+- Streaming follows only when the user was already near the feed bottom; a query no
+  longer steals a manually positioned viewport. Existing `/chats` routes now expose
+  Clear/new, Save MDX, Archive, and Restore in the History surface.
+- **Deferral:** hard-delete UI remains intentionally deferred; archive is reversible
+  and safer. Re-entry requires a specific user need for irreversible deletion.
+
+### ~~N-58 (CURGROUND) — Current-first model interpretation~~ `✅ → D-42`
+- Context storage, headers, ordering, logs, journal, memory, and retrieved evidence
+  are unchanged. Only analysis/response/retrieval prompts now enforce: current request,
+  newest active-chat turns, and recent perception are authoritative; older material
+  explains trajectory and cannot override newer evidence.
+- **Alignment:** task-local grounding, current code attachment, and SOUL all agree.
+  This preserves long-running continuity without answering from stale state.
+
+### N-55 (HOTKEY) — Global hotkey: diagnosis + **blank-slate reimplementation** plan `[ ]` — plan + diagnosis this session
+- **Why it fails (root cause, confirmed by code + web research 2026-06-19):** Tauri's
+  `global-shortcut` plugin on **Linux is X11-only**, and under **WSLg** the app is an
+  Xwayland client whose X11 grab **only fires while a WSLg window has focus** — so it is *not*
+  a global summon when the user is in a Windows app. (Wayland has no global-shortcut protocol;
+  GitHub `tauri-apps/global-hotkey#28`.) The repo already knows this: `ensure_windows_hotkey`
+  in [desktopctl.sh](../apps/desktop/scripts/desktopctl.sh) launches
+  [host/windows/GlobalHotkey.ps1](../apps/desktop/host/windows/GlobalHotkey.ps1) on the
+  **Windows** side (`RegisterHotKey` WinAPI) → it connects to the in-WSL **control socket**
+  `127.0.0.1:8767` (WSL2 localhost forwarding) → sends `show`/`toggle`. So failure is in that
+  cross-boundary chain, candidates: (a) `powershell.exe` not on PATH / blocked from WSL;
+  (b) the hidden `Start-Process` PS host not surviving; (c) `Ctrl+Shift+L` already held by
+  another Windows app → `RegisterHotKey` returns false and the script exits silently;
+  (d) localhost forwarding off (mirrored networking / firewall) so the socket is unreachable;
+  (e) the PS1 self-terminates ~30 s after a transient socket miss at startup.
+- **Possible ways to implement (researched):** (1) **Windows-host RegisterHotKey** helper
+  (current) → socket — fragile, depends on a live PS host; (2) **AutoHotkey** script →
+  same socket — robust if AHK present; (3) a **tiny bundled compiled Windows tray helper**
+  (C#/Rust, auto-started, single source of truth) → socket — most reliable, no PS dependency;
+  (4) in-WSL Tauri shortcut — only when focused (keep as a *focused-window* fallback only);
+  (5) Wayland/compositor binding — N/A under WSLg.
+- **This session's deliverable (per user "find why, search ways, add to plan with total
+  re-implementation from scratch"):** the diagnosis above + this plan, **plus** a runtime
+  probe so the failure is observable (extend `lk doctor`/`desktopctl doctor`: is the control
+  socket listening? is `powershell.exe` reachable? is a `LAWRENCE-GlobalHotkey` PS process
+  alive? did `RegisterHotKey` succeed?). **Blank-slate reimplementation (next, not a patch on
+  the old path):** a single bundled Windows helper (option 3, AHK = option 2 fallback) that
+  is installed/
+  started/stopped by the launcher lifecycle; the in-WSL shortcut stays only as the
+  focused-window fallback. It owns hotkey registration + retry and reports status back over
+  the socket. Keep the control-socket contract (`show|hide|toggle`) unchanged.
+- **Acceptance (reimpl):** pressing the hotkey from *any* Windows foreground app summons the
+  popup within ~150 ms; `lk doctor` reports the hotkey chain healthy; survives app
+  restart/rebuild.
+
+**Execution pathway.** Keep the existing `show|hide|toggle` control-socket contract.
+The Windows registration helper and WSL lifecycle integration can be built in parallel,
+then converge in one real Windows-host acceptance pass. The host pass is the hard dependency.
+
+**Triple-anchor alignment.**
+- Task-local: make summon genuinely global and observable.
+- Implementation-scope: attach to the existing control socket and launcher lifecycle.
+- Ideation-soul: reduce access friction without coupling cognition to desktop hosting.
+
+**Deferral.** Hard-deferred until a Windows host can build/run and verify registration,
+forwarding, restart survival, and foreground-app behavior. Re-entry: a real Windows-host
+test session is available.
+
+**Implementation specifics.** Prefer one small Windows-native helper using
+`RegisterHotKey`, one retry loop, and the existing TCP command. No tray UI, installer
+framework, or secondary protocol until the minimal helper proves reliable.
+
+**Ambiguity register.**
+- `resolve-before-start`: C# versus Rust helper, based on installed host toolchain.
+- `crystallizes-during`: startup mechanism and localhost-forwarding behavior.
+- `intentionally-open`: optional tray/status UI after core acceptance.
+
+### §M.2 — Execution edges
+
+```text
+[N-53] --{dependency}--> [N-52]
+  Weight: load-bearing
+  Meaning: one utterance identity enables one evolving voice bubble.
+  Break condition: changing segmentation IDs requires the UI dedup path to change.
+
+[N-53] --{dependency}--> [N-54]
+  Weight: load-bearing
+  Meaning: the silence timer starts only after a segmented utterance closes.
+  Break condition: replacing utterance completion requires re-binding the pending gate.
+
+[D-39] --{constraint}--> [N-45]
+  Weight: significant
+  Meaning: future streaming ASR must preserve the observer callback contract.
+  Break condition: an incompatible ASR interface requires bridge and UI voice rewrites.
+
+[D-39] --{dependency}--> [N-55]
+  Weight: incidental
+  Meaning: reliable global summon improves access to the repaired runtime.
+  Break condition: removing the popup-control socket changes N-55's attachment point.
+
+[D-40] --{partial-completion}--> [N-49]
+  Weight: significant
+  Meaning: compact truthful telemetry is done; broader UI hierarchy remains.
+  Break condition: replacing the bottom strip requires retaining equivalent health truth.
+
+[D-42] --{constraint}--> [N-48]
+  Weight: load-bearing
+  Meaning: grounding improvements must keep current evidence above historical trajectory.
+  Break condition: any retrieval redesign that lets stale memory override current state regresses D-42.
+
+[D-41] --{partial-completion}--> [N-49]
+  Weight: significant
+  Meaning: scroll stability and chat lifecycle are complete pieces of the larger UI track.
+  Break condition: a UI redesign must preserve feed position and durable chat controls.
+```
+
+### §M.3 — Stage 2 AUDIT findings
+
+- **Zero-incoming N-nodes:** N-55 is genuinely independent of D-39’s voice internals,
+  but depends incidentally on its popup-control attachment; that edge is now explicit.
+- **Zero-outgoing D-nodes:** D-39/D-40/D-41 initially appeared settled. `[revised:
+  added D-39→N-45/N-55, D-40→N-49, D-41→N-49, D-42→N-48]`.
+- **Cycles:** none. Completed remediation flows outward only to open post-MVP work.
+- **Diamond:** D-40 and D-41 independently feed N-49; they converge at the future UI
+  track and are now marked.
+- **Alignment re-check:** N-53, N-54, and N-58 remain coherent. N-58 initially risked
+  changing context structure; `[revised: interpretation-only prompt precedence]`.
+- **Conflict:** N-54 still documented a 2500 ms default after runtime changed to a
+  10000 ms minimum. `[revised: acceptance and config text corrected]`.
+- **Load-bearing integrity:** D-42→N-48 endpoints exist and the break condition is
+  testable through the current-grounding contract test.
+- **Unresolved:** `?:open` N-55 requires a real Windows-host execution pass before
+  selecting or validating the replacement helper.
+
+### §M.4 — Stage 3 REVISE + FINALIZE
+
+**Current executable frontier:** N-55 only within §M. N-51…N-54 and N-56…N-58 are
+complete and moved to D-39…D-42. N-45/N-48/N-49 remain broader post-MVP tracks, not
+implicit continuation work.

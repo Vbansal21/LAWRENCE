@@ -30,6 +30,7 @@ const mockChats = [{
   updated: '2026-06-18T00:00:00Z',
   messages: 2
 }];
+const archivedChats = [];
 let taskSeq = 0;
 let reminderSeq = 0;
 let chatSeq = 1;
@@ -63,6 +64,9 @@ window.EventSource = class MockEventSource {
   close() {}
   emit(payload) {
     this.onmessage?.({ data: JSON.stringify(payload) });
+  }
+  error() {
+    this.onerror?.(new Error('event stream unavailable'));
   }
 };
 global.EventSource = window.EventSource;
@@ -197,9 +201,31 @@ function bridgePayload(url, body = {}, method = 'GET') {
         messages: 0
       });
     }
-    payload = { ok: true, active: activeChat, items: mockChats.map((item) => ({ ...item })) };
+    payload = { ok: true, active: activeChat, items: [...mockChats, ...archivedChats].map((item) => ({ ...item })) };
   } else if (String(url).includes('/chats/') && String(url).endsWith('/switch')) {
     activeChat = decodeURIComponent(String(url).split('/chats/').pop().replace('/switch', ''));
+    payload = { ok: true, active: activeChat };
+  } else if (String(url).includes('/chats/') && String(url).endsWith('/restore')) {
+    const id = decodeURIComponent(String(url).split('/chats/').pop().replace('/restore', ''));
+    const index = archivedChats.findIndex((item) => item.id === id);
+    if (index >= 0) {
+      const [chat] = archivedChats.splice(index, 1);
+      chat.archived = false;
+      mockChats.push(chat);
+    }
+    payload = { ok: true };
+  } else if (String(url).includes('/chats/') && String(url).endsWith('/export')) {
+    const id = decodeURIComponent(String(url).split('/chats/').pop().replace('/export', ''));
+    payload = { ok: true, id, format: 'mdx', text: `# Saved ${id}\n\nTranscript.` };
+  } else if (String(url).includes('/chats/') && method === 'DELETE') {
+    const id = decodeURIComponent(String(url).split('/chats/').pop());
+    const index = mockChats.findIndex((item) => item.id === id);
+    if (index >= 0) {
+      const [chat] = mockChats.splice(index, 1);
+      chat.archived = true;
+      archivedChats.push(chat);
+    }
+    activeChat = mockChats[0]?.id || '';
     payload = { ok: true, active: activeChat };
   } else if (String(url).includes('/chats/')) {
     const id = decodeURIComponent(String(url).split('/chats/').pop());
@@ -470,8 +496,18 @@ input('#tool-call-limit', '13');
 input('#web-depth', 'Comprehensive', 'change');
 input('#citation-mode', 'Required', 'change');
 
+const feed = document.querySelector('#feed');
+let simulatedFeedTop = 240;
+Object.defineProperty(feed, 'scrollTop', {
+  configurable: true,
+  get: () => simulatedFeedTop,
+  set: (value) => { simulatedFeedTop = Number(value); }
+});
+Object.defineProperty(feed, 'scrollHeight', { configurable: true, get: () => 1200 });
+Object.defineProperty(feed, 'clientHeight', { configurable: true, get: () => 300 });
 submit('<b>use these</b>');
 await waitIdle();
+if (simulatedFeedTop !== 240) throw new Error('query invocation changed a manually positioned chat scroll');
 const send = invokes.findLast((x) => x.cmd === 'send_turn');
 const bridgeTurn = bridgeCalls.findLast((x) => x.url.endsWith('/turn/async'));
 if (!send && !bridgeTurn) throw new Error('send turn transport missing');
@@ -500,6 +536,14 @@ if (turn.config.agent.toolRounds !== 5) throw new Error('tool rounds payload mis
 if (turn.config.agent.toolCallLimit !== 13) throw new Error('tool call limit payload mismatch');
 if (turn.config.agent.webDepth !== 'Comprehensive') throw new Error('web depth payload mismatch');
 if (turn.config.agent.citationMode !== 'Required') throw new Error('citation mode payload mismatch');
+let tokensMetric = [...document.querySelectorAll('.metric')].find((el) => el.textContent.includes('Tokens'));
+const trajectoryMetric = [...document.querySelectorAll('.metric')].find((el) => el.textContent.includes('Trajectory'));
+if (!tokensMetric || !/≈[1-9]\d*/.test(tokensMetric.textContent)) throw new Error('session token metric did not accumulate');
+if (!trajectoryMetric || !trajectoryMetric.textContent.includes('user')) throw new Error('user context trajectory was not displayed');
+tokensMetric.dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+await settle();
+tokensMetric = [...document.querySelectorAll('.metric')].find((el) => el.textContent.includes('Tokens'));
+if (!tokensMetric?.textContent.includes('≈0')) throw new Error('session token reset did not work');
 
 const byKind = Object.fromEntries(turn.attachments.map((item) => [item.kind, item]));
 const forcedContext = Object.fromEntries(turn.kernelContext.map((item) => [item.forceKind, item]));
@@ -580,9 +624,14 @@ if (!es) throw new Error('EventSource was not connected');
 es.emit({ type: 'context', kind: 'audio', text: '[AUDIO 12:00:00] "remember this audio snippet"' });
 await settle();
 if (!document.body.textContent.includes('remember this audio snippet')) {
-  throw new Error('passive audio transcript event was not rendered as spoken input');
+  throw new Error('passive audio transcript event was not reflected in telemetry');
 }
-es.emit({ type: 'context', kind: 'voice', text: 'heard: move the planning call to Friday' });
+es.emit({
+  type: 'voice',
+  event: 'final',
+  uid: 'voice-utterance-1',
+  transcript: 'move the planning call to Friday'
+});
 es.emit({
   type: 'response',
   source: 'voice',
@@ -595,6 +644,10 @@ await waitIdle();
 if (!document.querySelector('.message.user.voice')) throw new Error('spoken voice user turn was not rendered');
 if (!document.body.textContent.includes('Voice Result')) throw new Error('voice assistant response was not rendered');
 if (document.body.textContent.includes('Heard: move the planning call')) throw new Error('voice transcript should not be prepended inside assistant answer');
+es.error();
+await settle();
+const transcriptMetric = [...document.querySelectorAll('.metric')].find((el) => el.textContent.includes('Transcript'));
+if (!transcriptMetric?.classList.contains('fail')) throw new Error('failed subsystem metric was not highlighted');
 
 click('#drawer-toggle');
 click('#minimize-btn');
@@ -665,9 +718,21 @@ if (document.querySelectorAll('#history-list .history-item').length < 3) throw n
 document.querySelector('#history-list [data-chat-id="chat-1"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 await settle();
 if (!document.querySelector('#history-preview').textContent.includes('smallest autonomous loop')) throw new Error('chat session did not load');
+click('#chat-save');
+await settle();
+if (!bridgeCalls.some((x) => x.url.endsWith('/chats/chat-1/export'))) throw new Error('save chat did not export the active chat');
+click('#chat-archive');
+await settle();
+if (!bridgeCalls.some((x) => x.url.endsWith('/chats/chat-1') && x.method === 'DELETE')) throw new Error('archive chat did not reach the kernel');
+const restore = document.querySelector('[data-restore-chat="chat-1"]');
+if (!restore) throw new Error('archived chat did not expose restore');
+restore.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await settle();
+if (!bridgeCalls.some((x) => x.url.endsWith('/chats/chat-1/restore'))) throw new Error('restore chat did not reach the kernel');
 click('#chat-new');
 await settle();
 if (!bridgeCalls.some((x) => x.url.endsWith('/chats') && x.method === 'POST')) throw new Error('new chat did not reach the kernel');
+if (document.querySelectorAll('#feed .message').length !== 0) throw new Error('clear/new chat did not clear the visible conversation');
 document.querySelector('#history-list [data-index="0"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 await settle();
 if (!document.querySelector('#history-preview').textContent.includes('browsable')) throw new Error('history item did not load MDX preview');
@@ -706,6 +771,7 @@ const report = {
     'reminder add/list/remove operations use durable kernel state',
     'chat sessions and history previews load from the kernel',
     'policy state is visible in telemetry',
+    'bottom telemetry highlights failures and shows resettable session tokens plus context trajectory',
     'settings/sampling/journal/reminders/history open as Tauri sidecar panels',
     'session state persists recent messages and control state',
     'streaming avoids excessive full-feed rebuilds',

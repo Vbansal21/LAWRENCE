@@ -109,6 +109,7 @@ button {
   scrollbar-width: thin;
   scrollbar-color: rgba(118, 208, 131, 0.42) transparent;
   overscroll-behavior: contain;
+  overflow-anchor: none;
   contain: layout paint;
 }
 
@@ -116,8 +117,6 @@ button {
   display: grid;
   gap: 4px;
   padding: 9px 2px;
-  content-visibility: auto;
-  contain-intrinsic-size: 72px;
 }
 
 .message-head {
@@ -544,6 +543,38 @@ svg {
 .metric b {
   color: #cbd6cd;
   font-weight: 720;
+}
+
+.metric.ok {
+  border-color: rgba(118, 208, 131, 0.24);
+}
+
+.metric.active {
+  border-color: rgba(102, 180, 255, 0.5);
+  background: rgba(34, 78, 106, 0.24);
+  color: #b9dcff;
+}
+
+.metric.warn {
+  border-color: rgba(214, 173, 85, 0.62);
+  background: rgba(94, 69, 20, 0.28);
+  color: #f0cc7b;
+}
+
+.metric.fail {
+  border-color: rgba(239, 101, 101, 0.72);
+  background: rgba(104, 31, 31, 0.32);
+  color: #ffaaaa;
+}
+
+.metric.warn b,
+.metric.fail b,
+.metric.active b {
+  color: inherit;
+}
+
+.metric[data-reset-tokens] {
+  cursor: pointer;
 }
 
 .option-drawer {
@@ -1122,6 +1153,23 @@ input[type="range"] {
   cursor: pointer;
 }
 
+.history-main {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.history-item.archived {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  opacity: 0.72;
+}
+
 .history-item.active {
   color: #e2f3e4;
   border-color: rgba(90, 151, 100, 0.72);
@@ -1212,4 +1260,32 @@ input[type="range"] {
   .advanced-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* N-54 — voice silence-timeout badge: heard transcript + countdown + Send/Dismiss.
+   Sits just above the composer; hidden until a finished utterance is pending. */
+.voice-pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 10px 0;
+  padding: 7px 10px;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  background: rgba(35, 64, 42, 0.32);
+  font-size: 0.82rem;
+}
+.voice-pending[hidden] { display: none; }
+.voice-pending .vp-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #e9f5eb;
+}
+.voice-pending .vp-count {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
 }

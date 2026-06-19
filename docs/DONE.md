@@ -972,6 +972,82 @@ search is capability-reported and degrades explicitly without Brave/SearXNG acce
 The microphone pipeline is replay-tested; this host's live input remained silent, so
 non-silent hardware validation is an operational follow-up, not fabricated evidence.
 
+## D-39 — Live voice/runtime repair (2026-06-19)
+**Implemented and live-verified.** `lk rebuild` now only compiles; it starts, stops,
+or restarts nothing. Runtime config enables passive audio at boot. The live bridge
+reports model, vision, audio, tick, and journal healthy; `parec` is running against
+WSLg PulseAudio. Voice-listen is user-controlled and uses one VAD-segmented utterance
+path with partial/final UI updates and a silence-timeout proceed/dismiss gate. The
+decision window is configured and clamped to at least 10 seconds.
+
+**Verification.** Two real release rebuilds preserved popup and bridge PIDs.
+An explicit restart then loaded the new binary/config. Sensor/autonomy tests and
+the desktop interaction harness pass.
+
+**Assumptions baked in.** Live capture is operational, but transcription quality
+still depends on actual microphone signal level and speech during use.
+
+**Live edges.**
+- `[D-39] --{constraint}--> [N-45]`
+  Weight: significant
+  Meaning: The tactical faster-whisper contract must remain replaceable by streaming ASR.
+  Break condition: An incompatible ASR interface requires bridge and UI voice rewrites.
+- `[D-39] --{dependency}--> [N-55]`
+  Weight: incidental
+  Meaning: Reliable global summon improves access to the repaired runtime.
+  Break condition: Removing the popup-control socket changes N-55's attachment point.
+
+## D-40 — Bottom telemetry status and trajectory (2026-06-19)
+**Implemented.** Each bottom metric now owns its success/warning/failure color.
+The strip adds an approximate session token counter with inline reset and a compact
+`user|proactive › stage · ctx usage` trajectory.
+
+**Assumptions baked in.** Token use is a transparent UI estimate from submitted and
+generated text, not provider-billed usage.
+
+**Live edges.**
+- `[D-40] --{partial-completion}--> [N-49]`
+  Weight: significant
+  Meaning: Truthful compact telemetry is implemented; broader UI hierarchy remains.
+  Break condition: Replacing the bottom strip must retain equivalent health truth.
+
+## D-41 — Stable chat viewport and chat lifecycle (2026-06-19)
+**Implemented.** Streaming follows the feed only when the user is already near its
+bottom; invoking a query no longer overrides a manually positioned scroll. History
+now exposes Clear/new, Save, Archive, and Restore using the existing durable chat
+store. Archived chats remain restorable and exports are MDX.
+
+**Verification.** The DOM harness proves a manually positioned feed does not move
+when a query starts, chat save/archive/restore/new routes work, and new chat clears
+the visible feed. Chat CRUD and UI contract suites pass.
+
+**Assumptions baked in.** Archive is the safe default deletion path; hard deletion
+remains backend/CLI-only. “Save” exports MDX.
+
+**Live edges.**
+- `[D-41] --{partial-completion}--> [N-49]`
+  Weight: significant
+  Meaning: Scroll stability and chat lifecycle are complete pieces of the larger UI track.
+  Break condition: A UI redesign must preserve feed position and durable chat controls.
+
+## D-42 — Current-first model interpretation (2026-06-19)
+**Implemented.** Context storage, headers, ordering, memory, logs, journal, and
+retrieved evidence are unchanged. Model instructions now treat the current request,
+newest active-chat turns, and recent perception as authoritative; older material
+clarifies long-run trajectory and cannot override newer evidence.
+
+**Verification.** The UI contract suite checks the interpretation rule is present,
+and the unchanged `_ChatContext.tail_for_model()` composition preserves context shape.
+
+**Assumptions baked in.** This is an interpretation policy, not a retrieval filter.
+Older context remains available when relevant or explicitly requested.
+
+**Live edges.**
+- `[D-42] --{constraint}--> [N-48]`
+  Weight: load-bearing
+  Meaning: Future grounding must preserve current-over-historical precedence.
+  Break condition: Letting stale memory override current state regresses D-42.
+
 ---
 
 ## Live-stub index (every D-node's outflow, for audit) `[revised: F2 — added D-04→N-20, D-09→N-16]`
@@ -996,8 +1072,8 @@ D-19→N-03,N-05,N-12,N-13 · **D-20→N-02 (vector arm),N-06,N-07,N-08** ·
 **D-34→D-35,D-38 (confirmed agency boundary)** ·
 **D-35→D-38 (truthful human interaction boundary)** ·
 **D-36→D-37,D-38 (local replacement boundary)** ·
-**D-37→D-38 (warm-restart boundary)** · **D-38 terminal MVP sink**.
+**D-37→D-38 (warm-restart boundary)** · **D-38 terminal MVP sink** ·
+**D-39→N-45,N-55** · **D-40→N-49** · **D-41→N-49** · **D-42→N-48**.
 
-*D-38 is intentionally the only zero-outflow D-node: it is the settled MVP
-acceptance sink. Other historical product backlog nodes remain outside this MVP
-execution partition.*
+*D-38 is intentionally a settled MVP sink. D-39/D-40/D-41/D-42 retain explicit
+post-MVP edges; no completed remediation node is silently treated as terminal.*

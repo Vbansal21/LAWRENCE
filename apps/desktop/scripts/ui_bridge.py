@@ -236,6 +236,10 @@ class DesktopBridge:
         self.schedule = Schedule()
         self.agency = Agency(self.tasks, self.schedule)
         self._voice_lock = threading.Lock()
+        # N-54: a finished utterance is held here with a silence-timeout timer; the
+        # UI shows a dismissable countdown badge until it auto-fires the query.
+        self._voice_pending: dict[str, Any] | None = None
+        self._voice_pending_lock = threading.Lock()
         # WS-R/R2 elevation gate — one rate-limited, dedup'd channel shared by the
         # slow loop (R1, refined answers) and tick findings.
         self.elevator = Elevator()
@@ -495,11 +499,17 @@ class DesktopBridge:
         return applied
 
     def _start_audio(self) -> None:
+        # on_segment/on_query are wired only in voice-query mode: passive listening
+        # writes one context entry per utterance (no chat bubbles, no turns); voice
+        # mode streams the transcript to one evolving bubble and gates the turn (N-54).
+        voice = self.voice_enabled
         self.audio = AudioObserver(
             self.tmp_path,
             self.ctx,
             on_event=self._on_context_event,
-            on_query=(lambda t: self._voice_on_query(t, self._voice_config)) if self.voice_enabled else None,
+            on_query=(lambda t: self._voice_on_query(t, self._voice_config)) if voice else None,
+            on_segment=(lambda uid, text, final: self.ui.push_voice(
+                event=("final" if final else "partial"), uid=uid, transcript=text)) if voice else None,
         )
         self.audio.start()
 
@@ -756,7 +766,8 @@ class DesktopBridge:
         return self.active_chat_id
 
     def chats_index(self) -> dict[str, Any]:
-        return {"ok": True, "active": self.active_chat_id, "items": self.chats.list_chats()}
+        return {"ok": True, "active": self.active_chat_id,
+                "items": self.chats.list_chats(include_archived=True)}
 
     def chat_create(self, request: dict[str, Any]) -> dict[str, Any]:
         meta = self.chats.create_chat(str(request.get("title") or ""))
@@ -801,6 +812,11 @@ class DesktopBridge:
         if not mdx:
             raise BridgeError(404, f"unknown chat: {chat_id}")
         return {"ok": True, "id": chat_id, "format": "mdx", "text": mdx}
+
+    def chat_restore(self, chat_id: str) -> dict[str, Any]:
+        if not self.chats.restore_chat(chat_id):
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, "chat": self.chats.chat_meta(chat_id)}
 
     # ── cross-chat graph links (WS-U Track 2) ───────────────────────────────────
     def _link_node(self, spec: Any) -> str:
@@ -879,30 +895,80 @@ class DesktopBridge:
             changed = self.voice_enabled
             self.voice_enabled = False
             self._voice_config = {}
+            with self._voice_pending_lock:                  # drop any pending badge (N-54)
+                if self._voice_pending and self._voice_pending.get("timer"):
+                    self._voice_pending["timer"].cancel()
+                self._voice_pending = None
+            self.ui.push_voice(event="clear", uid="")
             if self.audio and changed:
                 self._restart_audio()
             self.ui.push_status("idle", "voice-query mode off")
             return {"accepted": True, "listening": False, "changed": changed}
 
     def _voice_on_query(self, transcript: str, config: dict[str, Any]) -> None:
+        """A finished utterance (N-53). Instead of firing a turn immediately, hold
+        it with a silence-timeout and surface a dismissable countdown badge (N-54):
+        the user can Dismiss (drop it), Proceed (fire now), or let it auto-fire.
+
+        Latest utterance wins — a new utterance replaces the pending one and resets
+        the timer, so continuous speech (e.g. a playing video) fires only on a pause
+        rather than queueing a turn per segment."""
         transcript = (transcript or "").strip()
         if not transcript:
             return
-        # Coalesce: while a turn is already answering, drop new voice segments
-        # rather than queueing one per utterance (a playing video would otherwise
-        # pile up dozens of slow CPU turns). The user still sees what was heard.
-        with self._turn_count_lock:
-            busy = self._turns_in_flight > 0
-        if busy:
-            self.ui.push_context_event("voice", f"(heard, still answering) {transcript[:60]}")
-            return
-        self.ui.push_context_event("voice", f"heard: {transcript[:80]}")
+        autoquery  = _flag("LK_VOICE_AUTOQUERY", True)
+        timeout_ms = max(10_000, int(os.environ.get("LK_VOICE_SILENCE_TIMEOUT_MS", "10000")))
+        uid = f"vp-{int(time.time() * 1000)}"
+        with self._voice_pending_lock:
+            prev = self._voice_pending
+            if prev and prev.get("timer"):
+                prev["timer"].cancel()
+            timer = None
+            if autoquery and timeout_ms > 0:
+                timer = threading.Timer(timeout_ms / 1000.0, self._voice_fire, args=(uid,))
+                timer.daemon = True
+            self._voice_pending = {"uid": uid, "text": transcript, "config": config, "timer": timer}
+            if timer:
+                timer.start()
+        # countdown badge (timeoutMs==0 → manual: badge stays until Proceed/Dismiss)
+        self.ui.push_voice(event="pending", uid=uid, transcript=transcript,
+                           timeoutMs=timeout_ms if autoquery else 0)
+
+    def _voice_fire(self, uid: str) -> None:
+        with self._voice_pending_lock:
+            pending = self._voice_pending
+            if not pending or pending.get("uid") != uid:
+                return   # already dismissed or superseded
+            self._voice_pending = None
+            text, config = pending["text"], pending.get("config") or {}
+        self.ui.push_voice(event="clear", uid=uid)
         # Response is delivered to the UI through the SSE push_response in run_turn.
         self.enqueue_turn({
             "source": "voice",
-            "transcript": transcript,
-            "turn": {"text": transcript, "config": config},
+            "transcript": text,
+            "turn": {"text": text, "config": config},
         })
+
+    def voice_resolve(self, request: dict[str, Any]) -> dict[str, Any]:
+        """UI control for the N-54 pending badge: {action: proceed|dismiss, uid?}."""
+        action = str(request.get("action") or "").lower()
+        uid    = str(request.get("uid") or "")
+        with self._voice_pending_lock:
+            pending = self._voice_pending
+            if not pending:
+                return {"ok": True, "resolved": "none"}
+            if uid and pending.get("uid") != uid:
+                return {"ok": True, "resolved": "stale"}
+            target_uid = pending["uid"]
+            if action == "dismiss":
+                if pending.get("timer"):
+                    pending["timer"].cancel()
+                self._voice_pending = None
+        if action == "proceed":
+            self._voice_fire(target_uid)
+            return {"ok": True, "resolved": "fired"}
+        self.ui.push_voice(event="clear", uid=target_uid)
+        return {"ok": True, "resolved": "dismissed"}
 
     def _retrieval_for_turn(self, deep: bool) -> RetrievalPipeline:
         """Return a per-turn retrieval pipeline.
@@ -1998,6 +2064,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(202, self.bridge.voice_once(body))
             elif self.path == "/voice/listen":
                 self._send(200, self.bridge.set_voice_listen(body))
+            elif self.path == "/voice/resolve":
+                self._send(200, self.bridge.voice_resolve(body))
             elif self.path == "/ingest":
                 self._send(200, self.bridge.ingest_document(body))
             elif self.path == "/chats":
@@ -2007,6 +2075,9 @@ class Handler(BaseHTTPRequestHandler):
             elif self.path.startswith("/chats/") and self.path.endswith("/switch"):
                 cid = unquote(self.path.strip("/").split("/")[1])
                 self._send(200, self.bridge.chat_switch(cid))
+            elif self.path.startswith("/chats/") and self.path.endswith("/restore"):
+                cid = unquote(self.path.strip("/").split("/")[1])
+                self._send(200, self.bridge.chat_restore(cid))
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:

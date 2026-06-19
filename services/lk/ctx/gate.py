@@ -55,8 +55,16 @@ def vision_gate(change_score: float, prev_written_ocr: str, curr_ocr: str) -> bo
     return novelty >= gate_config.vision_novelty_min
 
 
-def audio_gate(transcript: str, recent_transcripts: Sequence[str]) -> bool:
-    if len(transcript.split()) < gate_config.audio_min_words:
+def audio_gate(
+    transcript: str,
+    recent_transcripts: Sequence[str],
+    min_words: int | None = None,
+) -> bool:
+    # min_words overrides the default floor: a VAD-confirmed utterance (N-53) is
+    # already a complete segment, so a short atomic command ("stop", "go on") must
+    # pass — the caller sets min_words=1. The Jaccard dedup still guards repeats.
+    floor = gate_config.audio_min_words if min_words is None else min_words
+    if len(transcript.split()) < floor:
         return False
     curr = _words(transcript)
     for prev in recent_transcripts[-4:]:

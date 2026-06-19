@@ -146,6 +146,12 @@ class UIConnector:
     def push_context_event(self, kind: str, compact: str) -> None:
         self._push({"type": "context", "kind": kind, "text": compact})
 
+    def push_voice(self, **payload: Any) -> None:
+        """Voice-capture lifecycle event (N-53/N-54). `event` discriminates:
+        "partial"/"final" (streaming transcript, keyed by `uid` → one UI bubble),
+        "pending" (silence-timeout countdown badge), "clear" (badge resolved)."""
+        self._push({"type": "voice", **payload})
+
     def push_tasks(self, snapshot: dict[str, Any]) -> None:
         """Broadcast the current task/remember state to all UI clients."""
         self._push({"type": "tasks", **snapshot})

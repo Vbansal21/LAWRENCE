@@ -158,6 +158,7 @@ shutil.rmtree(d2, ignore_errors=True)
 section("E. sensor lifecycle is independent of response-model modalities")
 bridge_src = Path("apps/desktop/scripts/ui_bridge.py").read_text(encoding="utf-8")
 cli_src = Path("services/lk/cli.py").read_text(encoding="utf-8")
+ctl_src = Path("services/lk/ctl.py").read_text(encoding="utf-8")
 check("desktop sensor start has no profile modality rejection",
       "active model profile has no vision input" not in bridge_src
       and "active model profile has no audio input" not in bridge_src)
@@ -167,32 +168,62 @@ check("CLI observer start has no profile modality gate",
 check("model attachments remain capability-gated",
       "allow_img = self.profile.vision" in bridge_src
       and "allow_aud = self.profile.audio" in bridge_src)
+check("rebuild compiles only and never starts or restarts runtime processes",
+      'rc = _desktopctl("build")' in ctl_src
+      and '_desktopctl("restart-popup")' not in ctl_src
+      and 'built. Nothing was started or restarted.' in ctl_src)
+check("voice send/dismiss decision window is at least ten seconds",
+      'max(10_000, int(os.environ.get("LK_VOICE_SILENCE_TIMEOUT_MS", "10000")))' in bridge_src)
 
-section("F. audio windows accumulate into one utterance")
+section("F. VAD-segmented capture: one utterance → one turn (no per-frame repeats)")
+# N-53: capture is no longer fixed 4s windows (which clipped onsets/tails and
+# repeated text across boundaries). The continuous frame stream opens an utterance
+# on speech energy (incl. a pre-roll so the onset isn't clipped) and closes it
+# after a trailing-silence hangover. Drive _capture_loop with a fake PCM stream.
+import os as _os
 import lk.obs.audio as audio_mod
-audio_tmp = Path(tempfile.mkdtemp(prefix="lk-audio-window-"))
-saved = (audio_mod.record_window, audio_mod.rms_db, audio_mod.transcribe, audio_mod.audio_gate)
-levels = iter([-20.0, -20.0, -96.0])
-words = iter(["move the planning", "call to Friday"])
-audio_mod.record_window = lambda *_args: True
-audio_mod.rms_db = lambda *_args: next(levels)
-audio_mod.transcribe = lambda *_args: next(words)
-audio_mod.audio_gate = lambda *_args: True
-queries = []
-events = []
+audio_tmp = Path(tempfile.mkdtemp(prefix="lk-audio-seg-"))
+saved = (audio_mod.transcribe, audio_mod.audio_gate, audio_mod._rms_db_bytes)
+saved_env = {k: _os.environ.get(k) for k in
+             ("LK_AUDIO_FRAME_MS", "LK_AUDIO_HANGOVER_MS", "LK_AUDIO_PREROLL_MS",
+              "LK_AUDIO_PARTIAL_INTERVAL_MS", "LK_AUDIO_VAD_DB")}
+_os.environ.update({"LK_AUDIO_FRAME_MS": "100", "LK_AUDIO_HANGOVER_MS": "200",
+                    "LK_AUDIO_PREROLL_MS": "100", "LK_AUDIO_PARTIAL_INTERVAL_MS": "1500",
+                    "LK_AUDIO_VAD_DB": "-45"})
+# per-frame energies: silence(pre-roll), speech, speech, silence, silence(→ close)
+levels = iter([-60.0, -20.0, -20.0, -60.0, -60.0])
+audio_mod._rms_db_bytes = lambda _frame: next(levels)
+audio_mod.transcribe = lambda *_a: "move the planning call to Friday"
+audio_mod.audio_gate = lambda *_a, **_k: True
+queries, events, segments = [], [], []
+frames_left = [5]
+def _fake_read(size):
+    if frames_left[0] > 0:
+        frames_left[0] -= 1
+        return b"\x00" * size
+    return b""           # EOF → loop ends
+fake_proc = SimpleNamespace(stdout=SimpleNamespace(read=_fake_read),
+                            terminate=lambda: None, wait=lambda **_k: None)
 ctx_audio = SimpleNamespace(append=lambda **_kwargs: None)
 audio = audio_mod.AudioObserver(
     audio_tmp, ctx_audio,
     on_event=lambda kind, text: events.append((kind, text)),
     on_query=queries.append,
+    on_segment=lambda uid, text, final: segments.append((uid, text, final)),
 )
-audio._tick(); audio._tick()
-check("speech chunks do not each submit a turn", queries == [])
-audio._tick()
-check("one silence boundary submits one combined utterance",
+audio._capture_loop(fake_proc)
+check("one VAD-segmented utterance submits exactly one turn",
       queries == ["move the planning call to Friday"], queries)
-check("passive context still receives each meaningful chunk", len(events) == 2)
-audio_mod.record_window, audio_mod.rms_db, audio_mod.transcribe, audio_mod.audio_gate = saved
+check("passive context receives one entry per utterance (no per-frame repeats)",
+      len(events) == 1, events)
+check("UI gets a final streaming segment for the utterance",
+      any(final for _uid, _t, final in segments), segments)
+audio_mod.transcribe, audio_mod.audio_gate, audio_mod._rms_db_bytes = saved
+for k, v in saved_env.items():
+    if v is None:
+        _os.environ.pop(k, None)
+    else:
+        _os.environ[k] = v
 shutil.rmtree(audio_tmp, ignore_errors=True)
 
 section("RESULT")

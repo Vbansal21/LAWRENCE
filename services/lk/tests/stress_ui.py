@@ -135,7 +135,7 @@ section("D. SSE event-type parity: classic variant handlers ⊇ Python emitters"
 app = (Path("apps/desktop/web/variants/classic/app.js")).read_text(encoding="utf-8")
 bridge_js = (Path("apps/desktop/web/lib/bridge.js")).read_text(encoding="utf-8")
 handled = set(re.findall(r'payload\.type === "([a-z]+)"', app))
-emitted = {"status", "response", "refined", "context", "tasks", "delta", "finding"}
+emitted = {"status", "response", "refined", "context", "tasks", "delta", "finding", "voice"}
 missing = emitted - handled
 check("every emitted SSE type has an app.js handler (no orphan events)", not missing, f"unhandled: {missing}")
 check("app.js handles the core stream types",
@@ -185,6 +185,7 @@ check("app.js surfaces inactive/unavailable config to the user",
 section("G. §9 proactive dedup + stale guard is wired into the kernel")
 store_src  = Path("services/lk/ctx/store.py").read_text(encoding="utf-8")
 invoke_src = Path("services/lk/kernel/invoke.py").read_text(encoding="utf-8")
+prompts_src = Path("services/lk/kernel/prompts.py").read_text(encoding="utf-8")
 check("ContextStore exposes a freshness version + finding reader",
       "def version(self)" in store_src and "def recent_findings(self" in store_src)
 check("version counter is bumped at the content chokepoints",
@@ -194,6 +195,9 @@ check("run_proactive freezes one context version before working",
       and "start_ver = snapshot.version" in invoke_src)
 check("run_proactive drops stale findings (version delta) and dedups",
       "_proactive_stale_delta()" in invoke_src and "_is_duplicate_finding(" in invoke_src)
+check("response grounding prioritizes current context over stale memory",
+      "Never let stale memory override" in prompts_src
+      and "Recalled memory is historical trajectory" in prompts_src)
 check("dedup reuses stdlib difflib (no fuzzy-match dependency)",
       "import difflib" in invoke_src and "SequenceMatcher" in invoke_src)
 

@@ -23,6 +23,7 @@ const SESSION_KEY = "lawrence-ui-session";
 const CONFIG_KEY = "lawrence-ui-config";
 const JOB_POLL_MS = 400;
 const JOB_SOFT_TIMEOUT_MS = 30_000;
+let messageUiId = 0;
 const PANEL_MODE = new URLSearchParams(window.location.search).get("panel") || "";
 if (PANEL_MODE) document.body.classList.add("panel-window", `panel-${PANEL_MODE}`);
 
@@ -60,6 +61,10 @@ const state = {
   seenVoiceTurns: new Set(),
   startedAt: Date.now(),
   voiceTranscript: "",
+  voiceBubble: null,        // the in-progress voice utterance bubble (one per utterance)
+  voicePending: null,       // N-54 silence-timeout badge state {uid, deadline}
+  sessionTokens: 0,         // approximate text tokens since this UI session/reset
+  trajectory: null,         // latest user/proactive context path
   pendingTurns: 0,
   tasks: { tasks: [], remember: [], counts: { open: 0, done: 0, remember: 0 } },
   history: { items: [], selected: null, text: "", format: "mdx" },
@@ -112,26 +117,34 @@ function icon(name) {
 
 function render(options = {}) {
   const persist = options.persist !== false;
+  const position = captureFeedPosition();
   state.messages = state.messages.slice(-80);
   feed.innerHTML = state.messages.map((message) => {
+    message.uiId ||= `m-${++messageUiId}`;
     const channel = message.channel ? ` ${escapeAttr(message.channel)}` : "";
     const speaker = message.role === "user"
       ? (message.channel === "voice" ? "You · voice" : "You")
       : "LAWRENCE";
     const meta = (message.meta || []).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
     const cursor = message.streaming ? '<span class="cursor"></span>' : "";
-    const sources = renderSources(message.sources || sourceCardsFromText(message.text));
+    const sourceList = message.sources || sourceCardsFromText(message.text);
+    const sources = renderSources(sourceList);
+    // N-52: when the system renders a source strip, drop any model-emitted trailing
+    // "Sources"/"References" list from the body so there is exactly one sources block.
+    const bodyText = (message.role === "assistant" && sourceList.length)
+      ? stripTrailingSourceBlock(message.text)
+      : message.text;
     const actions = renderActions(message.actions || []);
     const refined = message.refined ? " refined" : "";
     return `
-      <article class="message ${message.role}${channel}${refined}">
+      <article class="message ${message.role}${channel}${refined}" data-message-id="${escapeAttr(message.uiId)}">
         <div class="avatar" aria-hidden="true">${icon(message.role === "user" ? "user" : "assistant")}</div>
         <div class="message-body">
           <div class="message-head">
             <strong>${speaker}</strong>
             <time>${message.time || currentTime()}</time>
           </div>
-          <div class="mdx">${renderMdx(message.text)}${cursor}</div>
+          <div class="mdx">${renderMdx(bodyText)}${cursor}</div>
           ${sources}
           ${actions}
           ${meta ? `<div class="meta">${meta}</div>` : ""}
@@ -139,10 +152,45 @@ function render(options = {}) {
       </article>
     `;
   }).join("");
-  feed.scrollTop = feed.scrollHeight;
+  restoreFeedPosition(position);
   renderAttachments();
   renderTelemetry();
   if (persist) saveSessionState();
+}
+
+function feedNearBottom() {
+  return feed.scrollHeight - feed.scrollTop - feed.clientHeight < 72;
+}
+
+function captureFeedPosition() {
+  if (feedNearBottom()) return { follow: true };
+  const top = feed.scrollTop;
+  const anchor = [...feed.children].find((node) => node.offsetTop + node.offsetHeight > top);
+  return {
+    follow: false,
+    id: anchor?.dataset.messageId || "",
+    offset: anchor ? top - anchor.offsetTop : 0,
+    top
+  };
+}
+
+function restoreFeedPosition(position) {
+  const apply = () => {
+    if (position.follow) {
+      feed.scrollTop = feed.scrollHeight;
+      return;
+    }
+    const anchor = position.id
+      ? feed.querySelector(`[data-message-id="${position.id}"]`)
+      : null;
+    feed.scrollTop = anchor ? anchor.offsetTop + position.offset : position.top;
+  };
+  apply();
+  requestAnimationFrame(apply);
+}
+
+function followFeedIfNearBottom(wasNearBottom) {
+  if (wasNearBottom) feed.scrollTop = feed.scrollHeight;
 }
 
 function renderActions(actions) {
@@ -334,6 +382,7 @@ function renderTelemetry() {
   const contextFill = context.limit
     ? `${Math.min(100, Math.round(((context.used || 0) / context.limit) * 100))}%`
     : "pending";
+  const contextPercent = context.limit ? Math.round(((context.used || 0) / context.limit) * 100) : 0;
   const mem = Number.isFinite(system.memoryPercent) ? `${Math.round(system.memoryPercent)}% RAM` : "RAM pending";
   const load = Number.isFinite(system.load1) ? `load ${system.load1.toFixed(2)}` : "CPU pending";
   const accel = system.accelerator ? ` · ${system.accelerator}` : "";
@@ -345,21 +394,49 @@ function renderTelemetry() {
   const policyText = policy.cloudText === false
     ? "cloud off"
     : `cloud text · media ${policy.explicitCloudMedia ? "explicit" : "off"}`;
+  const trajectory = state.trajectory
+    ? `${state.trajectory.origin} › ${state.trajectory.stage} · ctx ${contextFill}`
+    : "idle";
 
   contextStrip.innerHTML = [
-    metric("Context", contextFill),
-    metric("System", `${load} · ${mem}${accel}`),
-    metric("Queue", queueCount ? `${queueCount} active` : "idle"),
-    metric("Model", model),
-    metric("Visual", visual),
-    metric("Audio", audio),
-    metric("Transcript", transcript || "idle"),
-    metric("Policy", policyText)
+    metric("Context", contextFill, contextPercent >= 95 ? "fail" : contextPercent >= 80 ? "warn" : "ok"),
+    metric("System", `${load} · ${mem}${accel}`, Number(system.memoryPercent) >= 90 ? "fail" : Number(system.memoryPercent) >= 80 ? "warn" : "ok"),
+    metric("Queue", queueCount ? `${queueCount} active` : "idle", jobs.error ? "fail" : queueCount ? "active" : "ok"),
+    metric("Model", model, health.ok === false || health.modelHealth === false ? "fail" : health.ok ? "ok" : "warn"),
+    metric("Visual", visual, subsystemStatus("visual", visual, observers.vision)),
+    metric("Audio", audio, subsystemStatus("audio", audio, observers.audio)),
+    metric("Transcript", transcript || "idle", textStatus(`${transcript || ""} ${state.metrics.transcript || ""}`)),
+    metric("Tokens", `≈${state.sessionTokens} · reset`, "active", 'data-reset-tokens="true" role="button" tabindex="0" title="Reset session token estimate"'),
+    metric("Trajectory", trajectory, state.trajectory ? "active" : "ok"),
+    metric("Policy", policyText, policy.cloudText === false ? "warn" : "ok")
   ].join("");
 }
 
-function metric(label, value) {
-  return `<span class="metric"><b>${escapeHtml(label)}</b><small>${escapeHtml(value)}</small></span>`;
+function metric(label, value, status = "ok", attrs = "") {
+  return `<span class="metric ${escapeAttr(status)}" ${attrs}><b>${escapeHtml(label)}</b><small>${escapeHtml(value)}</small></span>`;
+}
+
+function textStatus(value) {
+  const text = String(value || "").toLowerCase();
+  if (/(fail|error|unavailable|unreachable|refused|retry|stopped)/.test(text)) return "fail";
+  if (/(pending|loading|queued|capture|record)/.test(text)) return "warn";
+  return "ok";
+}
+
+function subsystemStatus(kind, value, active) {
+  if (active) return "ok";
+  const expected = kind === "visual" ? pressed("#video-toggle") : pressed("#audio-toggle");
+  if (!expected || String(value || "").toLowerCase() === "off") return "ok";
+  return textStatus(value) === "ok" ? "warn" : textStatus(value);
+}
+
+function addTokenEstimate(text) {
+  state.sessionTokens += Math.ceil(String(text || "").length / 4);
+}
+
+function setTrajectory(origin, stage) {
+  state.trajectory = { origin, stage };
+  renderTelemetry();
 }
 
 function pressed(id) {
@@ -1011,10 +1088,11 @@ function connectEvents(url) {
     state.liveEvents = state.liveEvents.slice(-10);
     if (payload.type === "status") streamState.textContent = payload.status || streamState.textContent;
     if (payload.type === "context" && payload.kind === "audio") {
+      // ambient perception → telemetry only. Voice-query speech arrives via the
+      // dedicated "voice" event below as ONE evolving bubble (no triple bubbles).
       const heard = extractAudioTranscript(payload.text || "");
       state.voiceTranscript = heard || state.voiceTranscript;
       state.metrics.transcript = heard ? `heard: ${heard.slice(0, 80)}` : (payload.text || "audio update");
-      addVoiceUserMessage(heard, ["audio transcript"], `audio:${heard.toLowerCase()}`);
     }
     if (payload.type === "context" && payload.kind === "vision") state.metrics.visual = payload.text || "vision update";
     if (payload.type === "context" && payload.kind === "turn") state.metrics.transcript = payload.text || "turn update";
@@ -1022,8 +1100,8 @@ function connectEvents(url) {
       const heard = String(payload.text || "").replace(/^heard:\s*/i, "").trim();
       state.voiceTranscript = heard || state.voiceTranscript;
       state.metrics.transcript = heard ? `heard: ${heard.slice(0, 80)}` : "voice";
-      addVoiceUserMessage(heard, ["spoken audio"], `event:${heard.toLowerCase()}`);
     }
+    if (payload.type === "voice") onVoiceEvent(payload);
     if (payload.type === "tasks") applyTasks(payload);
     if (payload.type === "delta") onDelta(payload.text);
     if (payload.type === "finding") onFinding(payload);
@@ -1043,6 +1121,8 @@ function connectEvents(url) {
 
 function onDelta(text) {
   if (!text) return;
+  addTokenEstimate(text);
+  if (state.trajectory) state.trajectory.stage = "response";
   if (!state.liveDraft) {
     state.liveDraft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"] };
     state.messages.push(state.liveDraft);
@@ -1052,8 +1132,9 @@ function onDelta(text) {
   streamState.textContent = "Streaming";
   const draftBody = feed.querySelector(".message:last-child .mdx");
   if (draftBody) {
+    const follow = feedNearBottom();
     draftBody.innerHTML = `${renderMdx(state.liveDraft.text)}<span class="cursor"></span>`;
-    feed.scrollTop = feed.scrollHeight;
+    followFeedIfNearBottom(follow);
   } else {
     render({ persist: false });
   }
@@ -1071,6 +1152,8 @@ function onFinding(payload) {
   const headline = String(payload.headline || "").trim();
   const insight = String(payload.insight || "").trim();
   if (!insight) return;
+  addTokenEstimate(`${headline} ${insight}`);
+  setTrajectory("proactive", "finding");
   const cites = (payload.citations || [])
     .map((c) => `- [${c.num}] [${(c.title || c.url || "").replace(/[\[\]]/g, "")}](${c.url})`)
     .join("\n");
@@ -1141,6 +1224,112 @@ function addVoiceUserMessage(transcript, meta = [], key = "") {
   });
   render();
   return true;
+}
+
+// ── voice capture lifecycle (SSE "voice" — N-53 streaming + N-54 pending badge) ──
+// One utterance → one evolving user bubble (partial → final), then a dismissable
+// silence-timeout badge before the query auto-fires. Replaces the old triple-bubble
+// path (kind:audio + kind:voice + turn) that rendered the same utterance 3×.
+function onVoiceEvent(payload) {
+  const event = String(payload.event || "");
+  const uid = String(payload.uid || "");
+  const text = String(payload.transcript || "").trim();
+  if (event === "partial" || event === "final") {
+    upsertVoiceBubble(uid, text, event === "final");
+    if (text) {
+      state.voiceTranscript = text;
+      state.metrics.transcript = `heard: ${text.slice(0, 80)}`;
+      renderTelemetry();
+    }
+  } else if (event === "pending") {
+    showVoicePending(uid, text, Number(payload.timeoutMs) || 0);
+  } else if (event === "clear") {
+    clearVoicePending(uid);
+  }
+}
+
+function upsertVoiceBubble(uid, text, final) {
+  if (!text && !final) return;
+  let bubble = state.voiceBubble;
+  if (!bubble || bubble.voiceUid !== uid) {
+    bubble = {
+      role: "user", channel: "voice", voiceUid: uid, text,
+      time: currentTime(), streaming: !final, meta: final ? ["spoken"] : ["listening…"]
+    };
+    state.messages.push(bubble);
+    state.voiceBubble = final ? null : bubble;
+  } else {
+    if (text) bubble.text = text;
+    bubble.streaming = !final;
+    bubble.meta = final ? ["spoken"] : ["listening…"];
+    if (final) state.voiceBubble = null;
+  }
+  render();
+}
+
+let voiceCountdownTimer = null;
+
+function voicePendingEl() {
+  let el = document.querySelector("#voice-pending");
+  if (!el) {
+    el = document.createElement("div");
+    el.id = "voice-pending";
+    el.className = "voice-pending";
+    el.hidden = true;
+    el.innerHTML = `<span class="vp-text"></span><span class="vp-count"></span>
+      <button type="button" class="chip" data-vp="proceed">Send now</button>
+      <button type="button" class="chip ghost" data-vp="dismiss">Dismiss</button>`;
+    const anchor = form || null;
+    (anchor?.parentElement || document.body).insertBefore(el, anchor);
+    el.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-vp]");
+      if (btn) resolveVoicePending(btn.getAttribute("data-vp"));
+    });
+  }
+  return el;
+}
+
+function showVoicePending(uid, transcript, timeoutMs) {
+  const el = voicePendingEl();
+  state.voicePending = { uid, deadline: timeoutMs > 0 ? Date.now() + timeoutMs : 0 };
+  el.querySelector(".vp-text").textContent = `heard: ${transcript.slice(0, 120)}`;
+  el.hidden = false;
+  if (voiceCountdownTimer) clearInterval(voiceCountdownTimer);
+  const countEl = el.querySelector(".vp-count");
+  if (timeoutMs > 0) {
+    const tick = () => {
+      const left = Math.max(0, (state.voicePending?.deadline || 0) - Date.now());
+      countEl.textContent = `auto-send in ${(left / 1000).toFixed(1)}s`;
+      if (left <= 0 && voiceCountdownTimer) { clearInterval(voiceCountdownTimer); voiceCountdownTimer = null; }
+    };
+    tick();
+    voiceCountdownTimer = setInterval(tick, 100);
+  } else {
+    countEl.textContent = "waiting — Send now or Dismiss";
+  }
+}
+
+function clearVoicePending(uid) {
+  if (uid && state.voicePending && state.voicePending.uid !== uid) return;
+  state.voicePending = null;
+  if (voiceCountdownTimer) { clearInterval(voiceCountdownTimer); voiceCountdownTimer = null; }
+  const el = document.querySelector("#voice-pending");
+  if (el) el.hidden = true;
+}
+
+async function resolveVoicePending(action) {
+  const uid = state.voicePending?.uid || "";
+  clearVoicePending(uid);   // optimistic hide; backend confirms with a "clear" event
+  try { await postBridge("/voice/resolve", { action, uid }); } catch (_) { /* best-effort */ }
+}
+
+// Remove a trailing model-written "Sources"/"References"/"Citations" list (the
+// system renders citations itself → one source block, not two). Inline [n] markers
+// in the prose are kept; only the trailing list section is stripped.
+function stripTrailingSourceBlock(text) {
+  return String(text || "")
+    .replace(/\n+\s*(?:#{1,6}\s*)?(?:\*\*|__)?\s*(?:sources|references|citations)\b[:*_\s]*\n[\s\S]*$/i, "")
+    .trimEnd();
 }
 
 function normalizeAssistantReply(reply) {
@@ -1237,6 +1426,8 @@ async function streamAssistant(reply) {
   // If real token deltas already streamed this answer live, absorb the draft
   // and render the final text instantly — no typewriter replay.
   const hadLiveStream = finishLiveDraft();
+  if (!hadLiveStream) addTokenEstimate(text);
+  if (state.trajectory) state.trajectory.stage = "response";
   state.streaming = true;
   streamState.textContent = "Streaming";
   const draft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"], sources: normalized.sources, actions: normalized.actions };
@@ -1251,8 +1442,9 @@ async function streamAssistant(reply) {
     const chunk = text.slice(i, i + chunkSize);
     draft.text += chunk;
     if (draftBody) {
+      const follow = feedNearBottom();
       draftBody.innerHTML = `${renderMdx(draft.text)}<span class="cursor"></span>`;
-      feed.scrollTop = feed.scrollHeight;
+      followFeedIfNearBottom(follow);
     } else {
       render({ persist: false });
     }
@@ -1287,6 +1479,8 @@ form.addEventListener("submit", async (event) => {
   event.preventDefault();
   const text = promptInput.value.trim();
   if (!text || state.streaming) return;
+  addTokenEstimate(text);
+  setTrajectory("user", state.kernelContext.length ? "context" : "query");
 
   state.messages.push({
     role: "user",
@@ -1303,6 +1497,7 @@ form.addEventListener("submit", async (event) => {
 
   state.pendingTurns += 1;
   try {
+    setTrajectory("user", "considering");
     const response = await sendTurn(text);
     state.attachments = [];
     state.kernelContext = state.kernelContext.filter((item) => item.force);
@@ -1310,6 +1505,18 @@ form.addEventListener("submit", async (event) => {
   } finally {
     state.pendingTurns = Math.max(0, state.pendingTurns - 1);
   }
+});
+
+contextStrip.addEventListener("click", (event) => {
+  if (!event.target.closest("[data-reset-tokens]")) return;
+  state.sessionTokens = 0;
+  renderTelemetry();
+});
+contextStrip.addEventListener("keydown", (event) => {
+  if (!event.target.closest("[data-reset-tokens]") || !["Enter", " "].includes(event.key)) return;
+  event.preventDefault();
+  state.sessionTokens = 0;
+  renderTelemetry();
 });
 
 feed.addEventListener("click", async (event) => {
@@ -2054,11 +2261,10 @@ function onRemoteResponse(payload) {
   if (jobId && state.seenRemoteJobs.has(jobId)) return;
   const key = answerKey(answer);
   if (state.seenRemoteAnswers.has(key)) return;
-  const transcript = String(payload.transcript || state.voiceTranscript || "").trim();
   state.voiceTranscript = "";
-  if (transcript || payload.source === "voice") {
-    addVoiceUserMessage(transcript, ["spoken audio"], jobId ? `job:${jobId}` : "");
-  }
+  // The user's spoken utterance was already rendered as one bubble by the "voice"
+  // final segment (N-53); do NOT re-add it here, or always-listen turns show the
+  // heard text twice. onRemoteResponse now only renders the assistant answer.
   if (jobId) {
     state.seenRemoteJobs.add(jobId);
     state.followedJobs.delete(jobId);
@@ -2203,10 +2409,13 @@ function renderHistory() {
   const list = document.querySelector("#history-list");
   if (list) {
     const chats = state.chats.items.map((item) => `
-        <button type="button" class="history-item ${state.chats.active === item.id ? "active" : ""}" data-chat-id="${escapeAttr(item.id)}">
-          <b>${escapeHtml(item.title || "Chat")}${state.chats.active === item.id ? " · active" : ""}</b>
-          <small>${escapeHtml(item.updated || item.created || "")} · ${item.messages || 0} messages</small>
-        </button>`).join("");
+        <div class="history-item ${state.chats.active === item.id ? "active" : ""} ${item.archived ? "archived" : ""}">
+          <button type="button" class="history-main" data-chat-id="${escapeAttr(item.id)}" ${item.archived ? "disabled" : ""}>
+            <b>${escapeHtml(item.title || "Chat")}${state.chats.active === item.id ? " · active" : ""}${item.archived ? " · archived" : ""}</b>
+            <small>${escapeHtml(item.updated || item.created || "")} · ${item.messages || 0} messages</small>
+          </button>
+          ${item.archived ? `<button type="button" class="chip ghost history-restore" data-restore-chat="${escapeAttr(item.id)}">Restore</button>` : ""}
+        </div>`).join("");
     const history = state.history.items.map((item, index) => `
         <button type="button" class="history-item ${state.history.selected?.id === item.id ? "active" : ""}" data-index="${index}">
           <b>${escapeHtml(item.kind === "journal" ? "Journal" : "Chat")}</b>
@@ -2237,6 +2446,38 @@ async function loadChat(chatId) {
     state.history.text = `Could not load chat: ${error.message}`;
   }
   renderHistory();
+}
+
+function clearVisibleChat() {
+  state.messages = [];
+  state.liveDraft = null;
+  state.voiceBubble = null;
+  state.voiceTranscript = "";
+  state.trajectory = null;
+  render();
+}
+
+async function archiveActiveChat() {
+  if (!state.chats.active) return;
+  await deleteBridge(`/chats/${encodeURIComponent(state.chats.active)}`);
+  clearVisibleChat();
+  await refreshHistory();
+}
+
+async function saveActiveChat() {
+  if (!state.chats.active) return;
+  const data = await getBridge(`/chats/${encodeURIComponent(state.chats.active)}/export`);
+  const text = String(data.text || "");
+  state.history.text = text || "_Chat is empty._";
+  state.history.format = "mdx";
+  renderHistory();
+  if (!text || !window.URL?.createObjectURL) return;
+  const url = window.URL.createObjectURL(new Blob([text], { type: "text/markdown" }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${state.chats.active}.md`;
+  link.click();
+  window.URL.revokeObjectURL(url);
 }
 
 function chatLogToMdx(text) {
@@ -2302,17 +2543,46 @@ document.querySelector("#history-refresh")?.addEventListener("click", refreshHis
 document.querySelector("#chat-new")?.addEventListener("click", async () => {
   try {
     await postBridge("/chats", { title: `Chat ${new Date().toLocaleString()}` });
+    clearVisibleChat();
     await refreshHistory();
   } catch (error) {
     state.history.text = `Could not create chat: ${error.message}`;
     renderHistory();
   }
 });
+document.querySelector("#chat-save")?.addEventListener("click", async () => {
+  try {
+    await saveActiveChat();
+  } catch (error) {
+    state.history.text = `Could not save chat: ${error.message}`;
+    renderHistory();
+  }
+});
+document.querySelector("#chat-archive")?.addEventListener("click", async () => {
+  try {
+    await archiveActiveChat();
+  } catch (error) {
+    state.history.text = `Could not archive chat: ${error.message}`;
+    renderHistory();
+  }
+});
 document.querySelector("#history-list")?.addEventListener("click", (event) => {
-  const row = event.target.closest(".history-item");
-  if (!row) return;
-  if (row.dataset.chatId) loadChat(row.dataset.chatId);
-  else loadHistoryItem(Number(row.dataset.index));
+  const restore = event.target.closest("[data-restore-chat]");
+  if (restore) {
+    postBridge(`/chats/${encodeURIComponent(restore.dataset.restoreChat)}/restore`, {})
+      .then(refreshHistory)
+      .catch((error) => {
+        state.history.text = `Could not restore chat: ${error.message}`;
+        renderHistory();
+      });
+    return;
+  }
+  const chat = event.target.closest("[data-chat-id]");
+  if (chat) loadChat(chat.dataset.chatId);
+  else {
+    const row = event.target.closest("[data-index]");
+    if (row) loadHistoryItem(Number(row.dataset.index));
+  }
 });
 
 function appWindow() {

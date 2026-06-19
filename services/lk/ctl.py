@@ -9,7 +9,7 @@ writer-lock file, and delegates real work to the existing entry points:
     lk preset use NAME  apply a backend+routing preset (local/hybrid/gemini/claude)
     lk start            bridge + llama-server + popup  (the normal way to run)
     lk restart [--all]  stop then start  (--all also restarts llama-server)
-    lk rebuild          recompile the desktop popup (Tauri) and relaunch it
+    lk rebuild          recompile the desktop popup (Tauri); start nothing
     lk reset [--all]    force a clean slate from any wedged state (--all: + server)
     lk stop [--all]     stop popup+bridge  (--all also stops llama-server)
     lk quit-all [--yes] full stop: terminate every LAWRENCE process, then verify
@@ -410,6 +410,37 @@ def cmd_logs(args: list[str]) -> int:
     return rc
 
 
+def _hotkey_probe() -> None:
+    """N-55: make the global-hotkey chain observable. Under WSLg the in-app X11
+    shortcut only fires when a WSLg window is focused, so the real global summon is
+    the Windows-host listener → the app's control socket. Probe each hop."""
+    import socket
+    print("\n== hotkey (global summon) ==")
+    print(f"  configured     {os.environ.get('LAWRENCE_HOTKEY', 'Ctrl+Shift+L')}")
+    port = int(os.environ.get("LAWRENCE_CONTROL_PORT", "8767"))
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=0.5):
+            sock_ok = True
+    except OSError:
+        sock_ok = False
+    print(f"  control socket {'OK 127.0.0.1:' + str(port) + ' (app listening)' if sock_ok else 'DOWN 127.0.0.1:' + str(port) + ' — popup not running'}")
+    ps = shutil.which("powershell.exe")
+    print(f"  powershell.exe {'OK ' + ps if ps else 'MISSING — Windows-side hotkey cannot run (in-WSL hotkey needs WSLg focus)'}")
+    if ps:
+        try:
+            out = subprocess.run(
+                [ps, "-NoProfile", "-Command",
+                 "(Get-Process -Name powershell -ErrorAction SilentlyContinue | Where-Object "
+                 "{ $_.MainWindowTitle -eq 'LAWRENCE-GlobalHotkey' } | Measure-Object).Count"],
+                capture_output=True, text=True, timeout=8).stdout.strip()
+            alive = out.isdigit() and int(out) > 0
+        except Exception:
+            alive = False
+        print(f"  win listener   {'OK (LAWRENCE-GlobalHotkey running)' if alive else 'NOT RUNNING — start the app; if it still fails, Ctrl+Shift+L may be held by another Windows app (PLAN.md §M N-55)'}")
+    print("  note: Tauri global-shortcut on Linux/WSLg is X11-only + focus-bound; the")
+    print("        Windows path above is the true global summon (PLAN.md §M N-55).")
+
+
 def cmd_doctor(_args: list[str]) -> int:
     print("== toolchain ==")
     for tool, hint in (
@@ -446,6 +477,7 @@ def cmd_doctor(_args: list[str]) -> int:
         if p.exists():
             print(f"-- {script} --")
             subprocess.call(["bash", str(p)])
+    _hotkey_probe()
     print("\n== desktop ==")
     return _desktopctl("doctor")
 
@@ -684,12 +716,8 @@ def cmd_quit_all(args: list[str]) -> int:
     return 0
 
 
-def cmd_rebuild(args: list[str]) -> int:
-    """Recompile the desktop popup (Tauri release build) and relaunch it.
-
-    The popup's frontend (web/) is embedded into the binary at build time, so a
-    web/Rust edit only takes effect after a rebuild + relaunch. `--no-restart`
-    builds without relaunching."""
+def cmd_rebuild(_args: list[str]) -> int:
+    """Recompile the desktop popup (Tauri release build). Start nothing."""
     if not _node_ready():
         print("  installing desktop dependencies first (npm install)…")
         if subprocess.call(["npm", "install", "--no-fund", "--no-audit"],
@@ -701,11 +729,8 @@ def cmd_rebuild(args: list[str]) -> int:
     if rc != 0:
         print("  build failed — check cargo/node (`lk doctor`), then retry")
         return rc
-    if "--no-restart" in args:
-        print("  built. `lk start` (or Restart) to run the new binary.")
-        return 0
-    print("  built — relaunching so the new binary takes effect…")
-    return _desktopctl("restart")
+    print("  built. Nothing was started or restarted.")
+    return 0
 
 
 def cmd_memory(args: list[str]) -> int:

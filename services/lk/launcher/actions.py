@@ -68,7 +68,7 @@ REGISTRY: tuple[Action, ...] = (
            confirm=True, hint="kill everything and clear wedged locks"),
     Action("rebuild", "Rebuild popup — recompile the Tauri binary", "Rebuild",
            argv=("rebuild",), tier=2, group="lifecycle", parent="ui",
-           confirm=True, hint="recompile the desktop popup binary"),
+           confirm=True, hint="compile only; start or restart nothing"),
     Action("processes", "Processes     — list launcher-managed PIDs", "Processes",
            argv=("processes",), tier=2, group="lifecycle", parent="restart",
            hint="list managed PIDs"),

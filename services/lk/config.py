@@ -88,6 +88,17 @@ _ENV_MAP = {
     "gpu_layers":    "LLAMACPP_GPU_LAYERS",
     "vision":        "LK_VISION",
     "audio":         "LK_AUDIO",
+    # audio capture loop (N-53/N-54) — utterance-segmented streaming. Pre-roll +
+    # hangover stop the onset/tail clipping; the VAD threshold + short frames give
+    # atomic-command segmentation; the silence timeout gates the proactive auto-query.
+    "audio_vad_db":            "LK_AUDIO_VAD_DB",            # frame dBFS above this = speech
+    "audio_frame_ms":          "LK_AUDIO_FRAME_MS",          # capture frame size
+    "audio_preroll_ms":        "LK_AUDIO_PREROLL_MS",        # audio kept before onset
+    "audio_hangover_ms":       "LK_AUDIO_HANGOVER_MS",       # trailing silence before close
+    "audio_max_utterance_s":   "LK_AUDIO_MAX_UTTERANCE_S",   # hard cap per utterance
+    "audio_partial_interval_ms": "LK_AUDIO_PARTIAL_INTERVAL_MS",  # streaming partial cadence
+    "voice_silence_timeout_ms": "LK_VOICE_SILENCE_TIMEOUT_MS",   # silence → auto-query countdown
+    "voice_autoquery":         "LK_VOICE_AUTOQUERY",         # auto-fire the query on timeout
     "extract":       "LK_EXTRACT",
     # autonomy: cognitive tick (C1) + graded significance (C2) — all config-driven
     # so the knobs round-trip through `lk config` and the GUI settings surface.

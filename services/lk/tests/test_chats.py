@@ -34,6 +34,9 @@ check("list shows both", len(cs.list_chats()) == 2)
 check("rename works", cs.rename_chat(b["id"], "Second thread") and cs.chat_meta(b["id"])["title"] == "Second thread")
 check("archive hides from default list", cs.delete_chat(b["id"]) and len(cs.list_chats()) == 1)
 check("archived still visible with flag", any(r["id"] == b["id"] for r in cs.list_chats(include_archived=True)))
+check("restore makes archived chat active-list visible again",
+      cs.restore_chat(b["id"]) and any(r["id"] == b["id"] for r in cs.list_chats()))
+cs.delete_chat(b["id"])
 check("hard delete removes dir", cs.delete_chat(b["id"], hard=True) and not cs.chat_dir(b["id"]).exists())
 check("unknown chat rename is False", cs.rename_chat("nope", "x") is False)
 

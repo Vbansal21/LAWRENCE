@@ -145,6 +145,18 @@ class ChatStore:
                     pass
         return True
 
+    def restore_chat(self, chat_id: str) -> bool:
+        """Make one archived chat available again."""
+        with self._lock:
+            rows = self._read_index()
+            row = next((r for r in rows if r.get("id") == chat_id), None)
+            if row is None:
+                return False
+            row["archived"] = False
+            row["updated"] = datetime.now(timezone.utc).isoformat()
+            self._write_index(rows)
+        return True
+
     # ── transcript ──────────────────────────────────────────────────────────────
 
     def append_message(

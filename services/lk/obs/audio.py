@@ -16,7 +16,9 @@ import os
 import shutil
 import subprocess
 import threading
+import time
 import wave
+from collections import deque
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -227,14 +229,61 @@ def transcribe(wav: Path) -> str:
     return _faster_whisper(wav) or _whisper_cli(wav) or ""
 
 
+# ── streaming capture (utterance segmentation, N-53) ───────────────────────────
+
+def _rms_db_bytes(frame: bytes) -> float:
+    """RMS dBFS of a raw s16le mono frame (the per-frame VAD energy)."""
+    if len(frame) < 2:
+        return -96.0
+    samples = array.array("h")
+    samples.frombytes(frame[: len(frame) - (len(frame) % 2)])
+    if not samples:
+        return -96.0
+    rms = math.sqrt(sum(s * s for s in samples) / len(samples))
+    return -96.0 if rms < 1 else 20 * math.log10(rms / 32768.0)
+
+
+def _write_wav(out: Path, pcm: bytes) -> None:
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(out), "wb") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(SAMPLE_RATE)
+        wf.writeframes(pcm)
+
+
+def _pcm_stream_cmd() -> list[str] | None:
+    """argv for a long-lived recorder that emits raw s16le mono PCM on stdout.
+    Same recorder preference as the windowed path (parec works on WSLg)."""
+    if shutil.which("parec"):
+        if "PULSE_SERVER" not in os.environ and Path("/mnt/wslg/PulseServer").exists():
+            os.environ["PULSE_SERVER"] = "unix:/mnt/wslg/PulseServer"
+        return ["parec", "--format=s16le", f"--rate={SAMPLE_RATE}", "--channels=1"]
+    if shutil.which("arecord"):
+        return ["arecord", "-q", "-f", "S16_LE", "-r", str(SAMPLE_RATE), "-c", "1", "-t", "raw"]
+    if shutil.which("ffmpeg"):
+        return ["ffmpeg", "-hide_banner", "-loglevel", "error", "-f", "pulse", "-i", "default",
+                "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-"]
+    return None
+
+
 # ── observer daemon ───────────────────────────────────────────────────────────
 
 class AudioObserver(threading.Thread):
-    """Daemon thread: records audio windows, gates on significance, writes to ContextStore.
+    """Daemon thread: continuous capture → VAD-segmented utterances → transcribe.
 
-    Callback modes can be combined:
-      on_event(kind, compact) — passive: writes context, triggers proactive retrieval
-      on_query(transcript)    — active:  treats speech as a user query (full turn)
+    Unlike the old fixed-4s-window scheme (which clipped utterance onsets/tails,
+    repeated text across window boundaries, and rejected short atomic commands),
+    this reads short frames continuously, keeps a rolling pre-roll buffer so the
+    onset is never clipped, opens an utterance on speech energy, and closes it
+    after a trailing-silence *hangover* so the tail is never clipped. One utterance
+    → one ContextStore entry (no per-window repeats).
+
+    Callback modes (combinable):
+      on_event(kind, compact)        — passive: write context + drive proactive
+      on_query(transcript)           — active: a finished utterance becomes a turn
+      on_segment(uid, text, final)   — streaming display: partials then the final,
+                                       all keyed by one utterance id (one UI entry)
     """
     daemon = True
 
@@ -244,68 +293,142 @@ class AudioObserver(threading.Thread):
         ctx: ContextStore,
         on_event: Callable[[str, str], None] | None = None,
         on_query: Callable[[str], None] | None = None,
+        on_segment: Callable[[str, str, bool], None] | None = None,
     ) -> None:
         super().__init__(name="audio-obs")
-        self.tmp_dir   = tmp_dir
-        self._ctx      = ctx
-        self._on_event = on_event
-        self._on_query = on_query   # when set: audio → full turn, not just context
-        self._stop_evt     = threading.Event()
-        self._idx      = 0
+        self.tmp_dir    = tmp_dir
+        self._ctx       = ctx
+        self._on_event  = on_event
+        self._on_query  = on_query     # when set: a finished utterance → full turn
+        self._on_segment = on_segment  # when set: stream partial/final text to the UI
+        self._stop_evt  = threading.Event()
+        self._idx       = 0
         self._recent_transcripts: list[str] = []   # for dedup gate
-        self._pending_query: list[str] = []
         self.active       = False
         self.recording_ok = True   # False when mic/recorder unavailable
+        # capture tunables (read per (re)start so `lk config` changes take effect).
+        self.vad_db        = float(os.environ.get("LK_AUDIO_VAD_DB", "-45"))
+        self.frame_ms      = max(50, int(os.environ.get("LK_AUDIO_FRAME_MS", "300")))
+        self.preroll_ms    = max(0, int(os.environ.get("LK_AUDIO_PREROLL_MS", "600")))
+        self.hangover_ms   = max(self.frame_ms, int(os.environ.get("LK_AUDIO_HANGOVER_MS", "800")))
+        self.max_utterance_s = float(os.environ.get("LK_AUDIO_MAX_UTTERANCE_S", "30"))
+        self.partial_interval_ms = max(self.frame_ms,
+                                       int(os.environ.get("LK_AUDIO_PARTIAL_INTERVAL_MS", "1500")))
 
     def stop(self) -> None:
         self._stop_evt.set()
         self.active = False
 
-    def _flush_query(self) -> None:
-        if self._on_query and self._pending_query:
-            self._on_query(" ".join(self._pending_query))
-        self._pending_query.clear()
-
     def run(self) -> None:
         self.active = True
         while not self._stop_evt.is_set():
+            cmd = _pcm_stream_cmd()
+            if cmd is None:
+                self.recording_ok = False
+                self._stop_evt.wait(2.0)   # no recorder — retry, don't spin
+                continue
             try:
-                self._tick()
+                proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            except Exception:
+                self.recording_ok = False
+                self._stop_evt.wait(2.0)
+                continue
+            self.recording_ok = True
+            started = time.monotonic()
+            try:
+                self._capture_loop(proc)
             except Exception:
                 pass
-            self._stop_evt.wait(POLL_INTERVAL)
+            finally:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    pass
+            # fell out of the loop (recorder died / short read) — reopen unless
+            # stopped; back off if the recorder exited almost immediately so a
+            # broken device can't spin a tight Popen loop.
+            if time.monotonic() - started < 1.0:
+                self._stop_evt.wait(2.0)
 
-    def _tick(self) -> None:
-        self._idx += 1
-        wav = self.tmp_dir / f"audio-{self._idx % (MAX_WAV_KEEP * 2)}.wav"
-        ts  = datetime.now(timezone.utc).isoformat()
+    def _capture_loop(self, proc: subprocess.Popen) -> None:
+        frame_bytes = int(SAMPLE_RATE * 2 * self.frame_ms / 1000)
+        preroll_frames = max(1, self.preroll_ms // self.frame_ms)
+        preroll: deque[bytes] = deque(maxlen=preroll_frames)
+        in_speech   = False
+        buf         = bytearray()
+        silence_ms  = 0
+        spoken_ms   = 0
+        last_partial_ms = 0
+        uid         = ""
 
-        if not record_window(wav, WINDOW_SECONDS):
-            self.recording_ok = False
-            return   # thread keeps running; will retry next tick
-        self.recording_ok = True
+        while not self._stop_evt.is_set():
+            chunk = proc.stdout.read(frame_bytes) if proc.stdout else b""
+            if not chunk or len(chunk) < frame_bytes:
+                break   # recorder ended / short read — outer loop reopens
+            is_speech = _rms_db_bytes(chunk) > self.vad_db
 
-        db = rms_db(wav)
-        if db is None or db < SILENCE_DB:
-            self._flush_query()
-            return  # silence — don't even transcribe
+            if not in_speech:
+                preroll.append(chunk)
+                if is_speech:                       # ── utterance onset ──
+                    in_speech   = True
+                    uid         = f"utt-{int(time.time() * 1000)}"
+                    buf         = bytearray(b"".join(preroll))   # incl. pre-roll → no onset clip
+                    preroll.clear()
+                    silence_ms  = 0
+                    spoken_ms   = self.frame_ms
+                    last_partial_ms = 0
+                continue
 
-        text = transcribe(wav)
-        if not text:
-            self._flush_query()
+            # ── inside an utterance ──
+            buf += chunk
+            spoken_ms += self.frame_ms
+            silence_ms = 0 if is_speech else silence_ms + self.frame_ms
+
+            # stream a partial transcription (UI only) on a bounded cadence
+            if (self._on_segment and is_speech
+                    and spoken_ms - last_partial_ms >= self.partial_interval_ms):
+                last_partial_ms = spoken_ms
+                text = self._transcribe_buf(bytes(buf))
+                if text:
+                    self._emit_segment(uid, text, final=False)
+
+            # close on trailing-silence hangover (→ no tail clip) or the hard cap
+            if silence_ms >= self.hangover_ms or spoken_ms >= self.max_utterance_s * 1000:
+                self._finish_utterance(uid, bytes(buf))
+                in_speech, buf, silence_ms, spoken_ms = False, bytearray(), 0, 0
+                preroll.clear()
+
+    def _transcribe_buf(self, pcm: bytes) -> str:
+        self._idx = (self._idx + 1) % (MAX_WAV_KEEP * 2)
+        wav = self.tmp_dir / f"audio-{self._idx}.wav"
+        try:
+            _write_wav(wav, pcm)
+        except Exception:
+            return ""
+        return transcribe(wav)
+
+    def _emit_segment(self, uid: str, text: str, final: bool) -> None:
+        if self._on_segment:
+            try:
+                self._on_segment(uid, text, final)
+            except Exception:
+                pass
+
+    def _finish_utterance(self, uid: str, pcm: bytes) -> None:
+        ts   = datetime.now(timezone.utc).isoformat()
+        text = self._transcribe_buf(pcm)
+        # whisper's silence/no_speech guards already dropped pure-noise utterances;
+        # min_words=1 lets a VAD-confirmed atomic command through, dedup blocks repeats.
+        if not text or not audio_gate(text, self._recent_transcripts, min_words=1):
             return
-
-        if not audio_gate(text, self._recent_transcripts):
-            return  # not significant / duplicate
-
-        compact, detailed = D.audio(ts, text, db)
+        self._emit_segment(uid, text, final=True)
+        compact, detailed = D.audio(ts, text, None)
         self._ctx.append(ts=ts, kind="audio", compact=compact, detailed=detailed)
         if self._on_event:
-            # passive event: update UI/context even when speech also becomes a turn
-            self._on_event("audio", compact)
+            self._on_event("audio", compact)     # passive context (drives proactive)
         if self._on_query:
-            self._pending_query.append(text)
-
+            self._on_query(text)                  # active: becomes a turn (N-54 gates it)
         self._recent_transcripts.append(text)
         if len(self._recent_transcripts) > MAX_RECENT_KEEP:
             self._recent_transcripts.pop(0)
