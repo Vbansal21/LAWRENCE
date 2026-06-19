@@ -9,12 +9,17 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+from .policy import PolicyState, audit
 
 # Windows-valid CWD for powershell.exe (avoids the 0xc0000142 dialog under WSL).
 _WIN_CWD = "/mnt/c" if os.path.isdir("/mnt/c") else None
 
 
 def notify(title: str, body: str = "") -> bool:
+    decision = PolicyState.current().allow("notification")
+    audit("notification", decision, f"{title}\n{body}")
+    if not decision.allowed:
+        return False
     title = (title or "LAWRENCE")[:120]
     body = (body or "")[:240]
     try:

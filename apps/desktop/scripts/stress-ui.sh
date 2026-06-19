@@ -22,7 +22,18 @@ const jobs = new Map();
 const eventSources = [];
 const mockTasks = [];
 const mockRemember = [];
+const mockReminders = [];
+const mockChats = [{
+  id: 'chat-1',
+  title: 'Current chat',
+  created: '2026-06-18T00:00:00Z',
+  updated: '2026-06-18T00:00:00Z',
+  messages: 2
+}];
 let taskSeq = 0;
+let reminderSeq = 0;
+let chatSeq = 1;
+let activeChat = 'chat-1';
 const htmlSetCounts = { feed: 0, mdx: 0 };
 
 let proto = window.Element.prototype;
@@ -61,10 +72,13 @@ window.__TAURI__ = {
     invoke: async (cmd, payload) => {
       invokes.push({ cmd, payload });
       if (cmd === 'bridge_post') {
-        return bridgePayload(payload.path, payload.body || {});
+        return bridgePayload(payload.path, payload.body || {}, 'POST');
       }
       if (cmd === 'bridge_get') {
-        return bridgePayload(payload.path, {});
+        return bridgePayload(payload.path, {}, 'GET');
+      }
+      if (cmd === 'bridge_delete') {
+        return bridgePayload(payload.path, {}, 'DELETE');
       }
       if (cmd === 'send_turn') {
         return {
@@ -89,8 +103,8 @@ window.__TAURI__ = {
   }
 };
 
-function bridgePayload(url, body = {}) {
-  bridgeCalls.push({ url: String(url), body });
+function bridgePayload(url, body = {}, method = 'GET') {
+  bridgeCalls.push({ url: String(url), body, method });
   let payload = { accepted: true };
   if (String(url).endsWith('/context')) {
     payload = { accepted: true, path: `/tmp/${body.action}.dat`, kind: body.kind === 'screen' ? 'screen' : 'audio' };
@@ -107,7 +121,18 @@ function bridgePayload(url, body = {}) {
           { title: 'Kernel source', url: 'https://example.com/kernel', snippet: 'kernel citation' },
           { title: 'Asset source', url: 'https://assets.example.com/diagram.svg', kind: 'image' }
         ],
-        events: ['bridge ok']
+        events: ['bridge ok'],
+        controls: {
+          actionProposals: [{
+            id: 'action-1',
+            operation: 'artifact.write',
+            args: { path: 'notes/mvp.md', text: 'MVP note' },
+            risk: 'writes a local artifact',
+            contextVersion: 1,
+            status: 'pending',
+            confirmationToken: 'confirm-action-1'
+          }]
+        }
       },
       createdAt: new Date().toISOString(),
       finishedAt: longJob ? undefined : new Date().toISOString()
@@ -128,12 +153,64 @@ function bridgePayload(url, body = {}) {
           pipeline: { visual: 'idle', audio: 'idle', transcript: 'idle' },
           observers: { vision: false, audio: false },
           voice: { listening: true },
+          policy: { cloudText: true, explicitCloudMedia: true },
           eventsUrl: 'http://127.0.0.1:8766/events'
         };
       } else if (String(url).endsWith('/voice/listen')) {
         payload = { accepted: true, listening: body.enabled, changed: true };
       } else if (String(url).endsWith('/tasks')) {
     payload = taskPayload(body);
+  } else if (String(url).endsWith('/reminders')) {
+    if (method === 'POST' && body.op === 'add' && body.text) {
+      mockReminders.push({
+        id: `reminder-${++reminderSeq}`,
+        text: body.text,
+        due: body.when || '',
+        status: 'pending',
+        source: 'user'
+      });
+    }
+    payload = { ok: true, reminders: mockReminders.map((item) => ({ ...item })) };
+  } else if (String(url).includes('/reminders/') && method === 'DELETE') {
+    const id = decodeURIComponent(String(url).split('/reminders/').pop());
+    const index = mockReminders.findIndex((item) => item.id === id);
+    if (index >= 0) mockReminders.splice(index, 1);
+    payload = { ok: true };
+  } else if (String(url).endsWith('/actions')) {
+    payload = {
+      ok: true,
+      action: {
+        id: body.id,
+        operation: 'artifact.write',
+        args: { path: 'notes/mvp.md', text: 'MVP note' },
+        status: body.op === 'confirm' ? 'done' : 'rejected'
+      }
+    };
+  } else if (String(url).endsWith('/chats')) {
+    if (method === 'POST') {
+      activeChat = `chat-${++chatSeq}`;
+      mockChats.push({
+        id: activeChat,
+        title: body.title || 'New chat',
+        created: '2026-06-18T00:00:00Z',
+        updated: '2026-06-18T00:00:00Z',
+        messages: 0
+      });
+    }
+    payload = { ok: true, active: activeChat, items: mockChats.map((item) => ({ ...item })) };
+  } else if (String(url).includes('/chats/') && String(url).endsWith('/switch')) {
+    activeChat = decodeURIComponent(String(url).split('/chats/').pop().replace('/switch', ''));
+    payload = { ok: true, active: activeChat };
+  } else if (String(url).includes('/chats/')) {
+    const id = decodeURIComponent(String(url).split('/chats/').pop());
+    payload = {
+      ok: true,
+      id,
+      messages_list: [
+        { role: 'user', text: 'What is the current plan?' },
+        { role: 'assistant', text: 'Build the smallest autonomous loop.' }
+      ]
+    };
   } else if (String(url).endsWith('/history')) {
     payload = {
       ok: true,
@@ -187,7 +264,7 @@ function taskPayload(body = {}) {
 
 window.fetch = async (url, init = {}) => {
   const body = init.body ? JSON.parse(init.body) : {};
-  const payload = bridgePayload(url, body);
+  const payload = bridgePayload(url, body, init.method || 'GET');
   return {
     ok: payload.state !== 'error',
     status: payload.state === 'error' ? 404 : 200,
@@ -439,6 +516,13 @@ if (!document.querySelector('.message.assistant h2')) throw new Error('assistant
 if (!document.querySelector('.message.assistant ul')) throw new Error('assistant MDX list was not rendered');
 if (!document.querySelector('.message.assistant code')) throw new Error('assistant MDX inline code was not rendered');
 if (document.querySelectorAll('.source-card').length < 2) throw new Error('response sources were not rendered as source cards');
+if (!document.querySelector('[data-action-id="action-1"]')) throw new Error('action proposal was not rendered');
+click('[data-action-decision="confirm"]');
+await settle();
+if (!bridgeCalls.some((x) => x.url.endsWith('/actions') && x.body.op === 'confirm' && x.body.token === 'confirm-action-1')) {
+  throw new Error('action confirmation was not sent to the kernel');
+}
+if (!document.querySelector('[data-action-id="action-1"]').textContent.includes('done')) throw new Error('confirmed action status did not render');
 document.querySelector('.source-card').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 await settle();
 if (!invokes.some((x) => x.cmd === 'open_url' && x.payload.url === 'https://example.com/kernel')) {
@@ -557,23 +641,34 @@ click('#drawer-toggle');
 click('#reminders-open');
 if (!invokes.find((x) => x.cmd === 'open_panel' && x.payload.panel === 'reminders')) throw new Error('reminders did not request sidecar panel');
 input('#reminder-title', 'Check host UI');
-document.querySelector('#reminder-kind').value = 'Timer';
 input('#reminder-rule', '10m');
 submitForm('#reminders-add-form');
 await settle();
 if (!document.querySelector('#reminders-list').textContent.includes('Check host UI')) throw new Error('reminder add did not render');
-if (!window.localStorage.getItem('lawrence-ui-reminders')?.includes('Check host UI')) throw new Error('reminder was not persisted');
+if (!bridgeCalls.some((x) => x.url.endsWith('/reminders') && x.method === 'POST' && x.body.text === 'Check host UI')) {
+  throw new Error('reminder add did not reach the kernel');
+}
+if (window.localStorage.getItem('lawrence-ui-reminders')) throw new Error('reminders must not be stored as local UI drafts');
 document.querySelector('#reminders-list .task-del').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 await settle();
 if (document.querySelector('#reminders-list').textContent.includes('Check host UI')) throw new Error('reminder remove did not render');
+if (!bridgeCalls.some((x) => x.url.includes('/reminders/reminder-1') && x.method === 'DELETE')) {
+  throw new Error('reminder removal did not reach the kernel');
+}
 
 click('#drawer-toggle');
 click('#history-open');
 if (!invokes.find((x) => x.cmd === 'open_panel' && x.payload.panel === 'history')) throw new Error('history did not request sidecar panel');
 click('#history-refresh');
 await settle();
-if (document.querySelectorAll('#history-list .history-item').length < 2) throw new Error('history refresh did not render entries');
-document.querySelector('#history-list .history-item').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+if (document.querySelectorAll('#history-list .history-item').length < 3) throw new Error('history refresh did not render chats and entries');
+document.querySelector('#history-list [data-chat-id="chat-1"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+await settle();
+if (!document.querySelector('#history-preview').textContent.includes('smallest autonomous loop')) throw new Error('chat session did not load');
+click('#chat-new');
+await settle();
+if (!bridgeCalls.some((x) => x.url.endsWith('/chats') && x.method === 'POST')) throw new Error('new chat did not reach the kernel');
+document.querySelector('#history-list [data-index="0"]').dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
 await settle();
 if (!document.querySelector('#history-preview').textContent.includes('browsable')) throw new Error('history item did not load MDX preview');
 
@@ -607,8 +702,10 @@ const report = {
     'web search off toggle disables web retrieval in turn config',
     'minimize and dismiss invoke native window dismissal',
     'bullet journal add/check/clear/remove operations render manager state',
-    'reminder add/persist/remove operations work locally pending manager scheduler',
-    'history refresh and MDX preview loading work',
+    'action proposals require explicit kernel confirmation',
+    'reminder add/list/remove operations use durable kernel state',
+    'chat sessions and history previews load from the kernel',
+    'policy state is visible in telemetry',
     'settings/sampling/journal/reminders/history open as Tauri sidecar panels',
     'session state persists recent messages and control state',
     'streaming avoids excessive full-feed rebuilds',

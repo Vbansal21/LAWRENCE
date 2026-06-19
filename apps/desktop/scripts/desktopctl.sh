@@ -132,7 +132,7 @@ start_bridge() {
       exit 1
     fi
   fi
-  setsid python3 scripts/ui_bridge.py --port "$LK_UI_PORT" >"$BRIDGE_LOG" 2>&1 &
+  setsid python3 scripts/ui_bridge.py --port "$LK_UI_PORT" >"$BRIDGE_LOG" 2>&1 9>&- &
   echo "$!" > "$BRIDGE_PID"
   for _ in 1 2 3 4 5 6 7 8 9 10; do
     if bridge_health >/dev/null 2>&1; then
@@ -203,7 +203,7 @@ start_app() {
     WEBKIT_DISABLE_DMABUF_RENDERER="${WEBKIT_DISABLE_DMABUF_RENDERER:-1}" \
     WEBKIT_DISABLE_COMPOSITING_MODE="${WEBKIT_DISABLE_COMPOSITING_MODE:-1}" \
     LIBGL_ALWAYS_SOFTWARE="${LIBGL_ALWAYS_SOFTWARE:-1}" \
-    "$APP_BIN" >"$APP_LOG" 2>&1 &
+    "$APP_BIN" >"$APP_LOG" 2>&1 9>&- &
   echo "$!" > "$APP_PID"
   sleep 1
   if ! pid_alive "$APP_PID"; then

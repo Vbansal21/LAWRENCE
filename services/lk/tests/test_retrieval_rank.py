@@ -14,7 +14,7 @@ def check(name, cond, extra=""):
         FAILS.append(name)
 
 from lk.retrieval import pipeline as P
-from lk.retrieval.pipeline import RetrievalPipeline, _norm_chunk, _recency_factor, _is_local
+from lk.retrieval.pipeline import RetrievalPipeline, _norm_chunk, _recency_factor, _is_local, _is_web
 from lk.retrieval.db import StoredChunk
 from lk.retrieval.web import WebChunk
 
@@ -66,6 +66,8 @@ now = time.time()
 old = now - 100 * 86400
 check("local file:// is never stale (old → neutral 1.0)", _recency_factor(True, old, now) == 1.0)
 check("_is_local detects file:// ingested rows", _is_local("file:///home/u/doc.md") and not _is_local("https://x/y"))
+check("_is_web accepts only HTTP(S), not note:// rows",
+      _is_web("https://x/y") and not _is_web("note://n1") and not _is_web("file:///x"))
 fresh_f = _recency_factor(False, now, now)
 old_f   = _recency_factor(False, old, now)
 unk_f   = _recency_factor(False, 0.0, now)

@@ -36,6 +36,9 @@ SILENCE_DB           = float(os.environ.get("LK_AUDIO_SILENCE_DB", "-55"))
 NORMALIZE_PEAK_DB    = -3.0   # boost quiet captures to this peak before transcribe
 MAX_WAV_KEEP         = 5
 MAX_RECENT_KEEP      = 12   # recent transcripts kept for dedup gate
+# whisper hallucinates fluent text on silence/noise; reject segments it is unsure of.
+NO_SPEECH_MAX        = 0.6    # drop a segment whose no-speech probability exceeds this
+MIN_AVG_LOGPROB      = -1.0   # drop a low-confidence (likely confabulated) segment
 
 
 # ── recording ─────────────────────────────────────────────────────────────────
@@ -143,8 +146,20 @@ def _faster_whisper(wav: Path) -> str | None:
     if m is None:
         return None
     try:
-        segs, _ = m.transcribe(str(wav), language=None)  # type: ignore[union-attr]
-        text = " ".join(s.text.strip() for s in segs).strip()
+        # vad_filter (Silero) drops non-speech regions; the per-segment guards reject
+        # whisper's well-known hallucinations on silence/noise (it confabulates fluent
+        # text from quiet audio — those segments carry a high no_speech_prob / low
+        # avg_logprob). This is the actual "is it speech" test, not the RMS gate.
+        segs, _ = m.transcribe(  # type: ignore[union-attr]
+            str(wav), language=None, vad_filter=True, no_speech_threshold=NO_SPEECH_MAX,
+        )
+        kept = [
+            s.text.strip() for s in segs
+            if s.no_speech_prob < NO_SPEECH_MAX
+            and s.avg_logprob > MIN_AVG_LOGPROB
+            and s.text.strip()
+        ]
+        text = " ".join(kept).strip()
         return text or None
     except Exception:
         return None
@@ -203,7 +218,12 @@ def _normalize_gain(wav: Path, target_peak_db: float = NORMALIZE_PEAK_DB) -> Non
 
 
 def transcribe(wav: Path) -> str:
-    _normalize_gain(wav)
+    # Deliberately NOT gain-normalised here: pumping a near-silent window up to
+    # -3 dBFS (~20x) amplified the ambient noise floor into something whisper
+    # confabulates fluent speech from (false transcripts on silence). VAD + the
+    # per-segment confidence guards in _faster_whisper are the real speech test.
+    # (_normalize_gain is kept for an explicit, calibrated opt-in if a genuinely
+    # quiet mic ever needs a *mild* boost on already-VAD-confirmed speech.)
     return _faster_whisper(wav) or _whisper_cli(wav) or ""
 
 
@@ -233,12 +253,18 @@ class AudioObserver(threading.Thread):
         self._stop_evt     = threading.Event()
         self._idx      = 0
         self._recent_transcripts: list[str] = []   # for dedup gate
+        self._pending_query: list[str] = []
         self.active       = False
         self.recording_ok = True   # False when mic/recorder unavailable
 
     def stop(self) -> None:
         self._stop_evt.set()
         self.active = False
+
+    def _flush_query(self) -> None:
+        if self._on_query and self._pending_query:
+            self._on_query(" ".join(self._pending_query))
+        self._pending_query.clear()
 
     def run(self) -> None:
         self.active = True
@@ -261,10 +287,12 @@ class AudioObserver(threading.Thread):
 
         db = rms_db(wav)
         if db is None or db < SILENCE_DB:
+            self._flush_query()
             return  # silence — don't even transcribe
 
         text = transcribe(wav)
         if not text:
+            self._flush_query()
             return
 
         if not audio_gate(text, self._recent_transcripts):
@@ -276,8 +304,7 @@ class AudioObserver(threading.Thread):
             # passive event: update UI/context even when speech also becomes a turn
             self._on_event("audio", compact)
         if self._on_query:
-            # active mode: treat speech as a query (handles retrieval internally)
-            self._on_query(text)
+            self._pending_query.append(text)
 
         self._recent_transcripts.append(text)
         if len(self._recent_transcripts) > MAX_RECENT_KEEP:

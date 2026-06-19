@@ -62,6 +62,11 @@ RESPONSE = (
     "follow-up action; do not restate the question as a task.\n"
     '  "remember": array of strings (OMIT if none) — durable facts, preferences, or decisions '
     "worth remembering long-term that you picked up without being asked. ≤120 chars each.\n"
+    '  "actions": array (OMIT if none) — propose, but NEVER execute, one of: '
+    '{"operation":"task.add","text":"..."}, '
+    '{"operation":"reminder.add","text":"...","when":"ISO date or natural time"}, or '
+    '{"operation":"artifact.write","name":"file.md","content":"..."}. '
+    "Only propose when the action is concretely useful; the user must confirm separately.\n"
     "No markdown fences around the outer JSON. No preamble. Output ONLY the JSON object."
 )
 

@@ -46,6 +46,24 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 _turn_ctr = itertools.count(1)
 
 
+@dataclass(frozen=True)
+class ContextSnapshot:
+    """One stable rolling-context view shared by every pass in a run."""
+    version: int
+    text: str
+
+
+def freeze_context(ctx: ContextStore) -> ContextSnapshot:
+    """Read context without mixing two concurrently changing versions."""
+    for _ in range(3):
+        before = ctx.version()
+        text = ctx.tail_for_model()
+        after = ctx.version()
+        if before == after:
+            return ContextSnapshot(after, text)
+    return ContextSnapshot(after, text)
+
+
 # ── §9 proactive dedup / stale-guard tunables ─────────────────────────────────
 # How many context-version advances (new appends/archives from concurrent user or
 # sensor activity) are tolerated between the start of a proactive run and the
@@ -248,6 +266,7 @@ class TurnConfig:
     deep_search:       bool        = False   # UI deepSearch flag → wider/deeper retrieval
     allow_images:      bool        = True   # False for text-only / non-vision models
     allow_audio:       bool        = True   # False for models without audio input
+    allow_remote_media: bool       = False  # explicit user attachment only
     # Advanced sampling — None = use backend default (omitted from payload)
     top_p:              float | None = None
     min_p:              float | None = None
@@ -284,6 +303,7 @@ def run_turn(
     capture_fn: Callable[[], Path | None] | None = None,
     live_fn:    Callable[[str], None]     | None = None,
     tasks_fn:   Callable[[dict], None]    | None = None,
+    actions_fn: Callable[[list[dict[str, Any]], int], list[dict[str, Any]]] | None = None,
     stream_fn:  Callable[[str], None]     | None = None,
     should_stop: Callable[[], bool]       | None = None,
     on_refine:  Callable[[dict], None]    | None = None,
@@ -292,7 +312,8 @@ def run_turn(
     turn_id  = f"t-{next(_turn_ctr):04d}"
     ts_start = time.monotonic()
     ts_now   = datetime.now(timezone.utc).isoformat()
-    ctx_tail = ctx.tail_for_model()
+    snapshot = freeze_context(ctx)
+    ctx_tail = snapshot.text
 
     # Drop media the model can't accept (text-only / vision-only models). Sending
     # an image_url/audio_url block to a model without that modality errors.
@@ -345,6 +366,7 @@ def run_turn(
                     _build_messages(prompts.ANALYSIS, body, images, audios),
                     max_tokens=768, temperature=0.1, timeout=cfg.timeout,
                     schema=schemas.ANALYSIS, role="analysis", should_stop=should_stop,
+                    allow_remote_media=cfg.allow_remote_media,
                 )
                 parsed = _extract_json(raw.get("text", ""))
                 if parsed and "needs_retrieval" in parsed:
@@ -406,6 +428,7 @@ def run_turn(
             schema=schemas.RESPONSE, role="response",
             stream_fn=answer_stream.feed if answer_stream else None,
             should_stop=should_stop,
+            allow_remote_media=cfg.allow_remote_media,
             **_sampling,
         )
         resp_text = raw_resp.get("text", "")
@@ -440,7 +463,8 @@ def run_turn(
                     _build_messages(prompts.RESPONSE, "\n\n".join(parts2), images, audios),
                     max_tokens=cfg.max_tokens, temperature=cfg.temperature,
                     timeout=cfg.timeout, schema=schemas.RESPONSE, role="response",
-                    should_stop=should_stop, **_sampling,
+                    should_stop=should_stop,
+                    allow_remote_media=cfg.allow_remote_media, **_sampling,
                 )
                 t2 = raw2.get("text", "")
                 response = _extract_json(t2) or response
@@ -450,6 +474,13 @@ def run_turn(
                 pass   # keep first-pass response if expansion fails
 
     controls     = response.get("controls") or {}
+    if actions_fn and response.get("actions"):
+        try:
+            controls = dict(controls)
+            controls["actionProposals"] = actions_fn(
+                list(response.get("actions") or []), snapshot.version)
+        except Exception:
+            pass
     latency_ms   = int((time.monotonic() - ts_start) * 1000)
     answer       = str(response.get("answer_text", ""))
     note_compact = str(response.get("note_compact", ""))
@@ -489,6 +520,7 @@ def run_turn(
     write_turn({
         "ts":          ts_now,
         "turn_id":     turn_id,
+        "context_version": snapshot.version,
         "user_text":   user_text,
         "analysis":    analysis,
         "queries":     retrieval_queries,
@@ -538,7 +570,7 @@ def run_proactive(
     *,
     engine:    RetrievalEngine | None = None,
     memory:    MemoryIndex | None = None,
-) -> None:
+) -> bool:
     """
     Called from a background thread after a significant sensor event — this is the
     autonomous loop: realize context → retrieve → (optionally) surface.
@@ -555,10 +587,11 @@ def run_proactive(
     # + retrieving + briefing. If the user (or sensors) move the context on too far
     # while we work, the conclusion we are about to surface is about an old state —
     # we drop it at the end instead of surfacing it late.
-    start_ver = ctx.version()
-    tail = ctx.tail_for_model()
+    snapshot = freeze_context(ctx)
+    start_ver = snapshot.version
+    tail = snapshot.text
     if tail == "(no context yet)":
-        return
+        return False
 
     if engine is not None:
         # Unified engine (N-05/N-07): DISCERN the live stream → per-category parallel
@@ -569,7 +602,7 @@ def run_proactive(
             g = engine.gather("", short_ctx=tail, proactive=True,
                               priority=PRI_PROACTIVE, live_fn=live_fn)
         except Exception:
-            return
+            return False
         results = g.evidence
     else:
         try:
@@ -582,12 +615,12 @@ def run_proactive(
             )
             parsed = _extract_json(raw.get("text", ""))
         except Exception:
-            return
+            return False
         if not parsed or not parsed.get("needs_retrieval"):
-            return
+            return False
         queries = [str(q) for q in parsed.get("queries", []) if q][:3]
         if not queries:
-            return
+            return False
         results = retrieval.retrieve(queries)
 
     if live_fn and results:
@@ -595,7 +628,7 @@ def run_proactive(
 
     # ── surface a finding unprompted (the "present nicely" step) ─────────────────
     if present_fn is None or not results:
-        return
+        return bool(results)
     snippet_block = format_snippets(results)
     body = f"{tail}\n\n{snippet_block}"
     try:
@@ -606,24 +639,24 @@ def run_proactive(
         )
         brief = _extract_json(raw2.get("text", ""))
     except Exception:
-        return
+        return True
     if not brief or not brief.get("surface"):
-        return
+        return True
     headline = str(brief.get("headline", "")).strip()[:120]
     insight  = str(brief.get("insight", "")).strip()
     if not insight:
-        return
+        return True
 
     # §9 stale guard: the DB is already warmed (kept), but if the context advanced
     # past the tolerance while we were working, this conclusion is about an old
     # state — drop it silently rather than surface a late, possibly-irrelevant card.
     if ctx.version() - start_ver > _proactive_stale_delta():
-        return
+        return True
 
     # §9 dedup: don't repeat a finding we recently surfaced. Compares headline +
     # insight by meaning (normalised + SequenceMatcher), not exact text.
     if _is_duplicate_finding(headline, insight, ctx.recent_findings()):
-        return
+        return True
 
     finding = {
         "headline":  headline,
@@ -648,6 +681,7 @@ def run_proactive(
                           title=headline[:80], embed=False)
         except Exception:
             pass
+    return True
 
 
 # ── perception: extraction (called from the observer/spool path) ───────────────

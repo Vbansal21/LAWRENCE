@@ -54,6 +54,7 @@ from typing import Any, Callable
 
 from . import server as _server
 from . import capabilities as _caps
+from .policy import prepare_messages
 # Re-export the capability resolver so the bridge/CLI call through the model layer
 # only (invariant I3: provider logic stays here, never scattered across UI/bridge).
 from .capabilities import ResolvedConfig, capability_summary, resolve_config  # noqa: F401
@@ -779,6 +780,7 @@ def call_model(
     dry_allowed_length: int   | None = None,
     seed:               int   | None = None,
     stop:               list[str] | None = None,
+    allow_remote_media: bool = False,
 ) -> dict[str, Any]:
     """Returns {"text": stripped_content}. JSON extraction is the caller's job
     (with schema= the text is guaranteed-valid JSON on supporting backends).
@@ -791,15 +793,20 @@ def call_model(
     """
     def _attempt() -> dict[str, Any]:
         b = _current_backend()
+        safe_messages = prepare_messages(
+            messages,
+            remote=b.kind in ("api", "anthropic"),
+            allow_media=allow_remote_media,
+        )
         if b.kind == "anthropic":
             return _call_anthropic(
-                messages, max_tokens=max_tokens, temperature=temperature,
+                safe_messages, max_tokens=max_tokens, temperature=temperature,
                 timeout=timeout, schema=schema, stream_fn=stream_fn,
                 should_stop=should_stop, stop=stop, top_p=top_p,
             )
 
         payload: dict[str, Any] = {
-            "messages":    _messages_for_backend(messages, b),
+            "messages":    _messages_for_backend(safe_messages, b),
             "max_tokens":  max_tokens,
             "temperature": temperature,
             "stream":      False,

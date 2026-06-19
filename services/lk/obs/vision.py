@@ -22,6 +22,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -43,6 +44,7 @@ MIN_WRITE_SECS = 60            # minimum gap between context writes
 REGION_EMA        = 0.4        # box coordinate smoothing (higher = snappier)
 REGION_CHANGE_MIN = 0.06       # per-region pixel change (raw grey) to re-OCR
 REGION_MIN_SIDE   = 80         # ignore region crops smaller than this
+FRAME_WINDOW      = 6          # recent frames used to detect a genuinely new state
 
 
 # ── frame snapshot (in-memory, for /obs display) ─────────────────────────────
@@ -331,6 +333,15 @@ def pixel_change_score(prev: bytes | None, curr: bytes | None) -> float:
     return min(sum(abs(a - b) for a, b in zip(prev[:n], curr[:n])) / (n * 255), 1.0)
 
 
+def frame_novelty_score(history: deque[bytes], curr: bytes | None) -> float:
+    """Novelty against the nearest state in a bounded recent-frame window."""
+    if curr is None:
+        return 1.0
+    score = min((pixel_change_score(prev, curr) for prev in history), default=1.0)
+    history.append(curr)
+    return score
+
+
 def _crop_signature(crop) -> bytes:
     """Raw 48×48 greyscale bytes of a region crop — for cheap per-region change
     detection (raw pixels, not PNG, so byte-diff tracks visual change)."""
@@ -412,7 +423,7 @@ class VisionObserver(threading.Thread):
         self._ctx           = ctx
         self._on_event      = on_event
         self._stop_evt          = threading.Event()
-        self._prev_bytes:   bytes | None = None
+        self._frame_history: deque[bytes] = deque(maxlen=FRAME_WINDOW)
         self._prev_ocr:     str  = ""
         self._prev_written_ocr: str = ""
         self._last_written_time: float = 0.0
@@ -429,7 +440,8 @@ class VisionObserver(threading.Thread):
         # one PowerShell call, native-res, relevant. Falls back to the region /
         # whole-screen pipeline below when it can't (no powershell, capture err).
         self.foreground       = True
-        self._prev_fg_bytes:  bytes | None = None
+        self._fg_history:     deque[bytes] = deque(maxlen=FRAME_WINDOW)
+        self._fg_title        = ""
         self._fg_ok           = True
         # LAWRENCE's own surfaces — never feed them back to the model
         # (self-referential noise). Precise match: the popup's title is exactly
@@ -440,7 +452,7 @@ class VisionObserver(threading.Thread):
         env_skip = os.environ.get("LK_VISION_SKIP_TITLES", "")
         self._self_titles     = tuple(
             s.strip().lower() for s in env_skip.split(",") if s.strip()
-        ) or ("lawrence",)
+        ) or ("lawrence", "lawrence (ubuntu)")
 
         # region pipeline (per-window OCR). Disabled automatically if a frame
         # can't be segmented (no Pillow / no window source) — falls back to
@@ -492,8 +504,7 @@ class VisionObserver(threading.Thread):
         if not capture_frame(low, *LOW_RES):
             return
         curr_bytes = _load_grey(low)
-        score = pixel_change_score(self._prev_bytes, curr_bytes)
-        self._prev_bytes = curr_bytes
+        score = frame_novelty_score(self._frame_history, curr_bytes)
         if score < _gate.gate_config.vision_pixel_min and score < 1.0:
             return   # nothing meaningful changed
 
@@ -510,7 +521,7 @@ class VisionObserver(threading.Thread):
         merely mentions LAWRENCE (e.g. editing this repo)."""
         t = title.strip().lower()
         for m in self._self_titles:
-            if t == m or t.startswith(f"{m} (") or t.startswith(f"{m} -") or t.startswith(f"{m} —"):
+            if t == m:
                 return True
         return False
 
@@ -527,8 +538,10 @@ class VisionObserver(threading.Thread):
             return True                # our own surface (or untitled) — skip, handled
 
         curr_bytes = _load_grey(fg)
-        score = pixel_change_score(self._prev_fg_bytes, curr_bytes)
-        self._prev_fg_bytes = curr_bytes
+        if title != self._fg_title:
+            self._fg_history.clear()   # application/window transition is a boundary
+            self._fg_title = title
+        score = frame_novelty_score(self._fg_history, curr_bytes)
         if score < _gate.gate_config.vision_pixel_min and score < 1.0:
             return True                # nothing changed in the active window — handled
 

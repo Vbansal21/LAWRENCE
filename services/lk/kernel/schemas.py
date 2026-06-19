@@ -80,6 +80,21 @@ RESPONSE = {
             },
         },
         "remember": {"type": "array", "items": {"type": "string"}},
+        "actions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string"},
+                    "text": {"type": "string"},
+                    "when": {"type": "string"},
+                    "name": {"type": "string"},
+                    "content": {"type": "string"},
+                },
+                "required": ["operation"],
+                "additionalProperties": False,
+            },
+        },
     },
     # Only answer_text is required — everything else is optional so short
     # answers stay short (the model emits note/tags/tasks only when relevant).

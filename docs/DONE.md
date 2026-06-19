@@ -17,6 +17,76 @@
 > each edge targets. Edge weights: `load-bearing` (removing/altering breaks the
 > target) · `significant` (materially shapes it) · `incidental` (informational).
 > Supersedes `WORK_COMPLETED.md` (deleted). Code is implementation truth.
+>
+> **MVP consolidation (2026-06-18):** the SOUL above is user-confirmed. D-27 is
+> the current-state verification boundary for the running-MVP phase. Earlier
+> "local-first default" wording records the state at that task's completion; the
+> current selected runtime is cloud-first (Gemini) until MVP acceptance, while
+> local llama.cpp compatibility remains mandatory.
+
+---
+
+## §0 — Consolidated DONE roll-up (verification status — 2026-06-19)
+
+> **What this is.** A single compact, scannable record of every completed node,
+> consolidated from PLAN.md's done-markers (`[x]` / SHIPPED) and **graded by what was
+> actually verified in this session** vs. documented from prior runs. Detailed
+> per-node entries (with live-edges) follow below; the open/concept frontier stays in
+> PLAN.md (open §A–§I nodes + §L concepts).
+>
+> **Legend** — ✅ offline gate (`make check`, ~39 suites — **re-run & PASS 2026-06-19**)
+> + source inspected this session · ⚠ live behavior documented from prior runs,
+> **NOT re-run this session** (needs running bridge + network + Gemini key) · ➖ superseded
+> (its behaviors survive as regression guards inside a later node).
+
+| D | Node | One-line | Verified |
+|---|---|---|---|
+| D-01 | N-tier memory | configurable rolling tiers + dynamic budget + cascade compaction | ✅ |
+| D-02 | perception→clean | droppable extract distils a sensor slice before memory | ✅ |
+| D-03 | tick + significance | idle-cheap heartbeat + Welford LOG/NOTE/STUDY | ✅ |
+| D-04 | reasoning loops | slow refine + shared elevation gate | ✅ |
+| D-05 | journal (WS-J) | autonomous first-person rolling-revision episodic memory | ✅ |
+| D-06 | stress-hardening | 6 suites; data-loss/eviction/corruption races fixed | ✅ |
+| D-07 | launcher shutdown | bridge reaps tick+observers; `stop --all` force-reaps | ✅ |
+| D-08 | chats + graph | ChatStore CRUD + per-chat transcript + NoteStore edges | ✅ |
+| D-09 | cancel + timeouts | cooperative `DELETE /jobs`; wall-clock deadline | ✅ |
+| D-10 | capability routing | data-driven resolver; `/health.capabilities` | ✅ |
+| D-11 | UI truth (launcher) | launcher renders only kernel-backed state | ✅ |
+| D-12 | scheduler/reminders | durable one-shot fire; tz-aware; `/reminders` | ✅ |
+| D-13 | proactive dedup | version/stale-drop + difflib dedup (firing proven D-32) | ✅ |
+| D-14 | retrieval caps/recency | dedup + per-URL cap + recency nudge | ➖ |
+| D-15 | launcher rework | 4→2 surfaces over one registry; PySide6+pyte | ✅ |
+| D-16 | converter engine | text/pdf/docx/html/csv/… + ingest chunker | ✅ |
+| D-17 | backends/routing | per-role routing; secrets off-repo; multi-provider | ✅ |
+| D-18 | observers | vision capture+OCR; audio parec+whisper+VAD | ✅ (audio path re-checked offline today) |
+| D-19 | web chain + ingest | ddg/searxng/brave + pacing; `/ingest` | ✅ code · ⚠ fresh web degraded (DDG blocks) |
+| D-20 | embedding seam | `embed()` role-routed + `VectorIndex` exact cosine (no FAISS) | ✅ |
+| D-21 | operational spine | local-first default, launcher opens, sensors auto-start | ✅ · ⚠ local turn latency (minutes) |
+| D-22 | sensors decoupled | schema probe-only; model can't toggle lifecycle | ✅ |
+| D-23 | UI seam (N-09) | one transport module + variant switch; zero visual change | ✅ |
+| D-24 | hybrid recall (N-02) | MemoryIndex: RRF lexical+vector+graph+recency+link/del | ✅ |
+| D-25 | recall in turn (N-06 core) | `[RECALLED MEMORY]` block injected per turn | ✅ |
+| D-26 | unified engine (N-05) | discern→parallel arms→assess/refine→RRF+BM25 cited bundle | ✅ |
+| D-27 | MVP substrate verify | honest current-state boundary (lists runtime caveats) | ✅ (as honest doc) |
+| D-28 | cloud-first smoke | `make mvp-smoke`: start→cited turn→index→stop | ⚠ |
+| D-29 | model-indep sensors | observers start from config, not model modality | ✅ gate · ⚠ live hour |
+| D-30 | frozen context | immutable versioned `ContextSnapshot` per run | ✅ |
+| D-31 | retrieval quality | labeled corpus recall@5/MRR + live corpus | ✅ gate · ⚠ live smoke |
+| D-32 | unattended autonomy | proactive/journal fire; cooldown-on-success | ✅ gate · ⚠ live smoke/hour |
+| D-33 | privacy boundary | redact/gate/audit (hash-only); confirm effectors | ✅ |
+| D-34 | confirmed agency | allowlist + one-use token; atomic artifact write | ✅ code · ⚠ live smoke |
+| D-35 | truthful classic UI | no fabricated answers; real reminders/chats/actions | ✅ gate · ⚠ live DOM harness |
+| D-36 | local llama.cpp compat | random-turn parity; p50 31.8s/p95 98.6s CPU | ⚠ |
+| D-37 | local KV checkpoint | profile-keyed text-only slot save/restore | ⚠ |
+| D-38 | running e2e MVP accept | SOUL loop runs as one system (aggregated terminal evidence) | ⚠ |
+
+**Net (2026-06-19).** D-01…D-26 plus the **offline-testable portions** of D-27…D-38
+are ✅ gate+code verified by me this session. The **live MVP behaviors** (D-28/31/32/34/36/37/38
+smoke runs, the unattended hour, local latency, KV restart) are ⚠ — the code is real and
+the offline gate is green, but their *live numbers* are prior-run documentation I did **not**
+reproduce here (no running server / network / Gemini key). Runtime posture is **cloud-first
+(Gemini)**; **no local embed GGUF installed**, so the vector arm degrades to lexical+graph
+locally. To upgrade any ⚠ to ✅: run the relevant `make *-smoke` against a live bridge.
 
 ---
 
@@ -516,6 +586,392 @@ exercised offline); architecture/fusion/iteration/degrade are gate-covered. RRF 
 fuses disjoint key-spaces fairly (no arm starved); the global BM25 blend rewards lexical
 strength.
 
+## D-27 — Current MVP substrate verification (2026-06-18)
+**Implemented and verified.** Current tree at `83ae0ee`: `make check` passes every
+offline/stress suite; Tauri `cargo check` passes; desktop runtime contract passes;
+the DOM feature harness passes 24 declared behaviors. The live code contains:
+algorithmic screen/audio observers, extraction + information-gain gating, graded
+significance, tick-driven proactive/journal/reminder hooks, N-tier rolling memory,
+atomic Markdown notes, durable chats, hybrid own-memory recall, unified
+notes/doc/web retrieval, provider routing, cancellation, bridge/SSE, and the classic
+Tauri surface.
+
+**Observed runtime truth (not aspirational).**
+- `.runtime/lk.json` currently selects Gemini and routes foreground/background
+  generation roles to Gemini. This is the user-confirmed cloud-first MVP posture.
+- The local Gemma GGUF, multimodal projector, and llama-server are installed, but
+  zero-shot/random-turn compatibility and useful latency are not acceptance-tested.
+- The stack was stopped during review. `memory/memory_index.db` contained zero
+  nodes; `retrieval.db` contained 340 web chunks and zero `file://` document chunks.
+- Audio capture completed through `parec`, but the diagnostic sample was effectively
+  silent. Web search fell through DDG bot blocks; lower-level search/fetch worked,
+  while the full diagnostic pipeline returned no cited result.
+- The classic UI still has `localDraft` fabricated answers and localStorage reminder
+  drafts despite real bridge/scheduler backends.
+- The paper's frozen context snapshot, parallel facet result contract, merge
+  arbitration, concrete privacy policy, and confirmed effectors are not live code.
+
+**Live edges.**
+- `--realized--> D-28` **load-bearing**: the reproducible cloud-first baseline now
+  starts, backfills memory, exercises one real turn, and shuts down cleanly.
+- `--realized--> D-29` **load-bearing**: observers are now model-independent and
+  vision uses bounded recent-frame novelty for temporal boundaries.
+- `--realized--> D-30` **load-bearing**: each run now shares one frozen,
+  versioned rolling-context view using the existing dynamic budget.
+- `--dependency--> D-37` **significant**: `cache_prompt:true` reuses a live
+  llama.cpp prefix; durable KV slot save/restore and cache provenance are absent.
+- `--realized--> D-31` **load-bearing**: retrieval now has labeled quality metrics,
+  a live corpus, and explicit failure-path reporting.
+- `--realized--> D-32` **load-bearing**: unplugged-user proactive and journal
+  behavior now has deterministic retry and live end-to-end proof.
+- `--dependency--> D-35` **significant**: classic UI transport works; false
+  fallbacks, draft reminders, missing session controls, and incomplete capability
+  truth remain.
+- `--realized--> D-34` **load-bearing**: model proposals, one-use confirmation,
+  allowlisted execution and audit now work end to end.
+- `--constraint--> D-36` **load-bearing**: cloud-first is allowed for MVP, but every
+  core turn must remain random-turn compatible with local llama.cpp.
+- `--realized--> D-33` **load-bearing**: cloud/web/media/notification boundaries now
+  have explicit policy, redaction, hashed audit, and confirmation defaults.
+- `--dependency--> D-38` **load-bearing**: offline green tests cannot prove a running
+  end-to-end MVP; the terminal acceptance harness must exercise the live system.
+
+**Assumptions baked in.** The cloud-first posture is temporary and explicit, not a
+relaxation of local compatibility. Existing offline tests remain regression gates,
+not proof of autonomous behavior. No feature is "done" from wiring alone.
+
+## D-28 — Reproducible cloud-first runtime smoke (2026-06-18)
+**Implemented and live-verified.** `make mvp-smoke` now starts the existing bridge
+runtime, verifies Gemini health, writer ownership, cognitive tick, autonomous journal,
+and startup memory backfill, submits one real typed turn, verifies the user/assistant
+messages were persisted and indexed, then stops only the service it started.
+
+The live pass used `gemini-3.1-flash-lite-preview`; memory grew from 100 to 102 nodes.
+The first pass exposed a concrete lifecycle bug: bridge/app children inherited
+`desktopctl.sh`'s lifecycle-lock descriptor, preventing later stop commands. Both
+child launch sites now close descriptor 9 before exec. The repeated smoke passed
+startup, turn, indexing, and clean shutdown.
+
+**Verification.** `make check`; `python3 services/lk/tests/test_launcher.py`;
+`make mvp-smoke`; `git diff --check`.
+
+**Live edges.**
+- `--dependency--> D-29` **load-bearing**: sensors were changed and diagnosed
+  against the reproducible running process.
+- `--dependency--> D-31` **load-bearing**: retrieval stress used the populated index
+  and healthy configured backend.
+- `--dependency--> D-32` **load-bearing**: unattended behavior was verified against
+  the stable startup/lifecycle baseline.
+- `--dependency--> D-35` **significant**: UI truth consumes stable runtime and
+  memory/autonomy health.
+- `--dependency--> D-36` **load-bearing**: the same smoke shape is rerun against
+  llama.cpp without provider-specific orchestration.
+- `--dependency--> D-33` **significant**: policy enforcement used the concrete
+  cloud-first runtime boundary.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance reuses this startup,
+  typed-turn, persistence, and shutdown lane.
+
+**Assumptions baked in.** N-34 validates the service runtime, not popup behavior;
+classic UI behavior is recorded in D-35. A pre-existing healthy bridge is preserved rather
+than stopped by the smoke command.
+
+## D-29 — Model-independent MVP sensor boundary (2026-06-18)
+**Implemented and verified.** Vision and audio observers now start from user/config
+intent without consulting the response model's image/audio input capabilities.
+Capture, OCR, RMS silence gating, transcription, transcript deduplication, context
+writes, and proactive triggering remain model-independent. Media attachments stay
+capability-gated when a turn is built.
+
+Vision now compares each frame with a fixed six-frame recent-state window. Returning
+to a recent state is low novelty; a foreground title change clears the window and
+marks a temporal boundary. Work and memory are bounded, with no model call. Existing
+vision/audio gates still decide whether a slice reaches optional model extraction.
+
+**Verification.** Sensor stress covers lifecycle independence, retained attachment
+gates, first/repeated/revisited frames, bounded history, spool delivery, proactive
+timing, and shutdown. `make check` and `make mvp-smoke` pass; the live smoke grew
+memory from 102 to 104 nodes and stopped cleanly.
+
+`[revised: unattended acceptance]` The exact-title self-window filter now excludes
+the LAWRENCE popup and terminal without incorrectly excluding a VS Code workspace
+whose title begins with `LAWRENCE (Workspace)`. A real two-minute no-turn run then
+advanced context from 639→1161 characters, indexed memory from 123→125 nodes, and
+appended two atomic sensor-log entries with no queued-job growth.
+
+`[revised: audio replay gap]` Active voice mode now accumulates meaningful
+four-second transcript windows and submits one combined utterance only after a
+silent boundary. Passive context still receives each meaningful chunk; the stress
+replay proves two speech windows produce one turn, not two.
+
+**Live edges.**
+- `--dependency--> D-30` **load-bearing**: frozen context consumes existing
+  distilled context records without a new sensor-object hierarchy.
+- `--dependency--> N-39` **load-bearing**: autonomous work now receives environmental
+  triggers independent of the selected LLM.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance proves real target-
+  host capture, including non-silent audio.
+
+**Assumptions baked in.** Fixed heuristic/statistical gates are sufficient for MVP.
+Learned edge models and richer region histories wait for measured misses. Audio still
+uses bounded recording windows; D-38 includes deterministic utterance replay.
+
+## D-30 — Frozen versioned context boundary (2026-06-18)
+**Implemented and verified.** `freeze_context()` captures one immutable
+`ContextSnapshot(version, text)` for a user turn or proactive run. It retries when
+context changes during the read, so all passes share the same rolling-memory text.
+Turn logs record `context_version` for audit.
+
+This reuses `ContextStore.tail_for_model()` and its dynamic L1/L2/L3 budget, sticky
+summaries, and raw-detail trimming. Retrieved evidence was already gathered once
+into a fixed list per run; no second budget system or facet framework was added.
+
+**Verification.** A focused test forces a version change during the first read and
+proves the retry returns the stable second version. `make check` and
+`make mvp-smoke` pass; live memory grew from 104 to 106 nodes.
+
+**Live edges.**
+- `--dependency--> N-39` **load-bearing**: autonomous reasoning now evaluates one
+  stable context version.
+- `--dependency--> D-34` **load-bearing**: action proposals cite the logged
+  context version that justified them.
+- `--dependency--> D-37` **significant**: stable context identity keys local KV
+  checkpoints.
+- `--dependency--> D-38` **load-bearing**: acceptance verifies context-version
+  provenance across typed and autonomous runs.
+
+**Assumptions baked in.** The existing character budget remains the MVP token-budget
+proxy. Complete prompts are not persisted; durable source records remain canonical.
+
+## D-31 — Retrieval quality baseline and live-corpus stress (2026-06-18)
+**Implemented and verified.** A small labeled production-engine corpus now measures
+recall@5, MRR, citation continuity, source diversity, duplicate rate, and category
+isolation. It passes recall@5 1.00 and MRR 1.00. The current PLAN and original
+LAWRENCE paper were ingested into the real document index (164 new local chunks).
+
+Two measured defects were fixed:
+- `note://` rows could enter the web arm because every non-`file://` URL was treated
+  as web. Web now accepts HTTP(S) only; docs accept `file://` only.
+- SQLite FTS interpreted natural-language multi-facet queries as all-terms AND,
+  dropping relevant category-specific rows. Queries now use a bounded token union
+  and BM25 ranking, matching the existing LIKE fallback's recall behavior.
+
+`make retrieval-smoke` exercises live Gemini planning over own memory, the current
+PLAN, the original paper, cached web, and a cold-web provider call. The repeated
+live result was recall@8 1.00, MRR 0.88, three source categories, and 5.53s maximum
+lane time. Cold web correctly reported DDG bot blocks and missing Brave/SearXNG
+configuration instead of silently returning no evidence.
+
+**Perplexity baseline.** LAWRENCE now covers the observable first-party Search API
+contract relevant to this MVP: ranked structured results, multi-query retrieval,
+source/category filtering, extracted text, and consistent citations. Iterative
+sufficiency remains LAWRENCE orchestration rather than a claim about proprietary
+Perplexity internals. Reference:
+`https://docs.perplexity.ai/docs/search/quickstart`.
+
+**Verification.** `make check`; `make mvp-smoke`; `make retrieval-smoke`;
+`git diff --check`.
+
+**Live edges.**
+- `--dependency--> N-39` **load-bearing**: proactive findings can now use measured,
+  category-clean retrieval with explicit degraded states.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance reuses the labeled and
+  live retrieval lanes.
+
+**Assumptions baked in.** Cached/local retrieval is MVP-ready. Fresh public web
+search remains degraded until a reliable provider is configured; autonomy must
+surface that state and may continue on own-memory/docs/cached evidence.
+
+## D-32 — Unattended proactive and journal cycle (2026-06-18)
+**Implemented and live-verified.** Proactive and journal cooldowns now commit only
+after meaningful work succeeds. A busy/dropped/failed attempt remains immediately
+retryable while each path remains single-flight. `run_proactive()` returns a simple
+completion boolean; no generalized autonomy state machine or queue was added.
+
+`make autonomy-smoke` drives a high-significance perception event through the real
+cognitive tick with no user turn. Gemini surfaces a cited finding, the context store
+persists it, and the memory index records it. The same temporary unattended cycle
+then writes and indexes a first-person journal entry from the accumulated context.
+
+**Verification.** Deterministic tests prove failed proactive and journal attempts do
+not consume cooldown, successful attempts do, immediate retries work, and duplicates/
+stale findings remain suppressed. Live result:
+`AUTONOMY SMOKE: PASS (...; journal=Troubleshooting my broken search tools)`.
+`make check` and `make mvp-smoke` pass; live memory grew 108→110.
+
+**Live edges.**
+- `--dependency--> D-35` **significant**: the classic UI exposes real finding,
+  journal and degraded-provider state.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance reuses unattended
+  proactive/journal replay plus a longer target-host soak.
+
+**Assumptions baked in.** One bounded in-flight job is sufficient for MVP; no
+autonomous queue is needed until measured event loss demands one. Quality controls
+surface frequency rather than a quota. Quiet hours remain N-43 policy.
+
+## D-33 — Privacy and trust-boundary enforcement (2026-06-18)
+**Implemented and live-verified.** One `PolicyState` governs remote model text, raw
+cloud media, web queries, notifications and external actions. Cloud text is
+redacted; ambient raw media is removed; explicit user attachments may pass; web
+queries are redacted, path-free and bounded; notifications honor disable/quiet
+hours; unknown operations deny; external actions require explicit confirmation.
+
+Every decision appends only timestamp, operation, allow/deny, reason and SHA-256 to
+`.runtime/policy.jsonl`. No payload, media, query, prompt or secret field is stored.
+Bridge health exposes the active policy summary.
+
+**Verification.** Pure tests cover secret/home-path redaction, cloud-media admission,
+web denial, external-action confirmation and unknown-operation denial. Full live
+Gemini MVP, retrieval and autonomy smokes pass under policy. The live audit contained
+27 records across cloud text/media and web, with no raw payload fields.
+
+**Live edges.**
+- `--dependency--> D-34` **load-bearing**: agency execution has one confirmation
+  and audit authority.
+- `--dependency--> D-35` **significant**: UI displays policy and confirmation
+  state honestly.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance tests denial,
+  confirmation and audit evidence.
+
+**Assumptions baked in.** Redaction is intentionally narrow: configured secret
+values, common API-key forms and home-directory prefixes. Rich DLP waits for measured
+leaks. Policy is process-wide; per-trigger overrides are unnecessary for MVP.
+
+## D-34 — Confirmed allowlisted agency (2026-06-18)
+**Implemented and live-verified.** The response schema can propose three reversible
+operations: `task.add`, `reminder.add`, and `artifact.write`. A proposal has no side
+effect. `Agency` validates the allowlist, records context version/risk, issues a
+one-use confirmation token, and executes only after explicit confirmation through
+D-33 policy. Arbitrary shell, URL launch and unregistered operations are absent.
+
+The bridge exposes `GET/POST /actions`; model proposals return through
+`controls.actionProposals`. Execution appends a durable local action event and a
+hash-only policy decision. Artifact names are basename-confined and Markdown-only;
+writes are atomic and capped.
+
+**Verification.** Unit tests cover wrong token denial, no pre-confirmation mutation,
+one-use confirmation, task mutation, rejected reminder and path-safe artifact write.
+`make agency-smoke` proves Gemini proposal→pending→confirmation→artifact and rejects
+token reuse.
+
+**Live edges.**
+- `--dependency--> D-35` **load-bearing**: classic UI renders proposals and sends
+  confirm/reject decisions.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance requires a visible
+  confirmed state change and its audit trail.
+
+**Assumptions baked in.** All MVP effectors require confirmation despite being
+reversible. Voice confirmation and arbitrary commands remain intentionally absent.
+Pending proposals are process-local; the append-only audit remains durable.
+
+## D-35 — Truthful classic MVP surface (2026-06-18)
+**Implemented and verified `[revised: N-40 complete]`.** The classic UI no longer
+fabricates a response when the bridge is unavailable. Reminders now list, add and
+delete through the durable `/reminders` backend; chat sessions list, switch and
+create through `/chats`; policy state is visible in telemetry; and model-proposed
+actions render their operation, risk and context version before a typed
+confirm/reject decision is sent to `/actions`.
+
+Confirmation tokens are not persisted in browser session state. A restored pending
+proposal therefore renders as expired instead of presenting a nonfunctional Confirm
+button. Existing streaming, source cards, cancellation and the 80-message render cap
+remain intact.
+
+**Verification.** `npm run test:features` exercises 95 turns and passes reminder
+durability, chat switching/creation, policy visibility and action confirmation.
+`services/lk/tests/stress_ui.py`, JavaScript syntax checks, `cargo check`, and
+`git diff --check` pass.
+
+**Live edges.**
+- `--dependency--> D-38` **load-bearing**: terminal acceptance exercises this
+  truthful UI against the live runtime, not only the deterministic DOM harness.
+
+**Assumptions baked in.** The existing classic layout is sufficient for MVP; no
+redesign, archive workflow or UI-specific reminder cache is required. The bridge is
+authoritative for state.
+
+## D-36 — Random-turn local llama.cpp compatibility (2026-06-19)
+**Implemented and live-verified.** The bundled Gemma 4 GGUF now runs the same model
+gateway contracts as cloud mode with no orchestration branch outside the model
+boundary. Local server startup explicitly disables reasoning when `LK_THINKING` is
+off; this prevents hidden thought generation from consuming the structured response
+budget.
+
+`make local-smoke` validates analysis, retrieval planning, sensor extraction,
+proactive reasoning, journal drafting, live cooperative cancellation, and a
+deterministic random turn boundary. The random turn preserves a typed
+`artifact.write` proposal. Correctness passes; measured CPU latency is p50 31.79s,
+p95 98.64s, max 131.96s.
+
+**Live edges.**
+- `--dependency--> D-37` **load-bearing**: the exact bundled server/model contract
+  defines compatible KV persistence.
+- `--dependency--> D-38` **load-bearing**: terminal acceptance consumes this local
+  replacement proof; latency optimization remains post-MVP work.
+
+**Assumptions baked in.** Correctness precedes useful latency. The cloud-first MVP
+remains the default while local CPU optimization is deferred and measured separately.
+
+## D-37 — Profile-keyed local KV checkpoint lifecycle (2026-06-19)
+**Implemented and live-verified.** Managed llama.cpp startup enables a private
+`.runtime/kv/` slot-save directory, restores the newest compatible profile-keyed
+slot after health, and saves slot 0 before shutdown. The filename identity includes
+the model, projector, llama-server binary, context size, KV type, flash-attention
+mode and Jinja mode. Missing or rejected checkpoints cold-start; an incompatible
+file is deleted rather than trusted.
+
+The bundled llama.cpp rejected all slot actions whenever a multimodal projector was
+loaded, including text-only slots. The local runtime patch narrows that restriction:
+slots containing media chunks remain rejected, while text-only slot state can save
+and restore. `make kv-smoke` restored 17 prior tokens across a full server restart;
+the continued 33-token prompt evaluated only its 16-token suffix. The checkpoint is
+566,080 bytes.
+
+**Live edges.**
+- `--dependency--> D-38` **significant**: terminal acceptance retains the
+  warm-restart report and verify cold fallback remains safe.
+
+**Assumptions baked in.** KV is derivative acceleration, never canonical memory.
+Only text prefix state is persisted; raw media KV remains unsupported and is
+explicitly denied.
+
+## D-38 — Running end-to-end MVP acceptance (2026-06-19)
+**Accepted `[revised: N-44 complete]`.** The SOUL-level loop now runs as one system:
+independent vision perception writes objective context, extraction/indexing makes it
+durable, the cognitive tick can retrieve and surface findings without a user turn,
+the rolling first-person journal writes on its context/time trigger, typed turns use
+cited memory/document/web evidence, and allowlisted effects remain proposal-only
+until explicit confirmation.
+
+**Terminal evidence.**
+- `make mvp-smoke`: cloud-first cold start, populated memory, cited grounded turn,
+  durable chat/index write, memory 146→149, clean shutdown.
+- `make retrieval-smoke`: recall@8 1.00, MRR 0.75, three source categories, max
+  4.96s; cold web reports explicit degradation when no configured provider works.
+- `make autonomy-smoke` and `make agency-smoke`: no-turn finding+journal indexing,
+  confirmed artifact write, and no pre-confirmation mutation/token reuse.
+- Real unattended hour: 345 health checks, zero queued/running job buildup,
+  context 1161→2502 characters, memory 129→135 nodes, five new atomic context-log
+  entries, and a new 1,368-byte autonomous journal.
+- Sensor replay: six-frame visual novelty/window boundaries, exact self-window
+  filtering, model-independent lifecycle, and two audio speech windows accumulated
+  into one utterance after silence.
+- `make local-smoke`: seven local contracts including cancellation, random-turn
+  context and agency; p50 31.79s, p95 98.64s, max 131.96s.
+- `make kv-smoke`: 17-token warm restart, 16-token suffix evaluation, 566,080-byte
+  profile-keyed checkpoint.
+- `make check`, desktop feature/runtime contracts, Rust `cargo check`, and
+  `git diff --check` pass. Ports 8190/8765/8766 and managed processes are clean.
+
+**Settled boundary.** This node is the MVP sink and has no outgoing execution edge.
+Post-MVP work may improve latency, fresh-web provider availability, microphone
+hardware validation, UI polish and Windows-native packaging, but those do not
+replace or invalidate the accepted orchestration/memory/privacy/agency loop.
+
+**Assumptions baked in.** Cloud Gemini remains the practical default. Fresh cold-web
+search is capability-reported and degrades explicitly without Brave/SearXNG access.
+The microphone pipeline is replay-tested; this host's live input remained silent, so
+non-silent hardware validation is an operational follow-up, not fabricated evidence.
+
 ---
 
 ## Live-stub index (every D-node's outflow, for audit) `[revised: F2 — added D-04→N-20, D-09→N-16]`
@@ -529,9 +985,19 @@ D-19→N-03,N-05,N-12,N-13 · **D-20→N-02 (vector arm),N-06,N-07,N-08** ·
 **D-23→N-10 (Track A),N-11 (palette),N-12/N-13/N-14/N-15 (folded UI nodes)** ·
 **D-24→N-06 (core=D-25),N-07,N-05 (✓ realized=D-26),N-03/N-04 (folded=D-26),N-08/N-10/N-11 (G/P signal feeds)** ·
 **D-25→N-06 (vision-demote/transcript half remains),N-05 (✓ realized=D-26),N-07** ·
-**D-26→N-05 (✓ realized),N-03/N-04 (folded as categories),N-06 (recall now a cited category),N-07 (findings ride notes+doc+web),N-32 (latency lever),N-12/N-16 (consume the engine later)**.
+**D-26→N-05 (✓ realized),N-03/N-04 (folded as categories),N-06 (recall now a cited category),N-07 (findings ride notes+doc+web),N-32 (latency lever),N-12/N-16 (consume the engine later)** ·
+**D-27→D-28,D-29,D-30,D-31,D-32,D-33,D-34,D-35,D-36,D-37,D-38** ·
+**D-28→D-29,D-31,D-32,D-33,D-35,D-36,D-38 (live MVP baseline)** ·
+**D-29→D-30,D-32,D-38 (model-independent sensor boundary)** ·
+**D-30→D-37,D-32,D-34,D-38 (frozen context boundary)** ·
+**D-31→D-32,D-38 (measured retrieval boundary)** ·
+**D-32→D-35,D-38 (unattended autonomy boundary)** ·
+**D-33→D-34,D-35,D-38 (privacy and confirmation boundary)** ·
+**D-34→D-35,D-38 (confirmed agency boundary)** ·
+**D-35→D-38 (truthful human interaction boundary)** ·
+**D-36→D-37,D-38 (local replacement boundary)** ·
+**D-37→D-38 (warm-restart boundary)** · **D-38 terminal MVP sink**.
 
-*(No D-node is a sink with zero outflow — every done item has a live follow-up, as
-expected mid-stream. N-09/N-19/N-24/N-25/N-26/N-29/N-30 are genuinely independent of
-the tracked done-graph; N-09/N-26 lean on existing **app.js / host scaffolding** that
-predates this tracker and is not itself a D-node — see PLAN.md §H audit F1.)*
+*D-38 is intentionally the only zero-outflow D-node: it is the settled MVP
+acceptance sink. Other historical product backlog nodes remain outside this MVP
+execution partition.*

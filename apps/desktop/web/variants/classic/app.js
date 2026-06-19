@@ -20,7 +20,6 @@ const drawerToggle = document.querySelector("#drawer-toggle");
 const deepSearchToggle = document.querySelector("#deep-search-toggle");
 const voiceListenToggle = document.querySelector("#voice-listen-toggle");
 const SESSION_KEY = "lawrence-ui-session";
-const REMINDERS_KEY = "lawrence-ui-reminders";
 const CONFIG_KEY = "lawrence-ui-config";
 const JOB_POLL_MS = 400;
 const JOB_SOFT_TIMEOUT_MS = 30_000;
@@ -64,6 +63,7 @@ const state = {
   pendingTurns: 0,
   tasks: { tasks: [], remember: [], counts: { open: 0, done: 0, remember: 0 } },
   history: { items: [], selected: null, text: "", format: "mdx" },
+  chats: { items: [], active: "" },
   reminders: [],
   metrics: {
     queued: 0,
@@ -121,6 +121,7 @@ function render(options = {}) {
     const meta = (message.meta || []).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
     const cursor = message.streaming ? '<span class="cursor"></span>' : "";
     const sources = renderSources(message.sources || sourceCardsFromText(message.text));
+    const actions = renderActions(message.actions || []);
     const refined = message.refined ? " refined" : "";
     return `
       <article class="message ${message.role}${channel}${refined}">
@@ -132,6 +133,7 @@ function render(options = {}) {
           </div>
           <div class="mdx">${renderMdx(message.text)}${cursor}</div>
           ${sources}
+          ${actions}
           ${meta ? `<div class="meta">${meta}</div>` : ""}
         </div>
       </article>
@@ -141,6 +143,21 @@ function render(options = {}) {
   renderAttachments();
   renderTelemetry();
   if (persist) saveSessionState();
+}
+
+function renderActions(actions) {
+  if (!actions.length) return "";
+  return `<div class="action-list">${actions.map((action) => `
+    <div class="action-card ${escapeAttr(action.status || "pending")}" data-action-id="${escapeAttr(action.id)}">
+      <b>${escapeHtml(action.operation)}</b>
+      <small>${escapeHtml(action.risk || "confirmation required")} · context v${escapeHtml(action.contextVersion ?? "?")}</small>
+      <code>${escapeHtml(JSON.stringify(action.args || {}))}</code>
+      ${action.status === "pending" && action.confirmationToken ? `
+        <span class="action-buttons">
+          <button type="button" class="detail-btn compact" data-action-decision="confirm" data-action-token="${escapeAttr(action.confirmationToken || "")}">Confirm</button>
+          <button type="button" class="chip ghost" data-action-decision="reject">Reject</button>
+        </span>` : `<small>${escapeHtml(action.status === "pending" ? "confirmation expired; request again" : action.status)}</small>`}
+    </div>`).join("")}</div>`;
 }
 
 function renderAttachments() {
@@ -324,6 +341,10 @@ function renderTelemetry() {
   const visual = observers.vision ? "vision live" : (pipeline.visual || state.metrics.visual);
   const audio = observers.audio ? "audio live" : (pipeline.audio || state.metrics.audio);
   const transcript = events[0] || pipeline.transcript || state.metrics.transcript;
+  const policy = health.policy || {};
+  const policyText = policy.cloudText === false
+    ? "cloud off"
+    : `cloud text · media ${policy.explicitCloudMedia ? "explicit" : "off"}`;
 
   contextStrip.innerHTML = [
     metric("Context", contextFill),
@@ -332,7 +353,8 @@ function renderTelemetry() {
     metric("Model", model),
     metric("Visual", visual),
     metric("Audio", audio),
-    metric("Transcript", transcript || "idle")
+    metric("Transcript", transcript || "idle"),
+    metric("Policy", policyText)
   ].join("");
 }
 
@@ -723,19 +745,19 @@ async function sendTurn(text) {
       return {
         text: result.answer || "Kernel returned an empty answer.",
         sources: result.sources || result.citations || result.assets || [],
+        actions: result.controls?.actionProposals || [],
         meta: ["kernel bridge", ...configMarkerMeta(result.controls), ...(result.events || []).slice(0, 2)]
       };
     } catch (error) {
       const native = await invokeTauriTurn(turn);
       if (native) return native;
-      return localDraft(text, config, `bridge unavailable: ${error.message}`);
+      return bridgeFailure(error);
     }
   }
 
   const native = await invokeTauriTurn(turn);
   if (native) return native;
-
-  return localDraft(text, config, "local draft");
+  return bridgeFailure(new Error("no kernel transport is available"));
 }
 
 async function invokeTauriTurn(turn) {
@@ -752,23 +774,14 @@ async function invokeTauriTurn(turn) {
     }
     return null;
   } catch {
-    // Local fallback still renders when native commands are unavailable.
     return null;
   }
 }
 
-function localDraft(text, config, status) {
-  const attachmentText = state.attachments.length
-    ? ` ${state.attachments.length} document attachment${state.attachments.length === 1 ? "" : "s"} will be routed through converter-aware ingestion.`
-    : "";
-  const contextText = state.kernelContext.length
-    ? ` ${state.kernelContext.length} live kernel context request${state.kernelContext.length === 1 ? "" : "s"} queued.`
-    : "";
-  const retrievalText = config.retrieval ? " Retrieval is enabled for this turn." : " Retrieval is off for this turn.";
-  const deepText = config.deepSearch ? " Deep web search is requested but needs manager support for expanded retrieval breadth." : "";
+function bridgeFailure(error) {
   return {
-    text: `## Received\n\n${text}\n\n- ${contextText.trim() || "No live kernel context queued."}\n- ${attachmentText.trim() || "No document attachments queued."}\n- ${retrievalText.trim()}${deepText}\n- Target: ${config.backend} at \`${config.kernelUrl}\``,
-    meta: [status]
+    text: `## LAWRENCE unavailable\n\nThe kernel did not process this turn.\n\n- ${String(error?.message || error || "bridge unavailable")}\n- Start or repair the bridge, then resend the request.`,
+    meta: ["bridge unavailable", "no answer fabricated"]
   };
 }
 
@@ -858,8 +871,12 @@ function delay(ms) {
 
 function saveSessionState() {
   try {
+    const messages = state.messages.slice(-80).map((message) => ({
+      ...message,
+      actions: (message.actions || []).map(({ confirmationToken, ...action }) => action)
+    }));
     window.localStorage.setItem(SESSION_KEY, JSON.stringify({
-      messages: state.messages.slice(-80),
+      messages,
       kernelContext: state.kernelContext.filter((item) => item.force),
       controls: {
         visual: pressed("#video-toggle"),
@@ -913,6 +930,7 @@ async function refreshHealth() {
     if (health.voice?.listening) applyPressed("#voice-listen-toggle", true);
     // SSE is best-effort under WSLg; poll tasks here so the panel/badge stay live.
     refreshTasks();
+    refreshReminders();
     pollRemoteJobs();
   } catch {
     state.health = null;
@@ -968,6 +986,7 @@ async function pollRemoteJobs() {
       await streamAssistant({
         text: answer,
         sources: job.result?.sources || job.result?.citations || [],
+        actions: job.result?.controls?.actionProposals || [],
         meta: [source || "kernel bridge", "job result"]
       });
     }
@@ -1127,7 +1146,7 @@ function addVoiceUserMessage(transcript, meta = [], key = "") {
 function normalizeAssistantReply(reply) {
   const raw = typeof reply === "string" ? reply : reply?.text;
   let text = raw == null ? "" : String(raw);
-  const meta = typeof reply === "string" ? ["local draft"] : (reply?.meta || ["ready"]);
+  const meta = typeof reply === "string" ? ["unstructured response"] : (reply?.meta || ["ready"]);
   let explicitSources = typeof reply === "string" ? [] : (reply?.sources || reply?.citations || []);
 
   const normalized = normalizeModelText(text);
@@ -1140,7 +1159,8 @@ function normalizeAssistantReply(reply) {
   return {
     text: text.trim() || "(empty response)",
     meta,
-    sources: sourceCardsFromText(text, explicitSources)
+    sources: sourceCardsFromText(text, explicitSources),
+    actions: typeof reply === "object" ? (reply?.actions || []) : []
   };
 }
 
@@ -1219,7 +1239,7 @@ async function streamAssistant(reply) {
   const hadLiveStream = finishLiveDraft();
   state.streaming = true;
   streamState.textContent = "Streaming";
-  const draft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"], sources: normalized.sources };
+  const draft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"], sources: normalized.sources, actions: normalized.actions };
   state.messages.push(draft);
   render({ persist: false });
   const draftEl = feed.querySelector(".message:last-child");
@@ -1253,6 +1273,8 @@ async function streamAssistant(reply) {
       draftEl.querySelector(".message-body")?.append(metaEl);
     }
     if (metaEl) metaEl.innerHTML = metaHtml;
+    const actionHtml = renderActions(draft.actions || []);
+    if (actionHtml) draftEl.querySelector(".message-body")?.insertAdjacentHTML("beforeend", actionHtml);
     renderAttachments();
     renderTelemetry();
     saveSessionState();
@@ -1287,6 +1309,29 @@ form.addEventListener("submit", async (event) => {
     await streamAssistant(response);
   } finally {
     state.pendingTurns = Math.max(0, state.pendingTurns - 1);
+  }
+});
+
+feed.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-action-decision]");
+  const card = button?.closest("[data-action-id]");
+  if (!button || !card) return;
+  button.disabled = true;
+  try {
+    const op = button.dataset.actionDecision;
+    const data = await postBridge("/actions", {
+      op,
+      id: card.dataset.actionId,
+      token: button.dataset.actionToken || ""
+    });
+    for (const message of state.messages) {
+      const action = (message.actions || []).find((item) => item.id === card.dataset.actionId);
+      if (action) Object.assign(action, data.action || { status: op === "confirm" ? "done" : "rejected" });
+    }
+    render();
+  } catch (error) {
+    streamState.textContent = `Action failed: ${error.message}`;
+    button.disabled = false;
   }
 });
 
@@ -2070,37 +2115,34 @@ document.querySelector("#remember-add")?.addEventListener("click", () => addBull
 document.querySelector("#tasks-list")?.addEventListener("click", onTaskRowClick);
 document.querySelector("#remember-list")?.addEventListener("click", onTaskRowClick);
 
-// ── reminder specs ──────────────────────────────────────────────────────────
-function loadReminders() {
+// ── durable reminders ───────────────────────────────────────────────────────
+async function refreshReminders() {
   try {
-    const stored = JSON.parse(window.localStorage.getItem(REMINDERS_KEY) || "[]");
-    state.reminders = Array.isArray(stored) ? stored.slice(-40) : [];
-  } catch {
+    const data = await getBridge("/reminders");
+    state.reminders = Array.isArray(data.reminders) ? data.reminders : [];
+  } catch (error) {
     state.reminders = [];
+    const list = document.querySelector("#reminders-list");
+    if (list) list.innerHTML = `<li class="reminders-empty">Bridge unavailable: ${escapeHtml(error.message)}</li>`;
+    return;
   }
-}
-
-function saveReminders() {
-  try {
-    window.localStorage.setItem(REMINDERS_KEY, JSON.stringify(state.reminders.slice(-40)));
-  } catch {
-    // Local reminder drafts are optional until the manager owns scheduling.
-  }
+  renderReminders();
 }
 
 function renderReminders() {
   const badge = document.querySelector("#reminders-badge");
-  if (badge) badge.textContent = state.reminders.length ? String(state.reminders.length) : "";
+  const pending = state.reminders.filter((item) => item.status === "pending");
+  if (badge) badge.textContent = pending.length ? String(pending.length) : "";
   const list = document.querySelector("#reminders-list");
   if (!list) return;
   list.innerHTML = state.reminders.length
     ? state.reminders.map((item) => `
       <li class="reminder-item" data-id="${escapeAttr(item.id)}">
-        <span class="task-text">${renderInline(item.title)}<br /><small>${escapeHtml(item.kind)} · ${escapeHtml(item.rule || "unscheduled")}</small></span>
-        <span class="task-src">draft</span>
+        <span class="task-text">${renderInline(item.text)}<br /><small>${escapeHtml(item.status)} · ${escapeHtml(item.due || "unscheduled")}</small></span>
+        <span class="task-src">${escapeHtml(item.source || "user")}</span>
         <button type="button" class="task-del" title="Remove" aria-label="Remove">✕</button>
       </li>`).join("")
-    : '<li class="reminders-empty">No reminder specs yet.</li>';
+    : '<li class="reminders-empty">No reminders.</li>';
 }
 
 document.querySelector("#reminders-open")?.addEventListener("click", () => {
@@ -2112,56 +2154,65 @@ document.querySelector("#reminders-open")?.addEventListener("click", () => {
   closeOptionDrawer();
   document.querySelector("#reminders-panel").hidden = false;
   document.querySelector("#reminder-title").focus();
-  renderReminders();
+  refreshReminders();
 });
 document.querySelector("#reminders-close")?.addEventListener("click", () => closeRemindersPanel(true));
-document.querySelector("#reminders-add-form")?.addEventListener("submit", (event) => {
+document.querySelector("#reminders-add-form")?.addEventListener("submit", async (event) => {
   event.preventDefault();
   const title = document.querySelector("#reminder-title").value.trim();
+  const when = document.querySelector("#reminder-rule").value.trim();
   if (!title) return;
-  state.reminders.push({
-    id: `rem-${Date.now().toString(36)}`,
-    title,
-    kind: document.querySelector("#reminder-kind").value,
-    rule: document.querySelector("#reminder-rule").value.trim(),
-    createdAt: new Date().toISOString()
-  });
-  document.querySelector("#reminder-title").value = "";
-  document.querySelector("#reminder-rule").value = "";
-  saveReminders();
-  renderReminders();
+  try {
+    await postBridge("/reminders", { op: "add", text: title, when });
+    document.querySelector("#reminder-title").value = "";
+    document.querySelector("#reminder-rule").value = "";
+    await refreshReminders();
+  } catch (error) {
+    streamState.textContent = `Reminder failed: ${error.message}`;
+  }
 });
-document.querySelector("#reminders-list")?.addEventListener("click", (event) => {
+document.querySelector("#reminders-list")?.addEventListener("click", async (event) => {
   const item = event.target.closest("[data-id]");
   if (!item || !event.target.classList.contains("task-del")) return;
-  state.reminders = state.reminders.filter((reminder) => reminder.id !== item.dataset.id);
-  saveReminders();
-  renderReminders();
+  try {
+    await deleteBridge(`/reminders/${encodeURIComponent(item.dataset.id)}`);
+    await refreshReminders();
+  } catch (error) {
+    streamState.textContent = `Reminder removal failed: ${error.message}`;
+  }
 });
 
 // ── previous chats / journals ────────────────────────────────────────────────
 async function refreshHistory() {
-  try {
-    const data = await getBridge("/history");
-    state.history.items = Array.isArray(data.items) ? data.items : [];
-  } catch {
-    state.history.items = [];
-  }
+  const [history, chats] = await Promise.allSettled([
+    getBridge("/history"),
+    getBridge("/chats")
+  ]);
+  state.history.items = history.status === "fulfilled" && Array.isArray(history.value.items)
+    ? history.value.items : [];
+  state.chats.items = chats.status === "fulfilled" && Array.isArray(chats.value.items)
+    ? chats.value.items : [];
+  state.chats.active = chats.status === "fulfilled" ? (chats.value.active || "") : "";
   renderHistory();
 }
 
 function renderHistory() {
   const badge = document.querySelector("#history-badge");
-  if (badge) badge.textContent = state.history.items.length ? String(state.history.items.length) : "";
+  const count = state.history.items.length + state.chats.items.length;
+  if (badge) badge.textContent = count ? String(count) : "";
   const list = document.querySelector("#history-list");
   if (list) {
-    list.innerHTML = state.history.items.length
-      ? state.history.items.map((item, index) => `
+    const chats = state.chats.items.map((item) => `
+        <button type="button" class="history-item ${state.chats.active === item.id ? "active" : ""}" data-chat-id="${escapeAttr(item.id)}">
+          <b>${escapeHtml(item.title || "Chat")}${state.chats.active === item.id ? " · active" : ""}</b>
+          <small>${escapeHtml(item.updated || item.created || "")} · ${item.messages || 0} messages</small>
+        </button>`).join("");
+    const history = state.history.items.map((item, index) => `
         <button type="button" class="history-item ${state.history.selected?.id === item.id ? "active" : ""}" data-index="${index}">
           <b>${escapeHtml(item.kind === "journal" ? "Journal" : "Chat")}</b>
           <small>${escapeHtml(item.date)}${item.entries ? ` · ${item.entries} entries` : ""}</small>
-        </button>`).join("")
-      : '<span class="tasks-empty">No chats or journals found.</span>';
+        </button>`).join("");
+    list.innerHTML = chats || history ? chats + history : '<span class="tasks-empty">No chats or journals found.</span>';
   }
   const preview = document.querySelector("#history-preview");
   if (!preview) return;
@@ -2169,6 +2220,23 @@ function renderHistory() {
   preview.innerHTML = state.history.format === "text" || state.history.format === "chat-log"
     ? renderMdx(chatLogToMdx(text))
     : renderMdx(text);
+}
+
+async function loadChat(chatId) {
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/switch`, {});
+    const data = await getBridge(`/chats/${encodeURIComponent(chatId)}`);
+    state.chats.active = chatId;
+    state.history.selected = { id: `session:${chatId}` };
+    state.history.format = "mdx";
+    state.history.text = (data.messages_list || []).map((message) => {
+      const who = message.role === "user" ? "You" : "LAWRENCE";
+      return `## ${who}\n\n${message.text || ""}`;
+    }).join("\n\n") || "_No messages in this chat._";
+  } catch (error) {
+    state.history.text = `Could not load chat: ${error.message}`;
+  }
+  renderHistory();
 }
 
 function chatLogToMdx(text) {
@@ -2231,10 +2299,20 @@ document.querySelector("#history-open")?.addEventListener("click", () => {
 });
 document.querySelector("#history-close")?.addEventListener("click", () => closeHistoryPanel(true));
 document.querySelector("#history-refresh")?.addEventListener("click", refreshHistory);
+document.querySelector("#chat-new")?.addEventListener("click", async () => {
+  try {
+    await postBridge("/chats", { title: `Chat ${new Date().toLocaleString()}` });
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Could not create chat: ${error.message}`;
+    renderHistory();
+  }
+});
 document.querySelector("#history-list")?.addEventListener("click", (event) => {
   const row = event.target.closest(".history-item");
   if (!row) return;
-  loadHistoryItem(Number(row.dataset.index));
+  if (row.dataset.chatId) loadChat(row.dataset.chatId);
+  else loadHistoryItem(Number(row.dataset.index));
 });
 
 function appWindow() {
@@ -2284,17 +2362,16 @@ function initPanelMode() {
 
   if (PANEL_MODE === "tasks") refreshTasks();
   if (PANEL_MODE === "history") refreshHistory();
-  if (PANEL_MODE === "reminders") renderReminders();
+  if (PANEL_MODE === "reminders") refreshReminders();
   if (PANEL_MODE === "settings") document.querySelector("#mode")?.focus();
   if (PANEL_MODE === "advanced") document.querySelector("#top-p")?.focus();
 }
 
 initUiPrefs();
-loadReminders();
 restoreSessionState();
 applyConfigPrefs();
 renderTasks();
-renderReminders();
+refreshReminders();
 renderHistory();
 
 if (PANEL_MODE) {

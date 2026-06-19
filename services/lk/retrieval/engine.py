@@ -38,9 +38,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .memory   import _rrf
-from .pipeline import CitedResult, _is_local, _norm_chunk
+from .pipeline import CitedResult, _is_local, _is_web, _norm_chunk
 from .ranker   import _tokenize
 from .ranker   import rank as _bm25_rank
+from ..policy import sanitize_web_query
 
 CATEGORIES = ("notes", "doc", "web")
 
@@ -358,6 +359,7 @@ class RetrievalEngine:
     def _web_round(self, queries: list[str], depth: int, fresh: int) -> list[_Candidate]:
         """Web arm = cached web rows ∪ fresh search→read→extract for under-served
         queries (cached back into the SemanticDB). Reuses the D-19 provider chain."""
+        queries = [q for q in (sanitize_web_query(q) for q in queries) if q]
         db = self._db
         raw: list[tuple[str, str, str]] = []
         hits_by_q: dict[str, int] = {}
@@ -367,9 +369,9 @@ class RetrievalEngine:
                     hits = db.search(q, top_k=depth)
                 except Exception:
                     hits = []
-                non_local = [h for h in hits if not _is_local(h.url)]
-                hits_by_q[q] = len(non_local)
-                raw += [(h.url, h.title, h.text) for h in non_local]
+                web_hits = [h for h in hits if _is_web(h.url)]
+                hits_by_q[q] = len(web_hits)
+                raw += [(h.url, h.title, h.text) for h in web_hits]
         needs = [q for q in queries if hits_by_q.get(q, 0) < self._min_results()]
         if needs:
             try:

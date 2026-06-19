@@ -126,6 +126,11 @@ _ENV_MAP = {
     "events_port":   "LK_UI_EVENTS_PORT",
     "proactive_interval": "LK_PROACTIVE_INTERVAL",
     "ui_variant":    "LK_UI_VARIANT",   # WS-U N-09: which front-end loads (default classic)
+    "policy_cloud_text":    "LK_POLICY_CLOUD_TEXT",
+    "policy_cloud_media":   "LK_POLICY_CLOUD_MEDIA",
+    "policy_web":           "LK_POLICY_WEB",
+    "policy_notifications": "LK_POLICY_NOTIFICATIONS",
+    "policy_quiet_hours":   "LK_POLICY_QUIET_HOURS",
     # unified retrieval engine (N-05) — perplexity-style: context-discern → per-category
     # parallel chains → iterative → final collective rank. All knobs live-patchable.
     "retrieval_enabled":     "LK_RETRIEVAL",             # master on/off (default on)

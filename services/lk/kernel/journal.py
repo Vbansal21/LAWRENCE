@@ -380,17 +380,22 @@ class JournalTrigger:
             if self._busy:
                 return False
             self._busy = True
-        self._last = self._clock()
-        self._saw_activity = False
 
         def _run() -> None:
             try:
-                self._run_fn(self._ctx, retrieval=self._retrieval,
-                             memory=self._memory, live_fn=self._live_fn)
+                written = self._run_fn(
+                    self._ctx, retrieval=self._retrieval,
+                    memory=self._memory, live_fn=self._live_fn,
+                )
+                if written:
+                    with self._lock:
+                        self._last = self._clock()
+                        self._saw_activity = False
             except Exception:
                 pass
             finally:
-                self._busy = False
+                with self._lock:
+                    self._busy = False
 
         threading.Thread(target=_run, daemon=True, name="journal").start()
         return True

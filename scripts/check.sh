@@ -22,11 +22,15 @@ step "node syntax (web entrypoints)" bash -c 'command -v node >/dev/null && for 
 step "offline suite"        python3 services/lk/tests/test_offline.py
 step "edge suite"           python3 services/lk/tests/test_edge.py
 step "concurrency suite"    python3 services/lk/tests/test_concurrency.py
+step "context snapshot"     python3 services/lk/tests/test_context_snapshot.py
+step "privacy policy"       python3 services/lk/tests/test_policy.py
+step "confirmed agency"     python3 services/lk/tests/test_agency.py
 step "memory-tier suite"    python3 services/lk/tests/test_memory_tiers.py
 step "extraction suite"     python3 services/lk/tests/test_extract.py
 step "zettelkasten suite"   python3 services/lk/tests/test_notes.py
 step "chat/session suite"   python3 services/lk/tests/test_chats.py
 step "chat-memory suite"    python3 services/lk/tests/test_chat_memory.py
+step "autonomy retry"       python3 services/lk/tests/test_autonomy.py
 step "cognitive-tick suite" python3 services/lk/tests/test_tick.py
 step "significance suite"   python3 services/lk/tests/test_significance.py
 step "slow-loop suite"      python3 services/lk/tests/test_refine.py
@@ -39,6 +43,7 @@ step "retrieval rank"       python3 services/lk/tests/test_retrieval_rank.py
 step "embedding seam"       python3 services/lk/tests/test_embed.py
 step "memory-recall suite"  python3 services/lk/tests/test_memory_index.py
 step "retrieval-engine suite" python3 services/lk/tests/test_retrieval_engine.py
+step "retrieval quality"    python3 services/lk/tests/test_retrieval_quality.py
 step "schedule suite"       python3 services/lk/tests/test_schedule.py
 step "converters suite"     python3 services/lk/tests/test_converters.py
 step "recent-findings suite" python3 services/lk/tests/test_recent_findings.py

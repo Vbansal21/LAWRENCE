@@ -312,14 +312,7 @@
         <div class="reminders-body">
           <form class="reminders-add" id="reminders-add-form">
             <input id="reminder-title" type="text" placeholder="Reminder" />
-            <select id="reminder-kind">
-              <option>At time</option>
-              <option>Timer</option>
-              <option>Recurring</option>
-              <option>Pomodoro</option>
-              <option>Stopwatch</option>
-            </select>
-            <input id="reminder-rule" type="text" placeholder="time, duration, or recurrence" />
+            <input id="reminder-rule" type="text" placeholder="time or duration" />
             <button type="submit" class="detail-btn compact">Add</button>
           </form>
           <ul class="reminders-list" id="reminders-list"></ul>
@@ -330,6 +323,7 @@
         <header class="panel-head" data-tauri-drag-region>
           <strong>History</strong>
           <div class="panel-head-actions">
+            <button type="button" class="chip ghost" id="chat-new">New chat</button>
             <button type="button" class="chip ghost" id="history-refresh">Refresh</button>
             <button type="button" class="icon-btn" id="history-close" title="Close" aria-label="Close history">
               <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>

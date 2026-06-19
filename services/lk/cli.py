@@ -1247,13 +1247,16 @@ def _make_proactive_trigger(
             return
         if not _lock.acquire(blocking=False):
             return
-        _last_run[0] = time.monotonic()
         pf = present_fn if state.proactive_present else None
 
         def _run() -> None:
             try:
-                run_proactive(ctx, retrieval, live_fn=live_fn, present_fn=pf,
-                              engine=engine, memory=memory)
+                completed = run_proactive(
+                    ctx, retrieval, live_fn=live_fn, present_fn=pf,
+                    engine=engine, memory=memory,
+                )
+                if completed:
+                    _last_run[0] = time.monotonic()
             finally:
                 _lock.release()
         threading.Thread(target=_run, daemon=True, name="proactive").start()
@@ -1481,9 +1484,7 @@ def main() -> int:
     print(f"  memory       : L1/L2/L3 in {ctx._mem_dir}")
     print(f"  retrieval DB : {db._con.execute('PRAGMA database_list').fetchone()[2]}")
     print(f"  mode         : {'single-pass' if args.skip_analysis else 'analysis → retrieval → respond'}")
-    if args.audio_query and not profile.audio:
-        print("  audio-query  : requested but model has no audio input — disabled")
-    elif args.audio_query:
+    if args.audio_query:
         print("  audio-query  : ON — speech triggers full turns automatically")
     print("  Type /help for commands.\n")
 
@@ -1575,7 +1576,7 @@ def main() -> int:
         # ── observer lifecycle ──────────────────────────────────────────────────
         def _start_vision() -> bool:
             nonlocal vision
-            if not profile_ref[0].vision or vision is not None:
+            if vision is not None:
                 return False
             vision = VisionObserver(
                 tmp, ctx, on_event=on_proactive,
@@ -1599,7 +1600,7 @@ def main() -> int:
 
         def _start_audio() -> bool:
             nonlocal audio
-            if not profile_ref[0].audio or audio is not None:
+            if audio is not None:
                 return False
             on_query = (
                 _make_audio_query_handler(
@@ -1757,19 +1758,13 @@ def main() -> int:
                                 print(f"  • {r['text']}{tag}")
 
                 elif action == "vision_on":
-                    if not profile_ref[0].vision:
-                        print("[vision] model has no vision input — unavailable")
-                    else:
-                        print("[vision on]" if _start_vision() else "[vision already on]")
+                    print("[vision on]" if _start_vision() else "[vision already on]")
 
                 elif action == "vision_off":
                     print("[vision off]" if _stop_vision() else "[vision already off]")
 
                 elif action == "audio_on":
-                    if not profile_ref[0].audio:
-                        print("[audio] model has no audio input — unavailable")
-                    else:
-                        print("[audio on]" if _start_audio() else "[audio already on]")
+                    print("[audio on]" if _start_audio() else "[audio already on]")
 
                 elif action == "audio_off":
                     print("[audio off]" if _stop_audio() else "[audio already off]")
@@ -1821,6 +1816,7 @@ def main() -> int:
                 if audios and not profile_ref[0].audio:
                     print("[note] model has no audio input — ignoring attached audio")
                     audios = []
+                explicit_media = bool(images or audios)
 
                 # claim pending high-res screenshot from vision observer
                 if vision and vision.pending_hi:
@@ -1837,6 +1833,7 @@ def main() -> int:
                     continue
 
                 try:
+                    cfg.allow_remote_media = explicit_media
                     t0 = time.monotonic()
                     sys.stdout.write("  [thinking…]")
                     sys.stdout.flush()

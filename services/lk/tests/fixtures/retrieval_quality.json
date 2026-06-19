@@ -1,0 +1,32 @@
+{
+  "cases": [
+    {
+      "name": "own memory",
+      "query": "zephyr cobalt handshake",
+      "categories": "notes",
+      "expected": ["memory://note-target"]
+    },
+    {
+      "name": "ingested document",
+      "query": "orion lattice rollback",
+      "categories": "doc",
+      "expected": ["file:///fixtures/orion.md"]
+    },
+    {
+      "name": "cached web",
+      "query": "maple telemetry protocol",
+      "categories": "web",
+      "expected": ["https://official.test/maple"]
+    },
+    {
+      "name": "collective fusion",
+      "query": "zephyr cobalt handshake orion lattice rollback maple telemetry protocol",
+      "categories": "notes,doc,web",
+      "expected": [
+        "memory://note-target",
+        "file:///fixtures/orion.md",
+        "https://official.test/maple"
+      ]
+    }
+  ]
+}

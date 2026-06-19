@@ -443,7 +443,8 @@ MB.configure_backend(kind="api", base_url="https://generativelanguage.googleapis
                      api_key="k", model="gemini-3.5-flash", provider="gemini")
 MB.call_model([{"role": "user", "content": [MB.text_block("transcribe"), MB.audio_block(audio)]}],
               max_tokens=5, timeout=30, schema=gemini_schema, min_p=0.2,
-              presence_penalty=0.5, frequency_penalty=0.5, seed=42, top_p=0.9, stop=["\n"])
+              presence_penalty=0.5, frequency_penalty=0.5, seed=42, top_p=0.9, stop=["\n"],
+              allow_remote_media=True)
 check("gemini endpoint", _cap["endpoint"].endswith("/openai/chat/completions"))
 check("gemini keeps only supported options",
       _cap["payload"].get("top_p") == 0.9 and _cap["payload"].get("stop") == ["\n"]

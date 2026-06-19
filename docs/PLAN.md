@@ -13,6 +13,20 @@
 > deliverable.** Edge weights: `load-bearing` / `significant` / `incidental`.
 > Status: `[ ]` open · `🔁` total rework (subsumes a DONE node). Supersedes
 > `WORK_REMAINING.md` (deleted). Code is implementation truth.
+>
+> **CURRENT AUTHORITY (2026-06-18): §K.** The user confirmed the SOUL and directed
+> a running end-to-end MVP. §K is the BUILD→AUDIT→REVISE overlay for that phase and
+> supersedes the older executable-frontier recommendation in §G. Earlier nodes remain
+> as implementation history and source constraints.
+>
+> **COMPLETED-WORK CONSOLIDATION (2026-06-19).** Every done node (`[x]` / SHIPPED:
+> N-01,N-02,N-05,N-09,N-28 + §J + §K's N-34…N-44) is consolidated, compacted, and
+> verification-graded in **[DONE.md](DONE.md) §0** (✅ gate+code verified this session ·
+> ⚠ live-behavior documented but not re-run). PLAN.md keeps the as-built contracts
+> **§J/§K** as authoritative reference (per the anti-drift rule — conception docs are
+> not dismissed), and remains the home of the **open frontier**: the partial/open nodes
+> (N-03,N-04,N-06,N-07,N-10,N-11,N-16,N-17,N-18,N-32,N-33,…) and the **§L next-horizon
+> concepts** (N-45…N-50). Net done state + honest caveats: see the DONE.md §0 roll-up.
 
 ---
 
@@ -505,7 +519,7 @@ D-19/D-16 --dependency--> N-12        significant   /ingest + converters back th
 D-18(/voice) --dependency--> N-13     significant   voice endpoint backs PTT
 ```
 
-**Executable frontier right now (no unsatisfied hard-dep, no active hard-defer):**
+**Superseded executable frontier (historical; replaced by §K):**
 ~~N-01~~ **(done → D-20)**, ~~N-28~~ **(done → D-21)**, **N-02** (unblocked — hard-dep
 N-01 satisfied), N-03 (read/extract half), N-09, N-21, N-27, N-29, **N-32** (new:
 local turn latency). **User-set order (2026-06-17):** (1) ✅ make the existing
@@ -565,15 +579,14 @@ clean** — 7 findings, all addressed in §I.
 | F6 | N-18→N-02 resolved `?:unresolved`→`conditional` (sequence after N-02 design) | N-18, §G |
 | F7 | noted N-28 true centrality L; depth driven by ambiguity + user priority | N-28 triage note |
 
-**`?:open` (carried, not yet resolvable):**
-- **`?:open` N-07 root cause** — whether proactive inertness is config (tick off /
-  interval) or structural (slot starvation) cannot be resolved from docs; resolves at
-  the N-07 *audit* (instrumentation), which is the task's first step by design.
+**Carried audit items:**
+- **`[resolved → D-32/D-38]` N-07 root cause** — cooldown clocks previously advanced
+  on skipped work; successful-work commit plus the unattended hour resolves it.
 - **`?:open` N-02 vs N-18 subsumption** — whether the unified index subsumes
   `recent_findings` resolves when N-02's index schema is designed; N-18 is sequenced
   to wait on it.
-- **`?:open` SOUL confirmation** — the SOUL statement is synthesized from the corpus
-  (AUTONOMY §0/§1, ARCHITECTURE); pending the user's explicit confirmation (§6 gate).
+- **`[resolved]` SOUL confirmation** — the SOUL statement is synthesized from the corpus
+  (AUTONOMY §0/§1, ARCHITECTURE). **Resolved 2026-06-18: user confirmed it.**
 
 ---
 
@@ -787,3 +800,954 @@ the bridge boundary. The engine is built to satisfy them (UI rendering stays N-1
 - **Unsupported-state honesty (FR `deepSearch`; G5).** If no web backend can browse, the
   web arm is skipped and a structured note surfaces (reuse `web.search_stats()`), never a
   silent empty pass.
+
+---
+
+## §K — Running end-to-end MVP consolidation (authoritative)
+
+### §K.0 — Confirmed MVP boundary
+
+**SOUL:** LAWRENCE is a local-first watcher-assistant that continuously perceives
+the user's environment, converts transient activity into inspectable durable
+memory, autonomously recalls relevant context, and acts or surfaces useful findings
+without waiting for a prompt. The replaceable LLM is one reasoning component;
+orchestration, memory, privacy, and continuity are the product.
+
+For this phase, **cloud-first generation is intentional until the MVP works**, but
+the implementation must preserve zero-shot/random-turn llama.cpp compatibility.
+Cloud-first does not authorize cloud-only state, hidden raw-data upload, or
+provider-specific orchestration.
+
+### §K.1 — Stage 1 BUILD artifact
+
+#### Triage
+
+```
+[N-34 BOOT]   centrality:H ambiguity:M  → FULL  reproducible running baseline
+[N-35 SENSE]  centrality:H ambiguity:H  → FULL  independent adaptive sensors
+[N-36 SNAP]   centrality:H ambiguity:H  → FULL  frozen dynamic context
+[N-37 KV]     centrality:M ambiguity:H  → medium+deferral  durable llama.cpp KV
+[N-38 RETEST] centrality:H ambiguity:M  → FULL  retrieval evidence quality
+[N-39 AUTO]   centrality:H ambiguity:H  → FULL  unplugged-user autonomy
+[N-40 UI]     centrality:M ambiguity:M  → medium+deferral  truthful classic UI
+[N-41 AGENCY] centrality:H ambiguity:H  → FULL  confirmed effectors
+[N-42 LOCAL]  centrality:H ambiguity:M  → FULL  random-turn local compatibility
+[N-43 POLICY] centrality:H ambiguity:M  → FULL  privacy and trust boundaries
+[N-44 ACCEPT] centrality:H ambiguity:L  → FULL  terminal MVP acceptance
+```
+
+#### ~~N-34 (BOOT) — Reproducible cloud-first runtime baseline~~ `✅ → D-28`
+
+**Pathway.** D-27 is the hard input. Start bridge/kernel with Gemini routing,
+prove writer ownership, observers/tick/journal startup, startup memory backfill,
+one typed turn, one indexed turn, and clean shutdown. This is the convergence point
+for configuration truth, process ownership, and runtime observability; N-35/N-38/
+N-39/N-40/N-42 all consume it. N-39 and N-40 are now complete.
+
+**Triple-anchor.** *Task-local:* one command starts a known-good system and a status
+surface explains every degraded branch. *Implementation-scope:* `lk`, `desktopctl`,
+bridge health, doctor, logs, writer lock, and backfill already exist but currently
+do not prove a populated recall index or working full retrieval. *Soul:* autonomy
+cannot be evaluated on a stopped or ambiguously configured stack. **Coherent.**
+
+**Deferral.** Hard-defer none. It is the first executable node. Re-entry: immediate.
+
+**Implementation specifics.** Keep current Gemini routing. Add a non-destructive
+`lk mvp-smoke` or equivalent composed check using existing stdlib HTTP/process
+helpers; no new framework. It must assert process health, `MemoryIndex.stats().nodes
+> 0` after backfill when memory exists, one turn persisted, and stop semantics.
+O(memory files + one turn); bound every network/model wait.
+
+**Ambiguity register.**
+- Which process this smoke owns: `resolved` → bridge service only; popup behavior
+  is verified separately by N-40.
+- Cloud secret availability: `crystallizes-during`; report missing, never print it.
+- Existing empty memory index cause: `resolve-before-start`.
+
+**Actual result `[revised: implementation evidence]`.** The deterministic smoke is
+service-only; popup behavior remains N-40 so this command has one objective. It
+proved Gemini health, writer/tick/journal startup, 100-node startup backfill, one
+persisted/indexed turn (100→102), and clean shutdown. The first run found and fixed
+inherited lifecycle-lock descriptors in both child launch paths. See D-28.
+
+#### ~~N-35 (SENSE) — Independent adaptive sensor services~~ `✅ MVP → D-29`
+
+**Pathway.** D-18/D-22/D-27 supply capture and lifecycle seams. Parallel tracks:
+(A) remove response-model modality as a lifecycle prerequisite; (B) vision N-frame
+window/region state + information-gain tracking; (C) audio utterance accumulation,
+VAD/transcription and gain/dedup adaptation. A+B+C converge on a model-free
+`PerceptionEvent`; high information gain then queues N-36 refinement and N-39 action.
+
+**Triple-anchor.** *Task-local:* sensors capture→segment→extract→score continuously,
+without invoking the LLM for ordinary low-gain data. *Implementation-scope:*
+foreground/region OCR, EMA boxes, pixel/Jaccard/VAD gates and transcription exist;
+sensor start is still coupled to `profile.vision/audio`, regions use current-frame
+OS rectangles rather than an N-frame boundary history, and extraction currently
+uses a droppable LLM call for every passed slice. *Soul:* this is the watcher body,
+independent of the replaceable brain. **Current lifecycle coupling is out of
+alignment and must be removed.**
+
+**Deferral.** Hard-defer model-based refinement until N-36's event contract; the
+model-free service split starts after D-28. Soft-defer learned edge models until
+heuristic/statistical gain measures show a measured miss. Re-entry for edge-DL:
+recorded corpus demonstrates heuristic recall/precision failure.
+
+**Implementation specifics.** Stdlib + existing Pillow/tesseract/Whisper. Maintain
+per-region ring buffers for the last N signatures/boxes/OCR hashes; Hungarian
+matching is unnecessary initially—existing IoU matching + EMA is O(W²) for small
+window counts. Gain combines pixel delta, OCR novelty, region birth/death, active
+app change, speech VAD, transcript novelty and elapsed-time pressure. Target
+O(N·W + changed_pixels) memory/time per frame, with bounded ring buffers. The LLM
+is invoked only for high-gain refinement, never raw capture cadence.
+
+**Ambiguity register.**
+- N-frame size and adaptive thresholds: `crystallizes-during`.
+- OS window rectangles vs visual segmentation fallback: `intentionally-open`;
+  use OS geometry first, image segmentation only when unavailable.
+- Audio intent/wake behavior: `resolve-before-start`; passive context must not
+  become a turn per chunk.
+
+**Actual result `[revised: KISS implementation]`.** Existing distilled context
+records remain the sensor boundary; no new event hierarchy was added. Lifecycle
+guards were removed from bridge/CLI/voice-listen paths while media attachment
+guards remain at turn construction. Vision uses a bounded six-frame nearest-state
+novelty window and foreground-title boundaries. Existing RMS/OCR/transcript gates
+keep low-gain slices away from optional model extraction. See D-29.
+
+#### ~~N-36 (SNAP) — Frozen dynamic context and budget arbitration~~ `✅ MVP → D-30`
+
+**Pathway.** Hard-dep on D-29's distilled perception records; consumes D-01/D-05/D-08/
+D-24/D-26. Parallel producers—recent rolling tiers, active session/thread, recalled
+memory, current perception, time/reminders, document/web evidence and policy—converge
+once into `TurnContextSnapshot`. Snapshot feeds response, journal, proactive and
+N-41 agency facets with one `context_version`; stale results are rejected.
+
+**Triple-anchor.** *Task-local:* build one immutable, provenance-tagged, token-budgeted
+context reference for each user or autonomous trigger. *Implementation-scope:*
+`ContextStore.tail_for_model()` and the retrieval bundle exist, but callers compose
+strings ad hoc and the paper contracts are absent. *Soul:* continuity and coherent
+parallel evidence require a shared reference frame. **Coherent and load-bearing.**
+
+**Deferral.** The sensor dependency is satisfied by D-29. Snapshot structure can be
+coded in parallel with N-38 evaluation fixtures. Re-entry: immediate.
+
+**Implementation specifics.** Dataclasses in a small kernel module:
+`TurnContextSnapshot`, typed `EvidenceRef`, `PolicyState`; immutable tuples/dicts at
+dispatch. Budget allocation is deterministic: reserve fixed minimums for query,
+recent thread and policy; allocate the remainder by source utility/recency with
+per-source caps. O(total candidate chars/tokens). Do not copy raw media into durable
+state; store references and distilled text.
+
+**Ambiguity register.**
+- Exact source budget weights: `crystallizes-during`.
+- Snapshot persistence: `resolve-before-start` → log metadata/provenance, not raw
+  media or complete prompts.
+- Parallel facet scope for MVP: `resolve-before-start` → context, recall/web,
+  fast response, journal, agency proposal; slow refinement may arrive late.
+
+**Actual result `[revised: KISS implementation]`.** A frozen
+`ContextSnapshot(version, text)` now wraps the existing dynamic L1/L2/L3 tail.
+Turns and proactive runs reuse it, and turn logs persist `context_version`.
+Retrieval evidence already remains fixed for each run. No second budget allocator,
+prompt archive, or facet framework was added. See D-30.
+
+#### ~~N-37 (KV) — llama.cpp KV lifecycle and derived-context cache~~ `✅ MVP → D-37`
+
+**Pathway.** Hard-dep D-30 for stable prompt identities and D-36 for the local
+runtime. Uses llama.cpp `/slots/:id_slot` save/restore where supported; cloud mode
+uses no fake KV persistence. Derived doc/web/refined-context caches are keyed by
+content hash + model/template identity and injected through D-30.
+
+**Alignment.** *Task-local:* reuse expensive stable prefixes and restore local
+session state safely. *Implementation-scope:* `cache_prompt:true` provides live
+prefix reuse, and bundled llama.cpp exposes slot save/load routes; LAWRENCE has no
+durable slot manager or cache provenance. *Soul:* improves edge continuity without
+making opaque KV the canonical memory. Markdown remains truth. **Coherent if KV is
+strictly derivative.**
+
+**Deferral.** Hard-defer durable slot persistence until D-36 proves exact server
+version/API behavior and D-30 provides stable prompt hashes. This does not block
+cloud-first MVP behavior, but N-44 requires the local compatibility scenario.
+Completing this node unblocks local warm-restart acceptance in N-44.
+
+**Implementation specifics.** HTTP slot API + atomic manifest under `.runtime/`,
+never `memory/` canonical data. Validate model hash, chat-template hash, KV type,
+context size and prompt-prefix hash before restore; otherwise discard. Disk/time
+cost O(KV size); cap snapshots and retain newest valid checkpoint.
+
+**Ambiguity register.**
+- Slot API request/response shape for bundled llama.cpp: `resolve-before-start`
+  with an isolated live probe.
+- GPU/CPU KV offload flags by platform: `crystallizes-during`.
+- Cloud provider prompt caching: `intentionally-open`, capability-reported only.
+
+**Actual result `[revised: bundled-runtime constraint]`.** Managed startup now
+restores and shutdown saves one profile-keyed text-only slot under `.runtime/kv/`.
+The bundled multimodal server required a narrow patch because it rejected text-only
+slot state whenever a projector was loaded; media-bearing slots remain rejected.
+`make kv-smoke` proves 17 restored prefix tokens and suffix-only continuation.
+No second document/web cache was added: whatever stable derived text is actually in
+the served prompt is captured by the derivative KV checkpoint. See D-37.
+
+#### ~~N-38 (RETEST) — Retrieval live-corpus stress and Perplexity baseline~~ `✅ → D-31`
+
+**Pathway.** Hard-dep D-28 populated runtime; consumes D-24/D-26. Build a corpus
+spanning notes, chats, rolling context, journals, ingested docs and controlled web
+pages. Run category-isolation tests in parallel, then convergence tests for
+discern→retrieve→assess→refine→fuse. Results inform D-30 budgets and N-39 proactive
+quality; acceptance flows to N-44.
+
+**Triple-anchor.** *Task-local:* demonstrate relevant, cited, iterative retrieval
+under cache-hit, cold-web, bot-block, missing-embedding and conflicting-source cases.
+*Implementation-scope:* deterministic unit coverage is good, but the live index is
+empty, local docs absent, and the current diagnostic can return zero citations.
+*Soul:* autonomous recall is not real until it retrieves the user's own context
+reliably. **Coherent; current evidence is insufficient.**
+
+**Deferral.** Hard-defer none after D-28. Web quality comparisons to external docs
+are soft-deferred until the base live corpus produces measurable metrics. Re-entry:
+baseline report exists.
+
+**Implementation specifics.** Add fixture-backed relevance judgments and replay
+records, not a broad benchmark framework. Metrics: recall@k, MRR, citation coverage,
+source diversity, duplicate rate, stale-result rate, rounds, wall time and failure
+reason. Compare current RRF+BM25 baseline to only one change at a time. Target
+bounded O(rounds·categories·depth); no ANN until measured corpus size requires it.
+
+**Ambiguity register.**
+- Perplexity proprietary internals: `intentionally-open`; baseline observable
+  behavior (query decomposition, parallel search, rerank, iterative sufficiency,
+  citations), not imitation claims.
+- Minimum quality thresholds: `resolve-before-start` from a hand-labeled MVP set.
+- Network nondeterminism: `resolve-before-start` with recorded pages plus one live lane.
+
+**Actual result `[revised: measured evidence]`.** The labeled production-engine
+gate passes recall@5 1.00/MRR 1.00 with clean note/doc/web categories, contiguous
+citations and no duplicates. The live Gemini report passes own memory, current PLAN,
+original paper and cached web at recall@8 1.00/MRR 0.88. Cold web reports its DDG
+bot-block/missing-provider degradation explicitly. Fixes were limited to URL-category
+admission and natural-language FTS OR recall. See D-31.
+
+#### ~~N-39 (AUTO) — Autonomous realize→remember→retrieve→surface loop~~ `✅ MVP → D-32`
+
+**Pathway.** Hard-deps D-29, D-30, D-31; D-03/D-05/D-12/D-13 supply tick, journal,
+reminders and guards. Event gain queues autonomous work without consuming the
+cooldown until admission succeeds. Parallel journal and retrieval branches converge
+at a significance/policy/elevation decision; accepted findings are surfaced,
+atomically logged, journaled and indexed. Feeds N-44.
+
+**Triple-anchor.** *Task-local:* with no user prompt, LAWRENCE tracks changing
+context, writes objective atomic events, updates short/mid/long journal memory and
+surfaces a useful non-duplicate finding. *Implementation-scope:* all organs exist,
+but droppable admission can starve and cooldown is advanced before useful work is
+confirmed. No hour-long behavior test exists. *Soul:* this is the unplugged-user
+litmus. **Highest alignment; behavior currently unproven.**
+
+**Deferral.** Retrieval quality is satisfied by D-31; admission/firing
+instrumentation can start after D-28. Re-entry: sensor events and snapshot available.
+
+**Implementation specifics.** Introduce an explicit bounded autonomous queue/state
+machine: observed→admitted→retrieving→assessed→surfaced|recorded|dropped, with reason
+codes. Cooldown begins on admitted/surfaced work, not attempted/skipped work.
+Objective event log is append-only JSONL; journal remains synthesized Markdown.
+O(queue bound), one in-flight proactive job, backpressure drops low-gain events first.
+
+**Ambiguity register.**
+- Minimum surface frequency: `crystallizes-during`; quality beats quota.
+- Journal short/mid/long cadence: `resolve-before-start` using event count + elapsed
+  time + context shift, not fixed time alone.
+- Notification quiet-hours: `resolve-before-start` in N-43 policy.
+
+**Actual result `[revised: KISS implementation]`.** No queue/state-machine hierarchy
+was needed. Proactive returns one completion boolean, and proactive/journal clocks
+commit only after successful work. Deterministic tests prove failed attempts retry;
+the live no-user-turn smoke proves tick→Gemini→finding→persistence→index and then
+context→first-person journal→index. See D-32.
+
+#### ~~N-40 (UI) — Classic UI becomes truthful and complete~~ `✅ MVP → D-35`
+
+**Pathway.** Hard-dep D-28 bridge truth; consumes D-30/D-32/D-34 state. Replace
+placeholders in parallel: bridge-down behavior, backend reminders, chat/session
+workspace, typed evidence/provenance, capability markers, agency confirmations and
+autonomy status. Converges in the existing classic variant; no redesign required.
+
+**Alignment.** *Task-local:* every visible control either changes real backend state
+or is visibly unavailable with a reason. *Implementation-scope:* transport, SSE,
+jobs, source cards and panels work; `localDraft` fabricates answers, reminders are
+local drafts, and several backend capabilities are hidden. *Soul:* a transparent
+surface must not simulate assistance. **Coherent.**
+
+**Deferral.** Hard-defer agency confirmation UI until N-41 contract; other tracks
+start after D-28. Completing backend reminders/session UI unblocks N-44's human
+interaction acceptance.
+
+**Implementation specifics.** Use existing ES modules and bridge endpoints. Delete
+`localDraft`; render a durable bridge-unavailable error. Replace localStorage
+reminders with `/reminders`; expose `/chats` and `/links`; consume typed evidence
+assets and backend capability buckets. Maintain the 80-message render cap and
+incremental streaming.
+
+**Ambiguity register.**
+- Exact session UX: `crystallizes-during`; minimal switch/new/archive first.
+- Panel layout: `intentionally-open`; function before polish.
+- Unsupported control behavior: `resolve-before-start` → disabled + reason.
+
+**Actual result `[revised: KISS implementation]`.** The existing classic variant was
+kept. Fabricated bridge-down answers and browser-only reminder drafts were removed;
+reminders and chats now use their existing bridge endpoints; policy is visible; and
+agency proposals require explicit typed confirmation. The DOM feature harness,
+Python UI seam checks and Rust shell check pass. See D-35.
+
+#### ~~N-41 (AGENCY) — Confirmed, allowlisted, audited effectors~~ `✅ MVP → D-34`
+
+**Pathway.** Hard-deps D-30 snapshot and D-33 policy. Build proposal and execution
+as separate states. Parallel effectors may include local file artifact creation,
+opening a URL/application, reminder/task mutation and approved command execution;
+all converge through one confirmation/admission/audit gate. D-35 renders proposals.
+N-44 requires at least one safe state-changing action.
+
+**Triple-anchor.** *Task-local:* the assistant can do useful work, not only emit
+text, while the user retains control. *Implementation-scope:* reminders/tasks,
+context-pack export and URL opening exist as disconnected explicit calls; there is
+no typed model proposal, risk class, confirmation token or unified audit trail.
+*Soul:* agentic means controlled action, not silent automation. **Coherent; missing.**
+
+**Deferral.** Hard-defer shell/OS commands until policy and confirmation are proven.
+Start with reversible/local effectors after N-43. Re-entry for higher-risk actions:
+audit + denial + confirmation tests pass.
+
+**Implementation specifics.** Dataclasses/JSON schemas for `ToolActionProposal`,
+`ActionDecision`, `ActionResult`; allowlist registry similar to launcher actions.
+Risk levels: read-only, reversible local write, external/state-changing. Model only
+proposes. Executor validates arguments, requires a one-use confirmation token where
+needed, applies timeout, and appends an audit JSONL record. O(1) registry lookup.
+
+**Ambiguity register.**
+- MVP effector set: `resolve-before-start` → artifact write, reminder/task mutation,
+  open URL; no arbitrary shell by default.
+- Voice confirmation: `intentionally-open`; typed UI confirmation is canonical.
+- Rollback semantics: `crystallizes-during` per effector.
+
+**Actual result `[revised: narrower safe MVP]`.** The allowlist is `task.add`,
+`reminder.add`, and `artifact.write`; URL launch was omitted because it adds no core
+MVP proof. Model output only proposes. One-use typed confirmation executes through
+D-33 policy, with durable local action events and hash-only policy audit. Live Gemini
+proposal→confirmation→artifact passes. See D-34.
+
+#### ~~N-42 (LOCAL) — Zero-shot/random-turn llama.cpp compatibility~~ `✅ MVP → D-36`
+
+**Pathway.** Follows the completed cloud-first UI lane D-35. Hard-dep D-28 harness;
+feeds D-37 and N-44. For every core scenario, randomly select a turn boundary and
+run it against bundled llama.cpp without provider-specific code changes. Measure
+latency separately; correctness is the first gate.
+
+**Triple-anchor.** *Task-local:* switching backend to local preserves schemas,
+retrieval, context, cancellation, proactive, journal and agency proposal behavior.
+*Implementation-scope:* one role seam and local server exist; current config is
+Gemini, local full turns are historically slow, and no cross-backend contract
+matrix proves parity. *Soul:* the brain must remain replaceable. **Coherent.**
+
+**Deferral.** Hard-defer useful-latency optimization until compatibility failures
+are fixed and measured. D-37 waits on server capability probes. Re-entry: D-28
+scenario harness exists.
+
+**Implementation specifics.** Matrix test with deterministic fixture inputs and
+schema-level assertions; cloud and local outputs need not match wording. Random-turn
+means start local at different points in a multi-turn replay with the same durable
+memory/snapshot inputs. Track first-token/total latency, model calls and tokens.
+Use thinking budgets, role token caps, prompt-prefix reuse and GPU layers only after
+measurement. No provider branch outside `model.py`.
+
+**Ambiguity register.**
+- Acceptable local latency: `crystallizes-during`, report p50/p95 first.
+- Gemma schema reliability: `resolve-before-start` from replay evidence.
+- Hardware-specific GPU offload: `intentionally-open`.
+
+**Actual result `[revised: correctness before optimization]`.** Server-level
+reasoning is disabled when `LK_THINKING` is off, preventing empty structured
+responses caused by thought-budget exhaustion. `make local-smoke` passes seven core
+contracts including live cancellation, a deterministic random boundary and an
+agency proposal. CPU latency is p50 31.79s, p95 98.64s, max 131.96s. See D-36.
+
+#### ~~N-43 (POLICY) — Privacy, provenance and trust-boundary enforcement~~ `✅ → D-33`
+
+**Pathway.** D-17/D-22/D-27 provide routing and sensor controls. Define policy
+before N-41 effect execution and thread it through D-29 capture, D-30 snapshots,
+D-31 web/cloud retrieval and D-32 surfacing. One `PolicyState` decides capture,
+retention, cloud/web disclosure, redaction, notifications and action confirmation.
+
+**Triple-anchor.** *Task-local:* make every boundary explicit and testable.
+*Implementation-scope:* toggles and routing exist, but there is no per-trigger policy
+object, redaction step or audit of what context leaves the machine. *Soul:* local-first
+is control and inspectability, even during temporary cloud-first generation.
+**Coherent and mandatory.**
+
+**Deferral.** Hard-defer state-changing effectors until this lands. Basic policy can
+start after D-28 and in parallel with sensors/context. Completing it unblocks N-41
+and policy acceptance in N-44.
+
+**Implementation specifics.** Small policy dataclass + pure `allow(operation,
+snapshot)` decision function. Default: raw media local/transient; cloud receives
+distilled/redacted text unless a user turn explicitly attaches media; web queries
+exclude secrets/path content; external actions require confirmation. Log decision
+metadata and hashes, not secrets/raw buffers.
+
+**Ambiguity register.**
+- Redaction vocabulary: `crystallizes-during`, start with secrets, tokens, emails,
+  absolute private paths and configured patterns.
+- Raw-buffer TTL: `resolve-before-start`.
+- Cloud-mode visual/audio consent: `resolve-before-start`, explicit per surface.
+
+**Actual result `[revised: KISS implementation]`.** One process-wide `PolicyState`
+covers cloud text/media, web, notifications and external-action confirmation.
+Remote text/web are redacted, ambient media is denied, explicit attachments may
+pass, unknown operations deny, and each decision writes hash-only JSONL metadata.
+Health publishes the policy summary. See D-33.
+
+#### ~~N-44 (ACCEPT) — Running end-to-end MVP acceptance~~ `✅ MVP → D-38`
+
+**Pathway.** Terminal convergence: D-28 + D-29 + D-30 + D-31 + D-32 + D-35 +
+D-34 + D-36 + D-33. D-37 is required for the local warm-restart/KV checkpoint
+scenario, but cloud-first interactive acceptance can run earlier. This node has no
+downstream consumer; it is the proof boundary.
+
+**Triple-anchor.** *Task-local:* prove the whole system, not modules. *Implementation-
+scope:* current gates are offline and component-focused. *Soul:* the watcher must be
+useful while the user is absent, remember why, surface evidence, and safely act.
+**Coherent.**
+
+**Deferral.** Structurally blocked by the incoming MVP nodes. Re-entry: all required
+contracts implemented. Each completed predecessor unblocks one acceptance lane:
+D-29 perception, D-30 context, D-31 grounding, D-32 autonomy, D-35 UI, D-34 agency,
+D-36 local replacement, D-33 privacy.
+
+**Acceptance evidence.**
+- Cloud-first cold start → populated memory index → typed turn with cited own/doc/web
+  evidence → durable transcript/note/journal.
+- One-hour accelerated and one real-duration unattended run: context shifts produce
+  bounded atomic logs, tier movement, context-dependent journal updates and at least
+  one policy-allowed useful proactive finding, without duplicate storm or queue growth.
+- Vision replay validates N-frame region continuity and high-gain refinement;
+  audio replay validates utterance accumulation and no turn-per-chunk behavior.
+- Classic UI controls real observers, reminders, chats, retrieval, cancellation,
+  source provenance, autonomy state and agency confirmation; bridge failure is honest.
+- One confirmed effector executes and is audited; one denied/unconfirmed action does not.
+- Random-turn local llama.cpp replay passes the same behavioral contracts; restart
+  restores only a compatible KV checkpoint and falls back safely when incompatible.
+- Full regression gate, Rust check, desktop runtime/features, retrieval report and
+  live process cleanup all pass.
+
+**Ambiguity register.**
+- "Useful" proactive finding: `resolve-before-start` via a small labeled scenario set.
+- Real-hour environmental variability: `intentionally-open`; retain replay lane for
+  determinism and real lane for operational proof.
+
+**Actual result `[revised: terminal acceptance]`.** Cloud grounded turns,
+three-category retrieval, no-turn autonomy, confirmed agency, truthful UI, local
+random-turn compatibility, warm KV restart, a real unattended hour, full offline/UI/
+Rust gates and clean process shutdown all pass. Cold public web remains explicitly
+degraded without a configured working provider; local CPU latency is measured rather
+than hidden. See D-38.
+
+### §K.2 — Stage 1 edge set
+
+```
+[D-27] --dependency----------> [D-28] load-bearing  current runtime truth anchored startup
+[D-18/D-22/D-27] --partial---> [D-29] load-bearing  observer base became independent
+[D-01/D-05/D-08/D-24/D-26] --> [D-30] load-bearing memory/evidence feed the snapshot
+[D-20/D-26] --partial--------> [D-37] significant   prompt reuse became durable KV
+[D-24/D-26/D-27] --partial---> [D-31] load-bearing retrieval code gained live proof
+[D-03/D-05/D-12/D-13/D-27] --> [D-32] load-bearing autonomous organs gained behavior proof
+[D-10/D-12/D-23/D-27] -------> [D-35] significant   real backends now drive truthful UI
+[D-09/D-10/D-15/D-27] -------> [D-34] significant   cancel/registry primitives shape agency
+[D-17/D-20/D-21/D-27] -------> [D-36] load-bearing local seam/runtime is compatible
+[D-17/D-22/D-27] ------------> [D-33] load-bearing routing/sensors cross trust boundaries
+
+[D-28] --dependency----------> {D-29,D-31,D-32,D-33,D-35,D-36}
+[D-29] --dependency----------> [D-30] load-bearing  distilled perception enters snapshots
+[D-29] --dependency----------> [D-32] load-bearing  autonomous triggers use observations
+[D-30] --dependency----------> {D-32,D-34} load-bearing shared context for decisions
+[D-30] --dependency----------> [D-37] significant   stable prompt identity enables KV
+[D-31] --dependency----------> [D-32] load-bearing  proactive quality uses grounded retrieval
+[D-32] --dependency----------> [D-35] significant   UI exposes actual autonomy state
+[D-33] --dependency----------> [D-34] load-bearing  no action without policy
+[D-34] --dependency----------> [D-35] significant   UI renders confirmation/result
+[D-36] --dependency----------> [D-37] load-bearing  slot API belongs to local runtime
+{D-28,D-29,D-30,D-31,D-32,D-33,D-34,D-35,D-36,D-37} --dependency--> [D-38] load-bearing
+```
+
+#### Auditable edge ledger
+
+```
+[D-27] --{dependency}--> [D-28]
+  Weight: load-bearing
+  Meaning: The verified current runtime and configuration became D-28's reproducible baseline.
+  Break condition: If D-27's observed config/runtime changes, D-28 fixtures and expected status must be regenerated.
+
+[D-18/D-22/D-27] --{partial-completion}--> [D-29]
+  Weight: load-bearing
+  Meaning: Existing observers and probe-only controls supplied D-29's sensor substrate.
+  Break condition: Replacing observer contracts requires D-29 lifecycle and novelty tests to change together.
+
+[D-01/D-05/D-08/D-24/D-26] --{dependency}--> [D-30]
+  Weight: load-bearing
+  Meaning: Rolling tiers, journals, sessions, recall and evidence are the source arms of each frozen snapshot.
+  Break condition: Removing or changing a source contract changes snapshot provenance and budget allocation.
+
+[D-20/D-26] --{partial-completion}--> [D-37]
+  Weight: significant
+  Meaning: Model routing and live prompt reuse provide the seam for a derivative durable KV cache.
+  Break condition: A model/template/server identity change invalidates saved KV checkpoints.
+
+[D-24/D-26/D-27] --{partial-completion}--> [D-31]
+  Weight: load-bearing
+  Meaning: The implemented hybrid engine is the system under live-corpus evaluation.
+  Break condition: Ranking, indexing or category changes require replay baselines and labels to be rerun.
+
+[D-03/D-05/D-12/D-13/D-27] --{partial-completion}--> [D-32]
+  Weight: load-bearing
+  Meaning: Tick, journal, scheduler and guards provide autonomous organs whose end-to-end behavior remains unproven.
+  Break condition: Removing any trigger/write/guard path invalidates unattended-run acceptance.
+
+[D-10/D-12/D-23/D-27] --{partial-completion}--> [D-35]
+  Weight: significant
+  Meaning: Capability, scheduler and transport backends already exist behind incomplete or false UI state.
+  Break condition: Backend payload changes require the classic UI contract and feature harness to change.
+
+[D-09/D-10/D-15/D-27] --{partial-completion}--> [D-34]
+  Weight: significant
+  Meaning: Cancellation, capability data and an action registry are reusable controls for safe effectors.
+  Break condition: Agency cannot bypass cancellation, capability admission or the shared registry.
+
+[D-17/D-20/D-21/D-27] --{constraint}--> [D-36]
+  Weight: load-bearing
+  Meaning: The provider seam and installed llama.cpp runtime define mandatory local compatibility.
+  Break condition: Provider-specific orchestration outside model.py fails random-turn compatibility.
+
+[D-17/D-22/D-27] --{constraint}--> [D-33]
+  Weight: load-bearing
+  Meaning: Cloud routing and continuous sensors cross explicit privacy boundaries that need policy enforcement.
+  Break condition: New capture, provider or effector paths must be denied until represented in PolicyState.
+
+[D-28] --{dependency}--> [D-29]
+  Weight: load-bearing
+  Meaning: Sensor behavior was diagnosed against a reproducible running process baseline.
+  Break condition: Startup/process ownership changes require sensor service tests to be rerun.
+
+[D-28] --{dependency}--> [D-31]
+  Weight: load-bearing
+  Meaning: Retrieval stress needs a populated index, working ingestion and observable provider state.
+  Break condition: An empty or stale index makes relevance results invalid.
+
+[D-28] --{dependency}--> [D-32]
+  Weight: load-bearing
+  Meaning: Autonomous firing requires the tick, observers, backends and logs to be demonstrably running.
+  Break condition: A stopped/degraded component invalidates unattended-run conclusions.
+
+[D-28] --{dependency}--> [D-35]
+  Weight: significant
+  Meaning: UI truth must come from a stable bridge/runtime contract.
+  Break condition: Bridge endpoint or health-state changes require UI behavior updates.
+
+[D-28] --{dependency}--> [D-36]
+  Weight: load-bearing
+  Meaning: The same scenario harness is used to compare cloud and local turns.
+  Break condition: Divergent harnesses cannot prove backend replaceability.
+
+[D-28] --{dependency}--> [D-33]
+  Weight: significant
+  Meaning: Policy is attached to the actual cloud-first runtime and its observed outbound paths.
+  Break condition: Runtime topology changes require a trust-boundary review.
+
+[D-29] --{dependency}--> [D-30]
+  Weight: load-bearing
+  Meaning: Frozen snapshots consume distilled context records, not raw observer internals.
+  Break condition: Event schema or provenance changes require snapshot construction changes.
+
+[D-29] --{dependency}--> [D-32]
+  Weight: load-bearing
+  Meaning: Information-gain events are the environmental triggers for autonomous work.
+  Break condition: If sensors cannot emit bounded meaningful events, proactive becomes polling or noise.
+
+[D-30] --{dependency}--> [D-32]
+  Weight: load-bearing
+  Meaning: Proactive reasoning must evaluate one stable current-context reference.
+  Break condition: Ad-hoc context reads permit stale or contradictory autonomous findings.
+
+[D-30] --{dependency}--> [D-34]
+  Weight: load-bearing
+  Meaning: Every action proposal records the snapshot and provenance that justified it.
+  Break condition: An action without a snapshot cannot be audited or checked for staleness.
+
+[D-30] --{dependency}--> [D-37]
+  Weight: significant
+  Meaning: Stable snapshot/prompt identities allow safe KV checkpoint keys.
+  Break condition: Unstable prefixes make restored KV incorrect and must force a cache miss.
+
+[D-31] --{dependency}--> [D-32]
+  Weight: load-bearing
+  Meaning: Proactive findings use the same measured retrieval quality as user turns.
+  Break condition: Retrieval below the labeled threshold disables external surfacing.
+
+[D-32] --{dependency}--> [D-35]
+  Weight: significant
+  Meaning: The UI exposes real autonomous state, findings, drop reasons and journal activity.
+  Break condition: Autonomous state-machine changes require matching UI event handling.
+
+[D-33] --{dependency}--> [D-34]
+  Weight: load-bearing
+  Meaning: Policy admission and confirmation are mandatory before any effector executes.
+  Break condition: An unrepresented operation is denied, not executed.
+
+[D-34] --{dependency}--> [D-35]
+  Weight: significant
+  Meaning: The classic UI is the canonical proposal confirmation and result surface.
+  Break condition: Without a confirmation surface, confirmation-required actions stay pending.
+
+[D-36] --{dependency}--> [D-37]
+  Weight: load-bearing
+  Meaning: Durable KV behavior is implemented and probed only against the supported local runtime.
+  Break condition: A llama.cpp server/API version change invalidates the slot adapter.
+
+[D-28/D-29/D-30/D-31/D-32/D-33/D-34/D-35/D-36/D-37] --{dependency}--> [D-38]
+  Weight: load-bearing
+  Meaning: D-38 is the convergence proof for every required MVP behavior.
+  Break condition: Any failed predecessor lane prevents MVP completion.
+
+```
+
+**Current executable frontier `[revised: MVP accepted]`:** none inside §K. D-38 is
+the terminal sink. Remaining nodes elsewhere in PLAN.md are post-MVP product backlog.
+
+**Periodic re-triage after three completions.**
+- `[D-31] completed` retrieval quality and degraded-state evidence now unblock N-39.
+- `[D-36] completed` local compatibility now feeds the terminal acceptance lane.
+- `[N-43] centrality:H ambiguity:M` unchanged; required before effectors.
+- `[N-39] centrality:H ambiguity:M` is now executable because D-29/D-30/D-31
+  fixed its trigger, context and retrieval inputs.
+
+### §K.3 — Stage 2 AUDIT findings
+
+**Structural invariants.**
+- N-nodes with zero incoming D-edges: none remain in the MVP partition.
+- D-nodes with zero outgoing edges: D-38 only, intentionally, because it is the
+  terminal accepted sink; older D-nodes retain live product-backlog outflow.
+- Cycles: none. D-30→D-37 and D-36→D-37 converge; D-37 does not feed back into either.
+- Diamonds: D-29→{D-30,D-32} converges at D-32; D-28 fans into sensor/retrieval/local/
+  policy tracks that converge at D-38; D-30 and D-33 converge at D-34.
+
+**Alignment invariants.**
+- Highest-centrality N-34, N-36, N-39 rechecked. D-28 confirms N-34 was operational substrate, not
+  product drift; N-36 implements the paper's shared reference frame; N-39 is the
+  unplugged-user litmus. All three anchors agree.
+- Conflict found: D-21 says the default was restored local-first, while live config
+  is Gemini. `[revised: current cloud-first state recorded in D-27 and §K.0; D-21
+  retained as historical completion state]`.
+- Conflict found: D-26 says the autonomy loop is "closed", but firing and live index
+  population are unproven. `[revised: D-27→N-38/N-39 makes wiring vs behavior explicit]`.
+- Conflict found: sensor independence claim still has response-model capability
+  gates. `[revised: N-35 names removal as a load-bearing requirement]`.
+
+**Edge integrity.**
+- Every deferral names an unblocker: N-35 learned models→sensor quality; completed
+  D-37→D-38 local warm restart; completed D-34→D-38 agency acceptance.
+- Every load-bearing edge has testable endpoints and a break condition in its node.
+- The old N-18 question is now resolvable: findings are indexed, but
+  `run_proactive` still calls `ContextStore.recent_findings()`. N-18 therefore
+  remains a real store-hot-path task unless N-39 deliberately switches dedup to
+  `MemoryIndex`; it is no longer marked as potentially already obsolete.
+
+**Depth audit.**
+- N-40 was M/M, not H: it is important but does not define core cognition.
+- D-37 retained the M/H triage: technically ambiguous but not core cloud cognition;
+  it is significant for local continuity.
+- N-43 escalated to H/M because cloud-first operation makes privacy policy structural,
+  not optional.
+
+### §K.4 — Stage 3 REVISE + FINALIZE
+
+- `[revised: audit conflict]` Cloud-first is the current MVP execution posture;
+  local-first remains the architectural destination and local compatibility is a
+  hard parallel track, not the current default.
+- `[revised: audit conflict]` "Autonomy loop closure" now means the data path is
+  wired; N-39 owns behavioral firing, de-starvation and unattended proof.
+- `[revised: audit conflict]` Sensors are not called independent until lifecycle
+  no longer depends on response-model modality and low-gain processing is model-free.
+- `[revised: missing scope]` Added N-37 durable KV lifecycle, N-43 privacy policy,
+  N-41 true agency and N-44 end-to-end acceptance.
+- `[revised: stale frontier]` N-34 replaces the historical recommendation to build
+  already-completed N-02/N-09.
+- `[revised: audit correction]` N-18 remains open because the live proactive dedup
+  path still uses `recent_findings`; indexing findings alone did not subsume it.
+- `[revised: resolved]` Bundled slot save/restore is proven for text-only state even
+  with the multimodal projector loaded; media-bearing slot state remains unsupported.
+- `[revised: terminal proof]` A real unattended hour produced objective sensor logs,
+  durable indexed memory and a journal with zero queue growth; D-38 closes N-44.
+- `[revised: resolved]` Retrieval thresholds are backed by the labeled replay report;
+  proactive admission is backed by deterministic evidence plus the real unattended run.
+
+### §K.5 — Confirmation gate
+
+**Resolved 2026-06-18.** The user confirmed this MVP DAG and added a hard KISS
+constraint: each new function/script/object has one objective; avoid
+over-parameterization and leave working implementations alone unless a concrete
+failure requires change.
+
+---
+
+## §L — Next-horizon conception (post-MVP) — **CONCEPT ONLY, granular planning deferred**
+
+> **Authority + scope.** Captured 2026-06-19 from a user directive. This section is
+> **vision/concept jotting, not a build contract** — deliberately *not* RE-style
+> granular steps. Its job: record the intent, direction, and enough specificity that
+> any model (frontier or a small local gemma-4-class model) can later pick it up and
+> plan it without losing the idea. Nothing here is committed or scheduled. The MVP
+> (§K / D-38) stands; these are the *next* horizon and **supersede the heuristic
+> placeholders** they name. Concept anchors **N-45 … N-50** are reserved for these so
+> later planning has stable IDs; they are marked `[concept]`, not `[ ]` (open) — they
+> become open nodes only when granular planning starts.
+>
+> Standing constraints still bind: local-first ([[lawrence-local-first]]); KISS (§K.5,
+> one objective per unit); single writer (I1); provider logic only at the model seam
+> (I3); stdlib core, heavy deps lazy (I4); realtime budgets are first-class.
+
+### §L.1 — Systematic perception + multi-horizon Information-Gain pipeline `[concept]` (N-45)
+*Supersedes the current heuristic proactive trigger (the change-detection in
+[[lawrence-sensor-decoupling]] / N-07 / N-33). Today's "info gain" = pixel-delta +
+6-frame novelty + RMS/dedup → a flat threshold. The directive is to make this a
+**staged, modality-agnostic, realtime perception pipeline** with a real multi-horizon
+info-gain estimator gating model invocation.*
+
+The pipeline, as one cascade per modality (screen, audio, … future sensors), each
+stage feeding the next a **structured frame** (the common substrate):
+
+1. **Capture / ingest — one mechanism, parameterized at the call.** A single sensor
+   ingester per device whose *call* configures resolution / bit-rate / FPS / window
+   etc. (no per-resolution forks — KISS). The capture knobs are inputs, not separate
+   code paths.
+2. **Per-modality consolidator.** Multiple streams of the *same* modality (e.g. two
+   monitors / two cameras / multiple mics) are **timestamp-aligned and fused into one
+   structured data frame** for that modality+instant — not handled as N independent
+   stragglers. Consolidation is what makes the later stages tractable.
+3. **Pre-processor / scene categorizer.** Segment the consolidated frame into
+   meaningful regions: for **screen** this is almost always windows / boundaries /
+   sections — categorize the relevant sections using the **running context + past
+   frames + previous extractions + heuristics** (temporal + contextual priors, not a
+   cold per-frame parse). For **audio**, the analogous staged decomposition
+   (speaker / source / segment / turn boundaries). Output = a region map over the
+   structured frame.
+4. **Boundary-respecting extraction.** Extract the data *per region* from stage 3 —
+   **without forfeiting the boundary**: the boundary itself is folded into each
+   region's data (region content + its delimiting context), so downstream reasoning
+   knows where a region begins/ends and what it abuts.
+5. **Tiered extraction by info-gain (cheap-first, escalate-on-gain).** A *simple*
+   heuristic first estimates whether the info-gain in a region's data is **large**:
+   - **large gain →** spend a **complex model** to extract / refine that region.
+   - **otherwise →** stay light: a stack of **heuristics + statistical ML + online
+     RL / state-space + meta-heuristic** algorithms extracts boundary-respecting data
+     and refines it *without* a model call.
+6. **Multi-horizon Info-Gain estimator.** A *properly developed* algorithm (not a flat
+   threshold) producing info-gain across **multiple horizons** (instantaneous vs.
+   short vs. longer-range change/novelty), again from the **heuristics + statistical
+   ML + online RL/state-space + meta-heuristic** family. **"Non-heavy" is a hard spec,
+   not a vibe:** these must be **edge-case- and low-latency-optimized implementations,
+   strictly capable of running realtime at 60 FPS** on the perception stream.
+7. **Trigger arbiter.** The multi-horizon info-gain is assessed by **kernel logic +
+   heuristics + an HMM-based system** to decide whether to **invoke the model**. The
+   HMM gives temporal-state awareness (e.g. "user is mid-task vs. context just
+   switched") rather than a memoryless threshold.
+8. **Cross-pathway opportunistic pull.** *When one sensor pathway fires a model invoke*
+   (after all of the above), immediately do a **quick scan of the other pathways** for
+   **un-utilized sensor data with useful info-gain — not necessarily high, even mild,
+   just above the noise floor** — and pull that alongside, with a **two-pass retrieval
+   already pre-attached** to it (so the invoke arrives with cross-modal evidence in
+   hand). This is *additive context staging*, independent of — and prior to — the
+   model's own consequent retrieval / high-resolution-recall pipeline, **which still
+   executes as designed**.
+
+**Audio cascade specifics — the perception layer the watcher actually needs (added
+2026-06-19 after a concrete hallucination finding).** The audio path today is a bare
+RMS-energy gate → whisper → word-count/dedup gate, with **no real speech detection**.
+It was caught **fabricating fluent sentences from an amplified silent noise floor**
+(e.g. "Stay away from me!" with the user silent) and writing them to memory/journal/
+proactive — fabricated perception that poisons the whole loop. A tactical fix landed
+(faster-whisper `vad_filter` + `no_speech_prob`/`avg_logprob` guards, drop the 20×
+noise pump); the *systematic* audio cascade must provide, as proper stages:
+- **Real VAD** (Silero/WebRTC-class) as the stage-3 speech/non-speech decision — energy
+  alone cannot separate quiet speech from ambient (here both sit near −50 dB). **Every
+  stage is hallucination-resistant by contract:** confidence-, VAD-, and scene-gated;
+  perception is never fabricated.
+- **Acoustic-scene / environment detection + labeling** — classify and *transcribe the
+  ambient* (speech / music / TV / keyboard / traffic / silence) as **context**, so
+  non-user audio is logged as environment, never mistaken for user speech.
+- **Expression / paralinguistics** — detect & transcribe the *how*: prosody, emphasis,
+  emotion, laughter, tone (beyond the words).
+- **Speaker diarization + addressee detection** — *who* is speaking and *to whom*
+  (user→LAWRENCE vs. user→another person vs. media→no-one). Only "addressed to the
+  system" (or genuinely significant ambient) should drive a turn/proactive invoke;
+  everything else is context. This is the audio twin of the trigger arbiter (stage 7).
+
+These map onto the generic stages: VAD + scene = stage-3 categorizer; expression +
+diarization = stage-4 boundary-respecting extraction; addressee = the stage-7 invoke
+decision.
+
+**Candidate stack — research 2026-06-19 (survey in [[lawrence-next-horizon-conception]]).**
+Direction the user CHOSE 2026-06-19: the **main perception/STT = SenseVoice × sherpa-onnx**
+— one non-autoregressive, CPU/GGUF model giving **ASR + emotion(SER) + audio-event(AED) +
+diarization** on the **offline sherpa-onnx** runtime; it collapses 3 of the 4 perception
+features into one local model and replaces the brittle whisper-on-noise path that
+hallucinated. Plus a **best realtime *streaming* transcriber, invoked on-demand (when a
+trigger/need calls for it), chosen by latency + reliability, local** — model still TBD.
+**End-to-end speech-to-speech and TTS are DEFERRED** (revisit later, out of current scope).
+
+| Layer | Local-first candidates | Status |
+|---|---|---|
+| Main recognizer (continuous, rich) | **SenseVoice** — ASR+SER+AED+diarization, non-AR, GGUF/ONNX | ✅ chosen |
+| Runtime / framework | **sherpa-onnx** — offline STT/TTS/VAD/diar/enhance/source-sep, edge | ✅ chosen |
+| On-demand realtime streaming ASR | Parakeet-TDT · Nemotron-streaming · Moonshine v2 · WhisperLiveKit | ⏳ TBD by latency+reliability |
+| VAD (stage-1) | **TEN-VAD** (lowest latency) · Silero (lightweight) | ⏳ candidate |
+| Diarization / addressee | pyannote 3.1 · NeMo Sortformer (streaming) · SenseVoice diar | ⏳ candidate (realtime diar still 5–15pp worse DER) |
+| Expression / SER | SenseVoice SER · emotion2vec | ↳ in main |
+| Environment / AED | SenseVoice AED · BEATs/AST/PANNs/CLAP | ↳ in main + scene tagger |
+| TTS | Kokoro · Piper · Orpheus · XTTS-v2 · Sesame CSM | ⏸ DEFERRED |
+| Speech-to-speech | Moshi · pipecat · LiveKit · speech-LLM omni | ⏸ DEFERRED |
+
+**MVP-deployment check.** This is a **perception/sensor-layer** change, **independent of the
+cloud-first generation posture** (§K): sensors are already local + model-independent (D-29),
+so swapping whisper → SenseVoice×sherpa-onnx does **not** touch the Gemini generation path
+or the accepted MVP loop (D-38). It *advances* the mandatory **local llama.cpp track**
+(SenseVoice ships a GGUF/llama.cpp path). New deps (sherpa-onnx / onnxruntime, the SenseVoice
+model) must stay **lazy/optional** (I4 — heavy deps off the stdlib core) and **degrade
+gracefully** (no model ⇒ fall back, never crash the always-on observer; the D-29 model-
+independent sensor contract holds). Deferring S2S + TTS keeps MVP scope tight. **Net:
+additive, local-first, MVP-safe** — it lands as part of the N-45 perception cascade through
+the N-50 phases, not inside the current MVP. *Still open for planning:* the on-demand
+streaming-ASR pick + the VAD/diarization choices (latency/reliability bench on target HW).
+
+**Design tenets.** Realtime (60 FPS) is the budget the whole cascade lives within;
+cheap-first / model-only-on-high-gain is the cost doctrine; structured consolidated
+frames are the shared substrate across all stages and modalities; the model is the
+last and most expensive resort, gated by a real multi-horizon estimator + HMM, never
+a flat threshold; **perception is confidence-gated and never fabricated**. *Open
+specifics for planning:* which concrete algorithms per stage (e.g. change-point
+detection, Bayesian surprise / predictive info-gain, online changepoint +
+Kalman/particle state-space, HMM topology), and the structured-frame schema.
+
+### §L.2 — Comprehensive autonomous journal `[concept]` (N-46)
+*Extends D-05 / WS-J. Today web-in-journal is **off by default and intentionally
+minimal** ([journal.py](../services/lk/kernel/journal.py) `_maybe_web_context`,
+throttled, single seed query). The directive: **the journal MUST be comprehensive.***
+Concept: the journal is the durable episodic spine, so it should fold in **web + doc +
+own-memory** context **comprehensively** (model-decided per-entry retrieval over the
+unified engine, not a single throttled seed), while staying first-person,
+rolling-revision, and cost-bounded for all-day autonomy. "Comprehensive" > "minimal
+seam": an entry should be able to research its own open threads and cite them.
+*Open for planning:* the cost ceiling vs. comprehensiveness trade, and whether
+per-entry retrieval routes through the N-47 engine.
+
+### §L.3 — Perplexity-Pro-grade / NotebookLM-consistent retrieval `[concept]` (N-47)
+*Upgrades the N-02 vector arm and **graduates the deliberate "no ANN dependency"
+decision** in [vectors.py](../services/lk/retrieval/vectors.py) (exact brute-force
+cosine) now that the quality/scale bar demands it.* The directive sets two bars:
+**retrieval as refined as Perplexity Pro "Advanced Search"** (multi-stage, reranked,
+iterative, broad+deep) and **citation consistency as reliable as NotebookLM**
+(grounded, passage-level, never fabricated). This needs **FAISS or better**
+(HNSW / ScaNN / usearch / DiskANN-class) **plus embedding-based semantic hash maps**
+(LSH / learned semantic hashing) for fast, scalable approximate-NN over the personal
+corpus + web/doc chunks. Pairs tightly with §L.4 (passage-anchored citations need
+chunk-level addressing) and §L.5 (scroll-to-chunk). *Open for planning:* exact ANN
+backend + dependency/footprint trade vs. I4; hash-map design; rerank model.
+
+### §L.4 — Citation-table contract (enforced, passage-anchored, associative) `[concept]` (N-48)
+*Redefines "enforced citations". Today: retrieval runs every turn and a Sources block
+is appended, but inline `[N]` is only prompted, and citations point at whole docs
+(no passage anchor). The directive makes the **reference table** the citation
+substrate and **guarantees citation integrity by construction**.*
+
+A turn builds a **table of candidate references** — drawn from what the model **chose**,
+what **retrieval provided**, and what the **user insisted on** — where each row carries
+a rich mapping:
+
+- **id ↔ url / content** (stable handle ↔ source);
+- **chunk displacement** (offset/locator within the source → enables **scroll-to-the-
+  exact-chunk** in the UI);
+- **reasonWhy** (why this reference supports the claim);
+- **whatWillInvalidateThisCitation** (the condition under which it stops being valid —
+  an explicit defeater);
+- **whatElseCouldBeRelated** — an **associative map / memory**: 1-click and 2-click
+  graph connections to related references/notes (NoteStore edges as the substrate).
+
+**The model only has to select the right rows** from the pulled table; **the system
+then formats the final response and fills in the correct citations** from the table.
+So the model can't mis-cite — it picks references, the system renders them. This yields
+NotebookLM-style passage-grounded, defeater-aware, **associatively navigable** citations.
+Depends on §L.3 (chunk-level index for displacement) and feeds §L.5 (browse + jump).
+*Open for planning:* the table schema, the select-not-format decoding contract, and how
+the associative 1-/2-click expansion is bounded.
+
+### §L.5 — Rich in-window workspace UI (classic-first) — feature vision `[concept]` (N-49)
+*The classic overlay becomes a **research workspace + custom search engine**, not a chat
+box. Build target stays **classic only** for now (per the user). Today's classic renders
+hand-rolled markdown + inert `<pre><code>`; mermaid is only an attachment label; no math /
+sandbox / artifacts (see [variants/classic/app.js](../apps/desktop/web/variants/classic/app.js)).*
+The envisioned capabilities:
+
+- **In-window browsing / custom search engine** (WolframAlpha + SearXNG feel). A typed
+  query yields a **cited response** plus the supporting **links / docs (the specific
+  chunk, scrolled-to in the actual doc) / papers / patents / socials / forums /
+  discussions**, all **browsable inside the window** — never bouncing to an external
+  browser. Grounded in the system's **short ↔ intermediate ↔ long-term** context.
+- **Rich rendering + runnable artifacts (sandboxed):** show *and run* code; **Mermaid**
+  diagrams; **KaTeX/MathJax** math; **artifacts / small web-apps / WASM**; **graphs,
+  geometric drawings, illustrations**.
+- **Generated artifacts:** dynamically generated **Marp.js PPTs** with **spanning
+  flowchart / graph / diagram** capability (a local **draw.io / Excalidraw-class**
+  authoring/render path) — and the **model verifies the deck is legible**; **tabular
+  relational SQL / NoSQL data generation**; **MDX generation**.
+
+Scroll-to-chunk depends on §L.4; rich/agentic content depends on §L.3 + the kernel.
+All execution surfaces (code/wasm/web-app) must be **sandboxed** (strict-CSP iframe);
+this is the largest security surface and is called out as such. *This list will grow —
+treat it as the seed of the UI feature set, not its closure.*
+
+### §L.6 — Build methodology — the agreed three-phase process `[concept]` (N-50)
+*How we will tackle the §L feature builds — both **§L.5 (UI)** and **§L.1 (the
+perception / audio-VAD cascade)** — once concepts are signed off. (User chose
+**plan-first** for the audio cascade on 2026-06-19: the tactical whisper-hallucination
+fix stays, but real VAD + scene + expression + addressee are designed via these phases
+before any code.) Recorded now as the agreed method; the phases themselves are deferred.*
+
+- **Phase 1 — Abstraction DAG.** Build a **dependency / abstraction / "which-feature-
+  is-a-special-case-of-which" analysis as a DAG** over the UI feature set (and L.1–L.4
+  dependencies). Find the shared primitives so features collapse onto common
+  abstractions instead of N bespoke builds.
+- **Phase 2 — Implementation-layer assessment.** For each feature/capability, classify
+  **where it must live**:
+  - **kernel / system-level** implementation or support;
+  - **workflow-orchestration** — agentic loop / feedback mechanism with harness
+    engineering (n8n / LangGraph-class);
+  - **simple config / schema / constrained-decoding modification / template /
+    switching**;
+  - **additional scripts / MCP / Skills / local-service-servers** — and these must be
+    **drivable by a *simple local* model (gemma-4-class tool-calling), not only Claude**;
+  - **human-in-the-loop** online iterative refinement — **only for *finalizing*** an
+    artifact, never as a routine step;
+  - **UI support**;
+  - *(extrapolate further buckets as needed: data/storage, security/sandboxing,
+    eval/verification of generated artifacts, packaging, …).*
+- **Phase 3 — Fold into refined PLAN.md / DONE.md** (granular nodes + edges) and *then*
+  implement.
+
+**Cross-cutting constraint (the reason Phase 2 exists):** keep it **local-first and
+small-model-drivable** — the orchestration/tooling paths must work with a simple local
+model, with frontier models as an enhancement, not a requirement.
+
+---
+
+> **Cross-references for whoever plans §L next.** N-45 supersedes the heuristic trigger
+> in N-07/N-33 ([[lawrence-sensor-decoupling]]); N-47 graduates the "no-ANN" call in
+> D-20/N-02 and raises the §J engine's quality bar; N-48 redefines D-26/§J.6 "enforced
+> citations" and depends on N-47; N-49/N-50 extend the WS-U UI track (N-09 seam done =
+> D-23; N-10 classic refactor is the nearest existing surface) and depend on N-47/N-48
+> for grounding + scroll-to-chunk. DONE.md is intentionally untouched — nothing here is
+> built yet.

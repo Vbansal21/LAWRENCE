@@ -93,6 +93,9 @@ check("kernel/bridge/model dots reflect live state",
 off = metrics.build_snapshot(health=None, metrics=None, lock_owner=None, config_summary={})
 check("offline → all off + no detailed rows",
       off["bridge"] == "off" and off["metrics_detailed"] == {})
+desktopctl = Path("apps/desktop/scripts/desktopctl.sh").read_text(encoding="utf-8")
+check("desktop children close the lifecycle lock descriptor",
+      desktopctl.count("9>&- &") == 2)
 
 
 section("E. Qt window + consoles offscreen [gated on PySide6/pyte]")

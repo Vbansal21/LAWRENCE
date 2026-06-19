@@ -24,6 +24,8 @@ The server exposes OpenAI-compatible endpoints:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import signal
 import subprocess
@@ -48,6 +50,7 @@ DEFAULT_MODEL  = REPO_ROOT / "models/local/gemma-4-E4B-it-GGUF/gemma-4-E4B-it-Q4
 # and served by a second llama-server (llama.cpp requires --embeddings to run on
 # its own server, separate from the chat model). See ensure_embeddings().
 DEFAULT_EMBED_DIR = REPO_ROOT / "models" / "local" / "embed"
+SLOT_DIR = REPO_ROOT / ".runtime" / "kv"
 
 HOST = "127.0.0.1"
 PORT = 8190          # avoid clash with existing llama-server on 8080
@@ -78,6 +81,59 @@ def current_profile() -> ModelProfile | None:
     return _current_profile
 
 
+def _slot_filename(profile: ModelProfile) -> str:
+    """Return a filename that changes whenever the local runtime becomes incompatible."""
+    parts = [
+        profile.model.resolve(), profile.bin.resolve(), profile.mmproj.resolve() if profile.mmproj else "",
+        profile.ctx_size, profile.flash_attn, profile.kv_type or "f16", profile.jinja,
+    ]
+    for path in (profile.model, profile.bin, profile.mmproj):
+        if path:
+            stat = path.stat()
+            parts.extend((stat.st_size, stat.st_mtime_ns))
+    digest = hashlib.sha256(json.dumps([str(part) for part in parts]).encode()).hexdigest()[:16]
+    return f"slot-{digest}.bin"
+
+
+def _slot_action(action: str, filename: str) -> dict:
+    data = json.dumps({"filename": filename}).encode()
+    req = urllib.request.Request(
+        f"{server_url()}/slots/0?action={action}",
+        data=data, method="POST", headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=60) as response:
+        return json.loads(response.read())
+
+
+def _restore_slot(profile: ModelProfile) -> None:
+    filename = _slot_filename(profile)
+    path = SLOT_DIR / filename
+    if not path.exists():
+        return
+    try:
+        result = _slot_action("restore", filename)
+        print(f"  [server] restored {result.get('n_restored', 0)} KV tokens")
+    except Exception as exc:
+        path.unlink(missing_ok=True)
+        print(f"  [server] ignored incompatible KV checkpoint: {exc}", file=sys.stderr)
+
+
+def _prune_slots(current: str) -> None:
+    for path in SLOT_DIR.glob("slot-*.bin"):
+        if path.name != current:
+            path.unlink(missing_ok=True)
+
+
+def _save_slot(profile: ModelProfile) -> None:
+    filename = _slot_filename(profile)
+    try:
+        result = _slot_action("save", filename)
+        _prune_slots(filename)
+        print(f"  [server] saved {result.get('n_saved', 0)} KV tokens")
+    except Exception as exc:
+        print(f"  [server] KV checkpoint not saved: {exc}", file=sys.stderr)
+
+
 def start(
     profile: ModelProfile,
     *,
@@ -103,6 +159,7 @@ def start(
 
     log_path = REPO_ROOT / ".runtime" / "lk-server.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
+    SLOT_DIR.mkdir(parents=True, exist_ok=True)
 
     cmd = [
         str(profile.bin),
@@ -116,6 +173,7 @@ def start(
         "--mlock",                    # lock weights in RAM — no paging under memory pressure
         "--no-webui",
         "--parallel", "1",            # single-slot: one conversation at a time
+        "--slot-save-path", str(SLOT_DIR),
     ]
     # ── model-dependent flags (only when the model/build supports them) ──────────
     if profile.mmproj is not None:
@@ -126,6 +184,8 @@ def start(
         cmd += ["--cache-type-k", profile.kv_type, "--cache-type-v", profile.kv_type]
     if profile.jinja:                 # embedded Jinja chat template
         cmd += ["--jinja"]
+    if os.environ.get("LK_THINKING", "off").strip().lower() not in ("1", "true", "yes", "on"):
+        cmd += ["--reasoning", "off", "--reasoning-budget", "0"]
 
     print(f"  [server] {profile.summary()}")
     log_file = open(log_path, "wb")
@@ -146,6 +206,7 @@ def start(
             raise RuntimeError("llama-server exited during startup")
         if health_check(timeout=3.0):
             _current_profile = profile
+            _restore_slot(profile)
             print(f"  [server] ready at {server_url()}")
             return
         time.sleep(2)
@@ -294,6 +355,8 @@ def stop() -> None:
     if _proc is None:
         return
     if _proc.poll() is None:
+        if _current_profile is not None:
+            _save_slot(_current_profile)
         try:
             os.killpg(_proc.pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):

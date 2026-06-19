@@ -189,8 +189,9 @@ check("ContextStore exposes a freshness version + finding reader",
       "def version(self)" in store_src and "def recent_findings(self" in store_src)
 check("version counter is bumped at the content chokepoints",
       store_src.count("self._version += 1") >= 3)
-check("run_proactive snapshots context version before working",
-      "start_ver = ctx.version()" in invoke_src)
+check("run_proactive freezes one context version before working",
+      "snapshot = freeze_context(ctx)" in invoke_src
+      and "start_ver = snapshot.version" in invoke_src)
 check("run_proactive drops stale findings (version delta) and dedups",
       "_proactive_stale_delta()" in invoke_src and "_is_duplicate_finding(" in invoke_src)
 check("dedup reuses stdlib difflib (no fuzzy-match dependency)",
@@ -210,6 +211,14 @@ check("bridge exposes reminder routes (GET/POST/DELETE)",
       'path == "/reminders"' in bridge_src and "reminders_command(" in bridge_src and "reminder_delete(" in bridge_src)
 check("/health advertises the backend reminder counts (badge from backend)",
       '"reminders": self.schedule.counts()' in bridge_src)
+check("/health exposes runtime ownership, autonomy, and memory backfill state",
+      '"runtime": {' in bridge_src and '"writer": "ui-bridge"' in bridge_src
+      and '"memory": self.memory.stats()' in bridge_src)
+check("/health exposes the active privacy policy",
+      '"policy": PolicyState.current().summary()' in bridge_src)
+check("bridge exposes confirmed agency routes",
+      'path == "/actions"' in bridge_src and "actions_command(" in bridge_src
+      and "actions_fn=self._actions_fn" in bridge_src)
 ctl_src = Path("services/lk/ctl.py").read_text(encoding="utf-8")
 check("lk remind CLI command is registered",
       "def cmd_remind(" in ctl_src and '"remind": cmd_remind' in ctl_src)

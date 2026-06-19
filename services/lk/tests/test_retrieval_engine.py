@@ -89,6 +89,7 @@ try:
     sem.upsert("https://w2.test/b", "Web B", ["unrelated celebrity gossip news of the week"])
     sem.upsert("file:///docs/d1.md", "Doc One", ["internal design doc about plasma containment fields"])
     sem.upsert("file:///docs/d2.md", "Doc Two", ["meeting notes about the quarterly budget review"])
+    sem.upsert("note://shadow", "Shadow Note", ["quark plasma note row must not leak into web or doc"])
 
     engine = RetrievalEngine(db=sem, memory=mem, call_fn=stub_call)
 
@@ -114,6 +115,8 @@ try:
     cats = {r.category for r in res.evidence}
     check("bundle spans all three categories (collective fusion, no arm starved)",
           cats == {"notes", "doc", "web"}, f"{cats}")
+    check("note:// rows never leak into doc/web categories",
+          all(r.url != "note://shadow" for r in res.evidence))
     nums = [r.citation_num for r in res.evidence]
     check("citations are one consistent 1..N space", nums == list(range(1, len(res.evidence) + 1)), f"{nums}")
     check("no assess call when arms already sufficient", calls["assess"] == 0, f"{calls}")

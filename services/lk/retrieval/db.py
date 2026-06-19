@@ -12,6 +12,7 @@ future queries on overlapping topics hit the DB instead of the web.
 from __future__ import annotations
 
 import hashlib
+import re
 import sqlite3
 import time
 from dataclasses import dataclass
@@ -20,6 +21,12 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DB_PATH   = REPO_ROOT / "memory" / "retrieval.db"
 TTL_DAYS  = 30   # stale after N days; re-fetch if needed
+
+
+def _fts_query(text: str) -> str:
+    """Natural-language query → bounded FTS token union; BM25 ranks the matches."""
+    words = list(dict.fromkeys(re.findall(r"[A-Za-z0-9_]+", text)))[:12]
+    return " OR ".join(f'"{word}"' for word in words)
 
 
 @dataclass
@@ -101,8 +108,10 @@ class SemanticDB:
         cur = self._con.cursor()
         if self._fts5:
             # FTS5 BM25 — negate because bm25() returns negative scores
-            safe_q = query.replace('"', '""')
+            safe_q = _fts_query(query)
             try:
+                if not safe_q:
+                    return []
                 rows = cur.execute(
                     """SELECT c.url, c.title, c.text, -bm25(chunks_fts), c.ts_fetched
                        FROM chunks_fts f JOIN chunks c ON f.rowid = c.id

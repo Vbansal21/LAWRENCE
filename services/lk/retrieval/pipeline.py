@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from .db     import SemanticDB, StoredChunk
 from .ranker import rank
 from .web    import WebChunk, search_and_fetch
+from ..policy import sanitize_web_query
 
 DB_MIN_HITS  = 3    # if DB has fewer than this for a query, hit the web too
 FRESH_PER_Q  = 3    # max web results to fetch per query when DB insufficient
@@ -46,6 +47,11 @@ def _norm_chunk(text: str) -> str:
 def _is_local(url: str) -> bool:
     """Ingested local documents (``file://``) are durable, not web-stale."""
     return url.startswith("file://")
+
+
+def _is_web(url: str) -> bool:
+    """Only HTTP(S) rows belong to the web retrieval category."""
+    return url.startswith(("http://", "https://"))
 
 
 def _recency_factor(is_local: bool, ts: float, now: float, *,
@@ -123,6 +129,7 @@ class RetrievalPipeline:
         Returns top_k CitedResult objects, ranked by relevance.
         top_k defaults to self.top_k (live-patchable via /set retrieval-top-k).
         """
+        queries = [q for q in (sanitize_web_query(q) for q in queries) if q]
         if not queries:
             return []
         if top_k is None:

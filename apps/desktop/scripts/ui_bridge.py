@@ -24,6 +24,7 @@ ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "services"))
 
 from lk import model as _model, server as _server  # noqa: E402
+from lk.agency import Agency  # noqa: E402
 from lk.admin import list_journals, list_logs, show_journal, show_log  # noqa: E402
 from lk.converters import convert as _convert  # noqa: E402
 from lk.ctx import ContextStore, Extractor, NoteStore  # noqa: E402
@@ -39,6 +40,7 @@ from lk.retrieval.ingest import ingest as _ingest  # noqa: E402
 from lk.obs import AudioObserver, VisionObserver, capture_now, record_now  # noqa: E402
 from lk.obs.audio import transcribe as _transcribe  # noqa: E402
 from lk.profile import ModelProfile  # noqa: E402
+from lk.policy import PolicyState  # noqa: E402
 from lk.retrieval import (  # noqa: E402
     RetrievalPipeline, RetrievalEngine, SemanticDB, MemoryIndex, startup_backfill,
     format_citations, format_snippets,
@@ -232,6 +234,7 @@ class DesktopBridge:
         # WS-T §8 durable scheduler — reminders that fire exactly once via the tick
         # (no model call), survive restarts, and surface as a feed event + OS notify.
         self.schedule = Schedule()
+        self.agency = Agency(self.tasks, self.schedule)
         self._voice_lock = threading.Lock()
         # WS-R/R2 elevation gate — one rate-limited, dedup'd channel shared by the
         # slow loop (R1, refined answers) and tick findings.
@@ -266,19 +269,14 @@ class DesktopBridge:
     def _autostart_observers(self) -> None:
         """Start the sensors at boot per config (LK_VISION / LK_AUDIO from lk.json).
 
-        A watcher-assistant should perceive from the moment it starts. Each sensor
-        is best-effort: a text-only model or a missing capture tool degrades to off
-        with a logged reason instead of failing startup. Idempotent with the UI
-        toggle (set_observer) — it just primes the initial state."""
-        for name, want, supported, turn_on in (
-            ("vision", _flag("LK_VISION", False), self.profile.vision, self._set_vision),
-            ("audio",  _flag("LK_AUDIO",  False), self.profile.audio,  self._set_audio),
+        A watcher-assistant should perceive from the moment it starts. Capture and
+        transcription are independent of the response model's input modalities;
+        missing OS tools degrade inside each observer. Idempotent with the UI toggle."""
+        for name, want, turn_on in (
+            ("vision", _flag("LK_VISION", False), self._set_vision),
+            ("audio",  _flag("LK_AUDIO",  False), self._set_audio),
         ):
             if not want:
-                continue
-            if not supported:
-                self.ui.push_context_event(
-                    "sensors", f"{name} on in config but the active model has no {name} input")
                 continue
             try:
                 turn_on(True)
@@ -331,6 +329,13 @@ class DesktopBridge:
             "chats": len(self.chats.list_chats()),
             "tasks": self.tasks.snapshot()["counts"],
             "reminders": self.schedule.counts(),   # §8: badge count comes from backend
+            "runtime": {
+                "writer": "ui-bridge",
+                "tick": self.tick is not None,
+                "journal": self.journal_trigger is not None,
+            },
+            "memory": self.memory.stats(),
+            "policy": PolicyState.current().summary(),
 
             "jobs": {
                 "queued": sum(1 for job in jobs if job.get("state") == "queued"),
@@ -439,8 +444,6 @@ class DesktopBridge:
         if enabled:
             if self.vision:
                 return False
-            if not self.profile.vision:
-                raise BridgeError(409, "active model profile has no vision input")
             self.vision = VisionObserver(self.tmp_path, self.ctx, on_event=self._on_context_event)
             self.vision.start()
             return True
@@ -454,8 +457,6 @@ class DesktopBridge:
         if enabled:
             if self.audio:
                 return False
-            if not self.profile.audio:
-                raise BridgeError(409, "active model profile has no audio input")
             self._start_audio()
             return True
         if not self.audio:
@@ -524,17 +525,18 @@ class DesktopBridge:
             return
         if self._proactive_busy:
             return
-        self._last_proactive = now
         self._proactive_busy = True
 
         def _run() -> None:
             try:
-                run_proactive(
+                completed = run_proactive(
                     self.ctx, self.retrieval,
                     live_fn=lambda msg: self.ui.push_context_event("proactive", msg),
                     present_fn=self._present_finding,
                     engine=self.engine, memory=self.memory,
                 )
+                if completed:
+                    self._last_proactive = time.monotonic()
             except Exception:
                 pass
             finally:
@@ -607,6 +609,27 @@ class DesktopBridge:
 
     def tasks_state(self) -> dict[str, Any]:
         return {"ok": True, **self.tasks.snapshot()}
+
+    def _actions_fn(self, proposals: list[dict[str, Any]], context_version: int) -> list[dict[str, Any]]:
+        accepted = self.agency.propose(proposals, context_version)
+        if accepted:
+            self.ui.push_context_event("action", f"{len(accepted)} action proposal(s) awaiting confirmation")
+        return accepted
+
+    def actions_state(self) -> dict[str, Any]:
+        return {"ok": True, **self.agency.snapshot()}
+
+    def actions_command(self, request: dict[str, Any]) -> dict[str, Any]:
+        try:
+            result = self.agency.decide(
+                str(request.get("id") or ""),
+                confirm=str(request.get("op") or "").lower() == "confirm",
+                token=str(request.get("token") or ""),
+            )
+        except ValueError as exc:
+            raise BridgeError(422, str(exc))
+        self.ui.push_context_event("action", f"{result['operation']}: {result['status']}")
+        return {"ok": True, "action": result}
 
     def tasks_command(self, request: dict[str, Any]) -> dict[str, Any]:
         op = str(request.get("op", "")).lower()
@@ -843,8 +866,6 @@ class DesktopBridge:
         cfg_obj = request.get("config") or {}
         with self._voice_lock:
             if enabled:
-                if not self.profile.audio:
-                    raise BridgeError(409, "active model profile has no audio input")
                 changed = not self.voice_enabled
                 self.voice_enabled = True
                 self._voice_config = cfg_obj
@@ -921,6 +942,14 @@ class DesktopBridge:
         should_stop  = request.get("should_stop")   # cooperative cancel probe (set by the job runner)
 
         images, audios, notes = self._media_for_turn(turn, mode)
+        explicit_media = (
+            mode in {"Screen", "Audio"}
+            or bool(turn.get("kernelContext"))
+            or any(
+                str(item.get("kind", "")) in {"image", "audio file"}
+                for item in (turn.get("attachments") or [])
+            )
+        )
         if not visual_ctx:
             images = []
         if not audio_ctx:
@@ -956,6 +985,7 @@ class DesktopBridge:
             deep_search=deep_search,   # magnifier → wider/deeper unified retrieval (FR)
             allow_images=allow_img,
             allow_audio=allow_aud,
+            allow_remote_media=explicit_media,
             top_p=_opt_float(dec.get("topP")),
             min_p=_opt_float(dec.get("minP")),
             top_k=_opt_int(dec.get("topK")),
@@ -1036,6 +1066,7 @@ class DesktopBridge:
                 capture_fn=self._capture_for_model,
                 live_fn=_live_fn,
                 tasks_fn=self._tasks_fn,
+                actions_fn=self._actions_fn,
                 stream_fn=self.ui.push_delta,   # live answer tokens → SSE "delta"
                 should_stop=should_stop,        # DELETE /jobs/{id} flips this → TurnCancelled
                 on_refine=self._on_refine,      # WS-R/R1 slow loop (no-op unless slow_loop:on)
@@ -1905,6 +1936,8 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, self.bridge.history_index())
         elif path == "/jobs":
             self._send(200, self.bridge.jobs_index())
+        elif path == "/actions":
+            self._send(200, self.bridge.actions_state())
         elif path.startswith("/history/"):
             parts = path.strip("/").split("/", 2)
             if len(parts) != 3:
@@ -1957,6 +1990,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.set_observer(body))
             elif self.path == "/tasks":
                 self._send(200, self.bridge.tasks_command(body))
+            elif self.path == "/actions":
+                self._send(200, self.bridge.actions_command(body))
             elif self.path == "/reminders":
                 self._send(200, self.bridge.reminders_command(body))
             elif self.path == "/voice":

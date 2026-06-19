@@ -1016,6 +1016,31 @@ input[type="range"] {
   text-decoration: line-through;
 }
 
+.action-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.action-card {
+  display: grid;
+  gap: 5px;
+  padding: 9px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: rgba(21, 27, 24, 0.78);
+}
+
+.action-card code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.action-buttons {
+  display: flex;
+  gap: 7px;
+}
+
 .task-check {
   width: 16px;
   height: 16px;
