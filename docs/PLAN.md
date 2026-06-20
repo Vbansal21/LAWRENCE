@@ -225,6 +225,35 @@ guards. O(1) overhead.
 **Ambiguity register.** Root cause `resolve-before-start` (diagnose — likely both
 config + starvation). Default cadence `crystallizes-during`.
 
+> **2026-06-20 — REFINEMENT (user: "proactive is far too over-promised / under-delivered;
+> keep its scope, refine/iterate/upgrade"). PLAN-ONLY (no code change this round).** The user's
+> verdict matches this node's standing "behavior absent" tension — make it deliver within the
+> SAME scope (unprompted findings surfaced on significant context change), not broader.
+> **Current reality (code-traced 2026-06-20):** the tick calls `_maybe_proactive` on *every*
+> B1 buffer flush; it is gated only by a fixed **600 s** interval + a busy flag + (now, D-51)
+> the `proactive_enabled` consent gate — i.e. **time-gated, NOT significance-gated**, despite
+> the docstring's "after a significant sensor event." It then surfaces only if the local model
+> returns `surface:true` (weak local model ⇒ rarely fires well) → the over-promise/under-deliver.
+> **Refinement plan (scope-preserving), to build later:**
+> 1. **Significance-gate the trigger** — fire only when context significance/Δ crosses a
+>    threshold (reuse the journal/significance machinery), not merely the 600 s clock; idle ⇒ no
+>    model calls (already the goal — enforce it at the trigger).
+> 2. **Adaptive cadence** — shorten the interval when context is changing fast, lengthen when
+>    quiet (bounded), so it feels alive without spamming.
+> 3. **Firing observability** — emit `debuglog` records at each decision point (tick on? slot
+>    busy? event significant? brief said surface? stale? dup?) via the **D-52 logger now
+>    available**; expose the existing `_pstat` counters on /metrics so "why nothing surfaced" is
+>    inspectable instead of mysterious (the named "firing audit").
+> 4. **De-starvation** — route background proactive off the starved local slot (ties **N-21**).
+> 5. **Delivery quality** — only after firing is trustworthy (ties **N-02/N-06**).
+> **Typed test plan (to add with the build):** `run_proactive` — *input:* a frozen context tail +
+> retrieval; *triggers a surface* when significance≥θ AND brief.surface AND not stale AND not dup;
+> *must NOT surface* when context tail is empty · significance<θ · slot busy (droppable→skip) ·
+> stale (ctx advanced past tolerance) · duplicate of a recent finding · `proactive_enabled` false.
+> *output:* `True` iff DB warmed (regardless of surfacing); `present_fn` called exactly once iff a
+> finding is surfaced; finding recorded to ctx (kind=finding) + live-indexed. Extend
+> `test_proactive_dedup`/`test_significance`/`test_tick` rather than a new suite where possible.
+
 ### N-08 (SESS) — Chat session lifecycle 🔁 `[ ]` — FULL — supersedes D-08 bloat
 **Pathway (DAG).** Hard-dep D-08 (CRUD + promote primitives). Soft-dep N-02 (recall
 quality), D-05 (reuse WS-J for session journal). **Diamond off N-02 with N-06**
@@ -2718,7 +2747,15 @@ target path (it is a bonus, not a requirement, and the bar is met without it).
 - **Validation.** Reproduce the user's measurement (warm/hot-KV, TTFT-excluded) and record
   p50/p95 decode tok/s @ 32K in D-36 to confirm ≥15 holds in our harness. Sources in §O.
 
-### N-67 (UI-AUDIT) — Exposed-feature integrity audit `[ ]` — FULL — extends N-10, re-checks D-35/D-39/D-40/D-41
+### N-67 (UI-AUDIT) — Exposed-feature integrity audit `[~]` — FULL — extends N-10, re-checks D-35/D-39/D-40/D-41
+**PASS-1 DONE 2026-06-20 → D-51 (control-surface sweep).** Enumerated every classic-variant
+button/toggle and traced each to its backend path. **Verdict matrix:** all REAL except the
+**`proactive-toggle` = OVER-CLAIMED** (wrote `config.proactive` per-turn but nothing gated the
+background `_maybe_proactive` loop → unprompted findings kept firing when "off"). **Fixed:** real
+consent gate `proactive_enabled` (UI → `/observer {observer:"proactive"}` → loop early-return),
+proven by a test that flips it off and asserts no `run_proactive` call. Remaining for N-67:
+the qualitative pass (elegant / non-obstructive / well-integrated thresholds — `crystallizes-during`)
+and an explicit re-grade of D-35/D-39(voice→N-63)/D-40(telemetry)/D-41(chat lifecycle).
 **Directive (user 2026-06-19).** Go through the current UI; cross-check **every single
 button/feature exposed to the user** — is it implemented as deeply / seamlessly / robustly /
 non-obstructively / well-integratedly / elegantly / in-a-well-defined-manner as it
@@ -3093,13 +3130,39 @@ publication · financials · video/content · tutorials/codebases/technicals · 
 = {source-set + query-shaping + render lens}; user- AND model-enforceable. Pairs with P2 records + P4
 snapshots. *Open:* per-mode source adapters; how the model requests a mode vs the user pinning one.
 
-**N-75 (CHAT-OPS)** `[ ]` Phase-1 — Response/thread operations on **P5-lite + P7-lite**: edit-response
-(captured as **diff**, shown to the model in context), regenerate, **branch-off**, format-change,
-copy/paste **formatted**, **reply-to-specific-section**, link-at-arbitrary-points (model-understandable)
-+ reference other responses/chats (P6). Atomic/abstract so it upgrades to full frames/co-edit later.
+**N-75 (CHAT-OPS)** `[~]` Phase-1 — Response/thread operations on **P5-lite + P7-lite**. Scope locked
+with the user 2026-06-20 (branching/edit check-in). **Data-model + bridge + UI + launcher BUILT &
+offline-gated → D-48 (model) + D-49 (bridge/UI/launcher) + D-50 (cut-corner hardening).** Remaining:
+**live visual verification needs a `cargo build --release` + WSLg relaunch** (the plan's documented Live
+step) — offline gate is green. **Cut-corner audit 2026-06-20 (D-50):** removed `window.prompt` (unreliable
+in the Tauri webview) → in-UI `promptInline`; **surfaced the previously-unreachable §3a ops** (selective/
+explain via real text selection, extend/compress-by-N); branch/variant-switch/minimap now **load the chosen
+path into the live feed** (was history-preview only); no-response note **never drops** (adopts/creates a chat).
+- **Three kinds of branching:** **(1)** in-chat **alternative trajectories** — regenerations are
+  *browsable siblings* (`q→r₁,r₂,r₃`), not destructive replace, with a **minimap** (reduced tree, current
+  node highlighted); **(2)** **branch-off** into a separate chat (path-prefix seed); **(3) → N-77, Phase-2.**
+- **§3a regeneration operations** (single-response; default whole-response, optional selected section via
+  P5-lite anchors): **informed** (regen + a second "what to consider" guidance input) · **selective**
+  (select a section → in-place section diff) · **preset** (longer/shorter/formal/academic/casual/humanize
+  [AI-plag] / extend-by-N / compress-to-N — **preset set configurable in the launcher**) · **explain/
+  elaborate a section** · **iterative grounding hardening** (cross-check + stricter citations + more
+  content, additive each trigger). One extensible endpoint shape: `{op, guidance?, preset?, n?, section?}`.
+- **Edit + diff:** edit responses **and** queries; **toggleable inline diff** in chat; the heavier
+  **VCS-management view lives in the launcher** (simple viewer, not a main chat element). **Atomic to the
+  chat — NOT git, NOT the chat-as-repo idea** (that stays a deferred rewrite exploration).
+- **No-response input:** submit text → formatted/contextualized → pushed to **logs + journal**, **no model
+  turn**; success via below-input-bar metrics/notif.
+- Storage realised as a **DAG over the append-only event log** (parent/kind/edit_of/diff + `head.json`
+  path cursor) in `ctx/chats.py` — see D-48. Multi-parent in-edges already supported (seam for N-77).
 
 **N-76 (TRAJECTORY)** `[ ]` Phase-2 — post-response semantic trajectory-awareness + enforced-JSON
 keep/alter confirmation (see §Q.7). Depends on semantic-chat-search + P2/P6.
+
+**N-77 (SYNTHESIS / informed multi-select regen)** `[ ]` **Phase-2 (NOT MVP)** — checklist multi-select
+(max **7**, configurable; one node-adjacency) of preferred responses across nodes + a new query → an
+*informed* new response built from {selected responses + their queries + their retrieved content + fresh
+retrieval} (ties **N-06** assembly + **P2** reference records). The DAG's multi-parent in-edges are the
+reserved seam. Distinct from §3a *informed regeneration* (which is single-source).
 
 ### §Q.9 — PHASE-1 CONSOLIDATED SPEC (authoritative; is / isn't per item) — user 2026-06-20
 > Supersedes the scattered splits in §Q.2/§Q.5/§Q.6/§Q.7 for *what Phase-1 contains*. Each item:
@@ -3121,11 +3184,15 @@ keep/alter confirmation (see §Q.7). Depends on semantic-chat-search + P2/P6.
 - **P6 · Graph (done).** **IS:** NoteStore edges linking messages/chats/notes/citations (backlinks,
   cross-refs, associative citation map). **ISN'T:** not a new store.
 - **P5-lite · Addressability.** **IS:** stable ids for messages **+ sub-section anchors** + thread
-  structure, as an **atomic/abstract** layer that branch/reply/link target. **ISN'T:** not the full
-  co-edited frame model, not shared docs, not concurrent editing (→ Phase-2 N-72-full).
-- **P7-lite · Edit→diff.** **IS:** capture an edited/regenerated response and present it to the model
-  **as a diff in context**. **ISN'T:** not concurrent co-editing, not CRDT/OT, not the write-lock +
-  mid-stream-annotation model (→ Phase-2).
+  structure realised as a **DAG over the append-only log** (parent/kind/edit_of/diff + `head.json` path
+  cursor; regen/edit = browsable siblings, variant-switch, branch-off; multi-parent seam for N-77) — an
+  **atomic/abstract** layer that branch/reply/link target. **Data model DONE → D-48** (`ctx/chats.py`,
+  back-compatible with legacy flat transcripts). **ISN'T:** not the full co-edited frame model, not shared
+  docs, not concurrent editing (→ Phase-2 N-72-full); not git / chat-as-repo.
+- **P7-lite · Edit→diff. DONE → D-48/D-49** (`ChatStore.edit_message` stores a unified diff; UI inline
+  diff toggle + model-facing diff via `_persist_turn`). **IS:** capture an edited/regenerated response and
+  present it to the model **as a diff in context**. **ISN'T:** not concurrent co-editing, not CRDT/OT, not
+  the write-lock + mid-stream-annotation model (→ Phase-2).
 - **N-47-lite · Chunk locator.** **IS:** a chunk offset/locator within each retrieved source (enough for
   scroll-to-chunk + snapshot positioning). **If too much effort → defer to MVP 1.1, but leave the code
   seam now.** **ISN'T:** not ANN/FAISS/HNSW, not semantic hashing, not the full §L.3/N-47 scaling.
@@ -3138,9 +3205,10 @@ keep/alter confirmation (see §Q.7). Depends on semantic-chat-search + P2/P6.
 - **N-08 · Lifecycle (UI half).** **IS:** init / new / switch / view / restore / backup / archive over
   ChatStore (BASE done); boundary policy + clear working-set on new cycle. **ISN'T:** never deletes
   durable transcripts; not semantic chat search (Phase-2).
-- **N-75 · Chat-ops.** **IS:** edit-as-diff · regenerate · branch-off · format-change · copy/paste
-  **formatted** · reply-to-section · link-at-arbitrary-points · reference other responses/chats (P6).
-  **ISN'T:** not shared-space co-editing, not runnable content.
+- **N-75 · Chat-ops. BUILT & OFFLINE-GATED → D-48/D-49** (live visual verify pending Tauri rebuild).
+  **IS:** edit-as-diff · regenerate (+§3a ops: informed/grounding/preset/selective/explain) · in-chat
+  variant trajectories + minimap · branch-off · no-response input · link/reference (P6). **ISN'T:** not
+  shared-space co-editing, not runnable content, not kind-3 synthesis (→ N-77 Phase-2).
 - **N-74 · Search-modes.** **IS:** typed enforceable modes over the unified engine — deep · socials
   (forums/threads/communities/articles) · research/patent/publication · financials · video/content ·
   tutorials/codebases/technicals · regular; each = source-set + query-shaping + render lens. **ISN'T:**
@@ -3158,6 +3226,11 @@ keep/alter confirmation (see §Q.7). Depends on semantic-chat-search + P2/P6.
   user), editor non-editable while model writes, BUT user may add comments/markers/highlights/questions/
   revision-requests mid-stream → an on-the-fly refinement pass into the stream (P7-full).
 - **Semantic search of chats**; **N-76 TRAJECTORY** (post-response semantic look-ahead + enforced-JSON keep/alter).
+- **N-77 SYNTHESIS** (multi-select informed regen — checklist max 7, one node-adjacency; selected responses +
+  their queries + retrieved content + fresh retrieval → informed new response; N-06 + P2). DAG multi-parent
+  seam reserved in Phase-1. Distinct from §3a single-source informed regeneration.
+- **chat-as-git-repo** (each chat a mini-repo: commit-per-message, branch/merge) — eventual UI-rewrite
+  exploration only; kept distinct from N-75's atomic in-app edit/diff.
 - **P3 sandbox** (runnable code / WASM / web-apps) · **D3.js** · Marp/draw.io generation · in-window live
   custom-search-engine breadth · **N-16** deep-study engine · **full N-47** ANN/chunk scaling ·
   **N-64** composition UI · **N-26** host-native UI · N-49/§L.5 full artifact vision.
@@ -3175,7 +3248,8 @@ land for MVP** — budget/parallelize the per-turn calls, cap the retrieval loop
 (N-22). Ties directly to the chat-flow Phase-1 (a turn must feel responsive). **HIGH priority, non-UI.**
 
 **The formal MVP gates (§K.0.1) still open:**
-- **#1 INTEGRITY → N-67** UI integrity audit — blocking; also gates §Q Phase-1.
+- **#1 INTEGRITY → N-67** UI integrity audit — **pass-1 DONE (D-51: control-surface sweep; proactive
+  over-claim fixed)**; remainder = qualitative pass + D-35/39/40/41 re-grade. Blocking; also gates §Q Phase-1.
 - **#2 ATOMIC/NODAL → N-66** — drive subsystems to atomic single-objective services behind stable
   contracts (HTTP+MCP), n8n-shaped. Hard MVP.
 - **#3 USABLE-LOCAL → N-65 (done@10) + N-32 (OPEN, above) + N-22 watchdog.**
@@ -3190,11 +3264,25 @@ land for MVP** — budget/parallelize the per-turn calls, cap the retrieval loop
   **N-55** global hotkey reimplementation (open frontier) · **N-06/N-69** typed turn snapshot (recall half
   done; assembly half = deferred N-69) · **N-33** sensor-decouple `[~]` (FULL — confirm closed) ·
   **N-18/N-19/N-20/N-23** small refinement streams.
+- **NEW (2026-06-20):**
+  - **N-78 (HOST-PROCESS HYGIENE)** `[~]` — the Windows host accrued 100+ `aspnet_compiler.exe` +
+    powershells + `msiexec`. **Root-cause fixed → D-52** (notify dedupe/throttle/cap+reap, `cli._notify`
+    delegates, `screen_windows()` TTL-cached, no Popen leak). **Remaining:** audit the *other* powershell
+    callers for churn/leaks (hotkey relaunch path in `desktopctl.sh`, `ctl.py` status probes, `obs`
+    one-shots); prefer a single long-lived helper / WSLg-native notifier over per-event WinForms spawns.
+    Feeds **#4 N-61** (desktop/host endurance).
+  - **N-79 (DEBUG-LOGGING)** `[~]` — shared `debuglog.py` mechanism shipped (D-52; counters + structured
+    `[debug]`, `LK_DEBUG`). **Remaining:** roll `debug(...)` calls into bridge turn, proactive (the firing
+    audit), observers, schedule; surface counters on `/metrics`; add a launcher debug toggle. Supports
+    N-07 firing observability + N-67 integrity.
+- **N-07 (PROACTIVE)** firing-audit + scope-preserving refinement — see the 2026-06-20 refinement block at
+  N-07 (significance-gated trigger · adaptive cadence · firing observability via N-79 · de-starve via N-21).
 - **Carry-overs:** N-63 live-mic verify (pending hardware) · the `test_retrieval_engine` full-suite
   ordering flake (housekeeping).
 
 **Proposed MVP completion order (non-UI), to confirm:** N-32 pipeline latency (+N-22 watchdog) →
-N-67 integrity audit → N-66 atomic/nodal → N-59/60/61 → N-62 acceptance; N-68 + N-17/21/55 triaged in.
+N-67 integrity audit (pass-2) → N-66 atomic/nodal → N-59/60/61 → N-62 acceptance; **N-78/N-79 host-hygiene +
+debug-logging fold into N-61/N-67**; N-07 proactive refinement rides N-21+N-79; N-68 + N-17/55 triaged in.
 
 ### §Q.11 — PHASE-2 is / isn't spec (user 2026-06-20; details §Q.10; to re-confirm before Phase-2)
 > Bounds each deferred item so Phase-2 scope is unambiguous when we open it. **IS** = delivers · **ISN'T** = boundary.

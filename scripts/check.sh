@@ -29,6 +29,8 @@ step "memory-tier suite"    python3 services/lk/tests/test_memory_tiers.py
 step "extraction suite"     python3 services/lk/tests/test_extract.py
 step "zettelkasten suite"   python3 services/lk/tests/test_notes.py
 step "chat/session suite"   python3 services/lk/tests/test_chats.py
+step "chat-dag suite"       python3 services/lk/tests/test_chats_dag.py
+step "chat-ops bridge suite" python3 services/lk/tests/test_chat_ops_bridge.py
 step "chat-memory suite"    python3 services/lk/tests/test_chat_memory.py
 step "autonomy retry"       python3 services/lk/tests/test_autonomy.py
 step "cognitive-tick suite" python3 services/lk/tests/test_tick.py
@@ -46,6 +48,7 @@ step "retrieval-engine suite" python3 services/lk/tests/test_retrieval_engine.py
 step "retrieval quality"    python3 services/lk/tests/test_retrieval_quality.py
 step "schedule suite"       python3 services/lk/tests/test_schedule.py
 step "converters suite"     python3 services/lk/tests/test_converters.py
+step "notify/bloat suite"   python3 services/lk/tests/test_notify.py
 step "recent-findings suite" python3 services/lk/tests/test_recent_findings.py
 step "launcher suite"       python3 services/lk/tests/test_launcher.py
 step "kernel stress"        python3 services/lk/tests/stress_kernel.py

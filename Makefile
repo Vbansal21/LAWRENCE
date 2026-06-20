@@ -68,6 +68,8 @@ test: test-fast      ## full offline regression suite (no model/server needed)
 	@python3 services/lk/tests/test_notes.py
 	@python3 services/lk/tests/test_promote.py
 	@python3 services/lk/tests/test_chats.py
+	@python3 services/lk/tests/test_chats_dag.py
+	@python3 services/lk/tests/test_chat_ops_bridge.py
 	@python3 services/lk/tests/test_chat_memory.py
 	@python3 services/lk/tests/test_autonomy.py
 	@python3 services/lk/tests/test_tick.py
@@ -85,6 +87,7 @@ test: test-fast      ## full offline regression suite (no model/server needed)
 	@python3 services/lk/tests/test_retrieval_quality.py
 	@python3 services/lk/tests/test_schedule.py
 	@python3 services/lk/tests/test_converters.py
+	@python3 services/lk/tests/test_notify.py
 	@python3 services/lk/tests/test_recent_findings.py
 	@python3 services/lk/tests/test_launcher.py
 	@python3 services/lk/tests/stress_kernel.py

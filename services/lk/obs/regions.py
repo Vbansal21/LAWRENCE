@@ -21,7 +21,11 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
+
+from ..debuglog import debug
 
 # Spawn Windows powershell.exe from a Windows-valid CWD (C:\): a WSL \\wsl$\ CWD
 # makes the Win32 loader fail with the 0xc0000142 "unable to start" dialog.
@@ -262,12 +266,36 @@ def _dedup_overlapping(wins: list[WinRect], thresh: float = 0.85) -> list[WinRec
     return kept
 
 
-def screen_windows() -> tuple[list[WinRect], tuple[int, int, int, int]] | None:
+# Window geometry changes slowly, but the vision observer polls every few seconds
+# and `_powershell_windows` spawns a fresh powershell.exe that loads WinForms +
+# compiles inline C# each call — a steady drip of compiler/installer processes on
+# the Windows host. Cache the layout for a short TTL so polls reuse it instead of
+# re-spawning. Env-tunable; 0 disables the cache (back to per-call probing).
+_SW_TTL = float(os.environ.get("LK_WINDOWS_CACHE_TTL", "30"))
+_sw_lock = threading.Lock()
+_sw_cache: tuple[float, tuple[list[WinRect], tuple[int, int, int, int]] | None] | None = None
+
+
+def screen_windows(*, force: bool = False) -> tuple[list[WinRect], tuple[int, int, int, int]] | None:
     """Return (windows, virtual-screen-bounds) in physical pixels, or None if no
     window-manager source is available. Bounds = (left, top, width, height).
-    Overlapping/occluded windows are removed and the count is capped."""
+    Overlapping/occluded windows are removed and the count is capped.
+
+    Cached for ``_SW_TTL`` seconds (``force=True`` bypasses) so the per-poll vision
+    loop does not spawn a powershell.exe every tick (root-cause of the host process
+    bloat)."""
+    global _sw_cache
+    now = time.monotonic()
+    if not force and _SW_TTL > 0:
+        with _sw_lock:
+            if _sw_cache is not None and now - _sw_cache[0] < _SW_TTL:
+                debug("regions", "cache-hit", age=round(now - _sw_cache[0], 1))
+                return _sw_cache[1]
     res = _powershell_windows() or _wmctrl_windows()
-    if res is None:
-        return None
-    wins, bounds = res
-    return _dedup_overlapping(wins)[:MAX_REGIONS], bounds
+    out = None if res is None else (_dedup_overlapping(res[0])[:MAX_REGIONS], res[1])
+    if _SW_TTL > 0:
+        with _sw_lock:
+            _sw_cache = (now, out)
+    debug("regions", "probed", source=("none" if res is None else "win"),
+          windows=(0 if out is None else len(out[0])))
+    return out

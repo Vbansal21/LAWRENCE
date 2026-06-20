@@ -28,6 +28,7 @@ bridge = bridge_module.DesktopBridge.__new__(bridge_module.DesktopBridge)
 bridge.proactive_interval = 600.0
 bridge._last_proactive = 0.0
 bridge._proactive_busy = False
+bridge.proactive_enabled = True        # N-67: consent gate on the unprompted-findings loop
 bridge.ctx = bridge.retrieval = bridge.engine = bridge.memory = object()
 bridge._present_finding = lambda finding: None
 
@@ -54,6 +55,14 @@ try:
     bridge._maybe_proactive()
     time.sleep(0.05)
     assert len(attempts) == 2
+
+    # N-67: the consent gate truly silences the loop (no run_proactive call).
+    bridge.proactive_enabled = False
+    bridge._last_proactive = 0.0          # clear the interval throttle so only the gate can stop it
+    bridge._maybe_proactive()
+    time.sleep(0.05)
+    assert len(attempts) == 2             # still 2 — the gated call did not fire
+    bridge.proactive_enabled = True
 finally:
     bridge_module.run_proactive = real_run
 

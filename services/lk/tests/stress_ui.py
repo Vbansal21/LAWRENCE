@@ -262,6 +262,57 @@ if node:
 else:
     print("  node not installed — node --check skipped")
 
+# ─────────────────────── J. N-75 chat-ops wiring parity (static) ───────────────────────
+section("J. N-75 branching/edit/no-response wired end-to-end (store ↔ bridge ↔ UI)")
+chats_src = Path("services/lk/ctx/chats.py").read_text(encoding="utf-8")
+check("ChatStore has the DAG ops",
+      all(f"def {m}(" in chats_src for m in
+          ("add_variant", "edit_message", "set_head", "fork_chat", "tree", "path_messages")),
+      "missing a ChatStore DAG method")
+check("ChatStore head cursor + append-only DAG fields present",
+      "head.json" in chats_src and '"parent"' in chats_src and "edit_of" in chats_src)
+for handler in ("def regenerate(", "def message_edit(", "def variant_head(",
+                "def chat_branch(", "def chat_tree(", "def chat_note(", "def _persist_turn("):
+    check(f"bridge has {handler.strip('(')[4:]}", handler in bridge_src)
+check("bridge routes the chat-op endpoints",
+      all(s in bridge_src for s in ('"regenerate"', '"branch"', '"head"', '"note"', '"tree"', '"edit"')),
+      "a chat-op route is unwired")
+check("bridge regenerate carries the §3a op descriptor",
+      "_regen_directive(" in bridge_src and "_REGEN_PRESETS" in bridge_src)
+check("no-response note skips the model turn (logs+journal only)",
+      "def chat_note(" in bridge_src and "ctx.append(" in bridge_src and '"responded": False' in bridge_src)
+# UI side: controls, durable-id threading, and all ops go through lib/bridge.js transport.
+check("classic variant renders per-message ops + variant nav + diff",
+      all(s in app for s in ("renderMessageControls", "renderVariantNav", "renderDiff", "data-chat-op")),
+      "a chat-op UI affordance is missing")
+check("classic variant wires regenerate/edit/branch/variant/minimap",
+      all(s in app for s in ("regenerateMessage", "editMessage", "branchFromMessage",
+                             "switchVariant", "openMinimap", "submitNote")))
+check("classic variant captures durable transcript ids from the turn",
+      "result.assistantMsgId" in app and "reply.msgId" in app)
+check("classic variant calls chat-op endpoints via the transport module (not raw fetch)",
+      "/regenerate" in app and "/branch" in app and "/note" in app
+      and "window.fetch(" not in app and "new EventSource(" not in app)
+# Cut-corner audit (uncommitted UI hardening): no fake/unreliable affordances.
+check("no window.prompt — edits/guidance use the in-UI promptInline affordance",
+      "window.prompt(" not in app and "function promptInline(" in app)
+check("§3a section + N ops are reachable from the UI (selective/explain/extend/compress)",
+      all(f'"{op}"' in app for op in ("selective", "explain")) and "extend" in app
+      and "compress" in app and "needsSelection" in app and "needsN" in app)
+check("selective/explain use a real text selection (getSelection, scoped to a message)",
+      "selectionchange" in app and "getSelection()" in app and "selectionWithin(" in app)
+check("branch + variant-switch load the branched/selected path into the live feed",
+      "function loadChatIntoFeed(" in app and "loadChatIntoFeed(res.active)" in app
+      and "await loadChatIntoFeed(chatId)" in app)
+check("no-response note never silently drops (adopts active chat / creates one)",
+      "health.activeChat" in app and 'postBridge("/chats"' in app)
+# N-67 integrity: the proactive toggle is a REAL consent gate on the unprompted-
+# findings loop, not just a per-turn config flag (was over-claimed).
+check("proactive toggle truly gates the kernel loop (UI → /observer → _maybe_proactive)",
+      "self.proactive_enabled" in bridge_src and 'observer == "proactive"' in bridge_src
+      and "if not self.proactive_enabled" in bridge_src
+      and 'setKernelObserver("proactive"' in app)
+
 stop.set()
 try: ui.close()
 except Exception: pass

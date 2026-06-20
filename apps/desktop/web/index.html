@@ -68,6 +68,7 @@
           <div class="drawer-title">History <span class="drawer-badge" id="history-badge"></span></div>
           <div class="drawer-actions">
             <button type="button" class="chip ghost" id="history-open" title="Browse previous chats and journals.">Open</button>
+            <button type="button" class="chip ghost" id="minimap-open" title="Map this chat's branches and variants.">Map</button>
           </div>
         </div>
         <div class="drawer-section">
@@ -338,6 +339,14 @@
             <div class="mdx" id="history-preview"></div>
           </article>
         </div>
+      </section>
+
+      <section class="minimap-panel" id="minimap-panel" hidden aria-label="Chat branch map">
+        <header class="panel-head" data-tauri-drag-region>
+          <div class="drawer-title">Branch map</div>
+          <button type="button" class="icon-btn" id="minimap-close" title="Close" aria-label="Close map">✕</button>
+        </header>
+        <div class="minimap-body" id="minimap-body"></div>
       </section>
 
       <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.tif,.tiff,.wav,.mp3,.m4a,.flac,.ogg,.opus,.mp4,.mov,.mkv,.webm,.avi,.pdf,.md,.mdx,.txt,.html,.htm,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,.xls,.xlsx,.ods,.csv,.tsv,.tex,.bib,.mmd,.mermaid,.json,.jsonl,.yaml,.yml,.xml,.epub" hidden />

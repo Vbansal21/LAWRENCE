@@ -1194,30 +1194,11 @@ def _print_status(
 # ── desktop notification (best-effort) ────────────────────────────────────────
 
 def _notify(title: str, body: str) -> None:
-    import shutil, subprocess
-    body_s = body[:200].replace('"', "'").replace("\n", " ")
-    try:
-        if shutil.which("notify-send"):
-            subprocess.Popen(
-                ["notify-send", "--expire-time=8000", title, body_s],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            )
-        elif shutil.which("powershell.exe"):
-            ps = (
-                "Add-Type -AssemblyName System.Windows.Forms;"
-                "$n=New-Object System.Windows.Forms.NotifyIcon;"
-                "$n.Icon=[System.Drawing.SystemIcons]::Information;"
-                "$n.Visible=$true;"
-                f'$n.ShowBalloonTip(8000,"{title}","{body_s}",0);'
-                "Start-Sleep -Milliseconds 600;$n.Dispose();"
-            )
-            subprocess.Popen(
-                ["powershell.exe", "-NoProfile", "-WindowStyle", "Hidden", "-Command", ps],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                cwd=("/mnt/c" if os.path.isdir("/mnt/c") else None),  # avoid WSL 0xc0000142 dialog
-            )
-    except Exception:
-        pass
+    # Single choke point: delegate to lk.notify, which dedupes/throttles/caps the
+    # PowerShell balloon spawns (the host aspnet_compiler/msiexec bloat root-cause).
+    # No second, ungated spawner lives here anymore.
+    from .notify import notify as _do_notify
+    _do_notify(title, body)
 
 
 # ── proactive trigger ────────────────────────────────────────────────────────

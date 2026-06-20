@@ -1289,3 +1289,131 @@ input[type="range"] {
   color: var(--accent);
   font-variant-numeric: tabular-nums;
 }
+
+/* ── N-75 chat-ops: per-message controls, variant nav, inline diff, minimap ── */
+.msg-ops {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+.message:hover .msg-ops { opacity: 1; }
+.op-btn, .op-item {
+  font: inherit;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.op-btn:hover, .op-item:hover { color: var(--accent); border-color: var(--accent); }
+.op-menu { position: relative; display: inline-flex; }
+.op-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px;
+  background: rgba(20, 26, 23, 0.98);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  min-width: 130px;
+}
+.op-item { text-align: left; background: transparent; border: none; }
+.variant-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+.variant-btn {
+  font: inherit;
+  color: var(--muted);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0 4px;
+}
+.variant-btn:hover { color: var(--accent); }
+.variant-count { font-variant-numeric: tabular-nums; }
+.msg-diff {
+  margin-top: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  line-height: 1.5;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  overflow-x: auto;
+}
+.diff-line { padding: 0 8px; white-space: pre; }
+.diff-line.add { background: rgba(118, 208, 131, 0.16); color: #bdf0c6; }
+.diff-line.del { background: rgba(208, 118, 118, 0.16); color: #f0bdbd; }
+.diff-line.hunk { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
+.diff-line.ctx { color: var(--muted); }
+
+.minimap-panel {
+  position: absolute;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  background: rgba(12, 17, 15, 0.97);
+  backdrop-filter: blur(var(--surface-blur));
+}
+.minimap-body {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+  font-size: 12px;
+}
+.map-node {
+  padding: 4px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.map-node:hover { background: rgba(255, 255, 255, 0.06); }
+.map-node.active { color: var(--accent); border-left: 2px solid var(--accent); }
+.map-node em { color: var(--accent); font-style: normal; opacity: 0.8; }
+
+/* In-UI prompt (edit / informed regen / N / selection guidance) — replaces
+   window.prompt, which is unreliable inside the Tauri webview. */
+.inline-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  background: rgba(20, 26, 23, 0.96);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+}
+.inline-prompt .ip-label { font-size: 12px; color: var(--muted); flex: 0 0 100%; }
+.inline-prompt .ip-input {
+  flex: 1;
+  min-width: 160px;
+  font: inherit;
+  font-size: 13px;
+  color: var(--text);
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  padding: 6px 8px;
+  resize: vertical;
+}
+.inline-prompt .ip-actions { display: inline-flex; gap: 6px; }
+.op-btn.ghost { background: transparent; }

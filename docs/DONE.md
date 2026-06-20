@@ -1254,6 +1254,152 @@ queries (currently heuristic from open threads); routing through the N-47 Perple
 
 ---
 
+## D-48 — Chat branching/edit data model: a DAG over the append-only log (2026-06-20) — N-75 (P5-lite), Phase-1
+**Implemented** ([ctx/chats.py](../services/lk/ctx/chats.py)). The structural foundation for Phase-1
+chat branching/edit (user check-in 2026-06-20). `ChatStore` was append-only and **flat** (one linear
+`messages.jsonl`); regeneration/edit/branch need alternatives. Added a **DAG layered over the immutable
+event log** — the log is still never mutated (preserves I1 single-writer + durability):
+- **Additive per-record fields** (`parent`, `kind ∈ {turn,regen,edit,branch-seed}`, `edit_of`, `diff`) +
+  a **`head.json`** path cursor (`{parent_id→child_id}`, `""`=root slot). Walking `head` from the root =
+  the active conversation. `append_message(parent=_AUTO)` auto-chains to the active leaf, so the existing
+  two-call turn (`user`,`assistant`) keeps producing a clean linear backbone with **zero caller change**.
+- **Ops (pure storage; model turn stays in the bridge):** `add_variant` (regenerate = sibling, becomes
+  active), `edit_message` (append `edit` sibling carrying a real `difflib` unified diff; original never
+  mutated), `set_head` (variant switch, no append), `fork_chat` (branch-off = new chat seeded with the
+  active-path prefix), `tree`/`path_messages`/`parent_of`/`get_by_id` (traversal + minimap feed).
+- **Back-compat:** legacy pre-DAG transcripts (no `parent`/`head.json`) resolve an **implicit seq-1
+  linear backbone** → they walk + export unchanged; a new append onto a legacy chat chains to its leaf.
+**Verification.** NEW [test_chats_dag.py](../services/lk/tests/test_chats_dag.py) (real, no mocks):
+regen siblings + latest-active, head-switch (no append), edit→unified-diff (+ no mutation), fork prefix
+copy, tree exposes variants/path/head, legacy linear walk + chain-on-append. Existing
+[test_chats.py](../services/lk/tests/test_chats.py) (stable ids/order/export back-compat) still green.
+**Live edges (open → N-75 remainder):** bridge endpoints `/regenerate`(+op descriptor)·`/edit`·`/head`·
+`/branch`·`/tree`· no-response submit (`→ ui_bridge.py`); classic UI (head-path render + variant switcher
++ minimap + inline diff + regen ops §3a + no-response mode); launcher VCS viewer. Multi-parent in-edges
+already supported = the reserved seam for **N-77** (Phase-2 synthesis).
+**Edges.** `[D-48] --{extends}--> [D-05/WS-U ChatStore]` load-bearing · `--{enables}--> [N-75 bridge+UI]`
+load-bearing · `--{reserves-seam}--> [N-77 synthesis]` significant · `--{feeds}--> [P6 NoteStore graph]` incidental.
+
+---
+
+## D-49 — Chat branching/edit/no-response: bridge + classic UI + launcher VCS (2026-06-20) — N-75 (§3a), Phase-1
+**Implemented** on the D-48 DAG. The three branch kinds + §3a regen ops + edit/diff + no-response,
+wired store↔bridge↔UI and **offline-gated** (live visual verify still needs a Tauri rebuild).
+- **Bridge** ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)) — ADD-only routes (I5):
+  `POST /chats/{id}/regenerate` (op descriptor `{op,guidance?,preset?,n?,section?}` — informed ·
+  stricter-grounding · preset[longer/shorter/formal/academic/casual/humanize/extend-N/compress-N] ·
+  selective/explain = in-place section **edit+diff**), `…/messages/{mid}/edit`, `…/head` (variant
+  switch), `…/branch` (kind-2 fork→active), `GET …/tree` (minimap), `…/note` (no-response → durable
+  transcript + `ctx.append` to logs/journal + recall, **no model turn**). `turn()`'s transcript write
+  refactored to `_persist_turn` (turn vs regen-variant vs in-place-edit). Presets default in-code,
+  launcher-overridable via `{presetText}`.
+- **Classic UI** ([variants/classic/app.js](../apps/desktop/web/variants/classic/app.js) + index.html +
+  styles.css) — durable transcript ids threaded from the turn onto bubbles; per-message **Regenerate ▾**
+  (op menu) · **Edit** · **Branch from here**; **‹k/n› variant switcher** (browses regenerations, persists
+  via `/head`); **inline toggleable diff**; **Ctrl/Cmd+Enter = no-response note**; a **branch/variant
+  minimap** (Map button → `/tree`, click a node to switch the active path). All transport via `lib/bridge.js`.
+- **Launcher** ([launcher/chat_vcs.py](../services/lk/launcher/chat_vcs.py) + qt_tabs KnowledgeTab) —
+  read-only **Chat history / VCS** panel: variant/edit history + stored diffs, ●on-path/○off-path. The
+  launcher only *reads* memory (I1 intact); explicitly **not git / not chat-as-repo**.
+**Verification.** [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) drives every
+handler against a live ChatStore (regen shaping+persist, edit→diff, head-switch, fork, tree, no-response
+skips the model); [test_launcher.py](../services/lk/tests/test_launcher.py) §F drives the VCS provider
+(no Qt) + the Qt window builds every tab offscreen; [stress_ui.py](../services/lk/tests/stress_ui.py) §J
+asserts store↔bridge↔UI wiring + transport isolation; `node --check` clean. **`make check` green.**
+**Live edges (open):** live UI visual verification (cargo rebuild + WSLg); section-scoped selective/explain
+currently regenerate the WHOLE response with a section-focused directive (true partial-region patch =
+later); **N-77** synthesis (Phase-2) rides the reserved multi-parent seam.
+**Edges.** `[D-49] --{builds-on}--> [D-48]` load-bearing · `--{extends}--> [D-23 seam, D-26 citations]`
+significant · `--{enables}--> [N-77, N-72-full]` significant · `--{gated-by}--> [N-67 integrity]` significant.
+
+---
+
+## D-50 — N-75 cut-corner hardening (uncommitted-UI audit) (2026-06-20) — N-75, Phase-1
+**Audit of the uncommitted D-48/D-49 work** before moving on found five real shortcuts; all fixed in
+[variants/classic/app.js](../apps/desktop/web/variants/classic/app.js) (+ styles.css) and re-gated.
+- **A — `window.prompt` removed.** Edit + informed-regen guidance used `window.prompt`, unreliable/blocked
+  inside the Tauri (webkit2gtk) webview → would silently no-op = a fake control under the N-67 gate. Replaced
+  with **`promptInline`**: a real in-composer input bar (single-line/textarea/number), Enter=OK
+  (Ctrl/Cmd+Enter multiline), Esc=cancel, returns a Promise.
+- **D — §3a ops surfaced.** The bridge already supported `selective`/`explain`/`extend`/`compress`, but the UI
+  `REGEN_OPS` exposed none of them (§3a was over-claimed as done). Added them: **selective/explain operate on a
+  real text selection** (`selectionchange` capture scoped to the message body via `selectionWithin`);
+  **extend/compress take an N** via `promptInline`.
+- **C — branch/switch now reach the live feed.** `loadChat` only filled the history *preview*; branch-off and
+  variant-switch left the feed showing the OLD conversation. New **`loadChatIntoFeed`** renders a stored chat's
+  active path into the feed (durable ids + chatId + diff + sibling-count variant nav from `/tree`); branch,
+  the ‹k/n› switcher, the minimap node-click, and `loadChat` all route through it.
+- **B — no-response note never drops.** `submitNote` bailed ("No active chat") when the session hadn't run a
+  turn. Now adopts the kernel's active chat (`/health.activeChat`, already exposed) and **creates one if truly
+  none exists**, so the note always reaches logs + journal.
+- **E — latent variant-init bug.** `regenerateMessage` could seed variant-0 with the *new* text; now captures
+  `prevText` before overwrite so the original stays browsable.
+**Verification.** [stress_ui.py](../services/lk/tests/stress_ui.py) §J extended — asserts no `window.prompt`,
+`promptInline` present, selective/explain/extend/compress reachable, real selection capture, feed-load on
+branch/switch, and note-never-drops. `node --check` clean; **`make check` green (40 suites).** Still open:
+the live visual verify (cargo rebuild + WSLg) and true partial-region section patching (whole-response regen
+with a section-focused directive remains the Phase-1 form).
+**Edges.** `[D-50] --{hardens}--> [D-49]` load-bearing · `--{gated-by}--> [N-67 integrity]` significant.
+
+---
+
+## D-51 — N-67 integrity audit, pass-1: control-surface sweep + proactive gate (2026-06-20) — N-67, Phase-1
+**§K.0.1 #1 (integrity).** Enumerated the full classic-variant control surface (toggles: audio, video,
+voice-listen, retrieval, deep-search, proactive; buttons: attach file/url, refresh-context, chat new/save/
+archive, history open/refresh, minimap, tasks add/remember/clear/check/remove, reminders add/remove,
+settings/advanced/drawer panels, stop/cancel, action confirm/reject, token-reset) and traced each to its
+backend path. **Integrity matrix verdict: every control REAL except one.**
+- **`proactive-toggle` was OVER-CLAIMED → fixed.** It only wrote `config.proactive` into the per-turn config;
+  the kernel's unprompted-findings loop (`_maybe_proactive`, sensor-driven) ignored it, so "proactive off"
+  still surfaced findings. Added a real consent gate: `DesktopBridge.proactive_enabled` (default on, env
+  `LK_PROACTIVE`), checked at the top of `_maybe_proactive`; `set_observer` now accepts
+  `observer="proactive"`; the UI toggle + `startDefaultObservers` push the state via the existing `/observer`
+  endpoint (ADD-only, I5). [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) +
+  [app.js](../apps/desktop/web/variants/classic/app.js).
+- Confirmed REAL (spot-traced): tasks_command handles add/remove/done/reopen/clear+scope/remember;
+  reminders add (POST) + remove (DELETE /reminders/{id} → reminder_delete); observers vision/audio start/stop
+  real observer threads; cancel = DELETE /jobs/{id} (cooperative, D-37); chat ops = D-48/49/50.
+**Verification.** [test_autonomy.py](../services/lk/tests/test_autonomy.py) extended — flips
+`proactive_enabled` off and asserts the loop does NOT call `run_proactive`; [stress_ui.py](../services/lk/tests/stress_ui.py)
+asserts the UI→`/observer`→loop-gate wiring. **`make check` green (40 suites).**
+**Open (N-67 remainder):** qualitative "elegant/non-obstructive/well-integrated" pass + explicit re-grade of
+D-35/D-39(voice)/D-40(telemetry)/D-41(lifecycle).
+**Edges.** `[D-51] --{operationalizes}--> [§K.0.1 #1]` load-bearing · `--{extends}--> [N-10]` significant ·
+`--{re-grades}--> [D-35/D-39/D-40/D-41]` significant · `--{continues}--> [D-50 cut-corner audit]` significant.
+
+---
+
+## D-52 — Windows host process-bloat / leak fix + shared [debug] logger (2026-06-20) — host hygiene
+**Symptom (user):** after a run, the Windows host accrued **100+ `aspnet_compiler.exe` + many `powershell.exe`
++ `msiexec` (Windows Installer)**. **Root cause (two .NET-spawning paths, ungated):**
+1. **Per-notification** — [notify.py](../services/lk/notify.py) + the duplicate [cli.py](../services/lk/cli.py)
+   `_notify` each spawned a fresh `powershell.exe` running `Add-Type -AssemblyName System.Windows.Forms`
+   (loads WinForms → .NET JIT/NGEN compiler chain = `aspnet_compiler.exe`; assembly self-repair = `msiexec`).
+   No throttle/dedupe/cap; the unthrottled proactive loop (pre-D-51) fired bursts of them.
+2. **Per vision poll (~10s)** — [obs/regions.py](../services/lk/obs/regions.py) `_powershell_windows` spawned a
+   WinForms-loading + inline-`Add-Type` powershell **every poll** while vision was on — a steady compiler drip.
+**Fix.**
+- `notify.py` is now the single choke point: **dedupe** (identical title/body within 120s) · **throttle**
+  (≥4s global spacing) · **cap** (≤3 live balloons, reaped each call so it's truthful) — all env-tunable, all
+  counted. `cli._notify` now **delegates** to it (duplicate ungated spawner deleted).
+- `screen_windows()` gained a **TTL cache** (`LK_WINDOWS_CACHE_TTL`, default 30s, `force=` bypass) so the
+  vision loop reuses the window layout instead of re-spawning powershell each tick. No process leak: balloon
+  Popens are reaped; the last ≤3 self-exit in ~1s.
+- New [debuglog.py](../services/lk/debuglog.py): one stdlib `[debug]` mechanism for all services (off by
+  default `LK_DEBUG`; structured lines + always-on truthful counters via `bump`/`snapshot` for /metrics+tests).
+**Typed test contract** — [test_notify.py](../services/lk/tests/test_notify.py) (wired into `make check`):
+`notify(title,body)` → returns True **iff** a balloon spawned; **FIRES** on first/after-throttle/under-cap/
+not-recently-seen; **must NOT** spawn on identical-within-dedupe · within-throttle · at-cap. `screen_windows()`
+→ **probes** on first/after-TTL/`force=True`; **must NOT** probe within TTL (returns cache). All asserted.
+**`make check` green (41 suites).**
+**Open / not addressed here (plan, not code):** a deeper host-hygiene pass for the other powershell callers
+(hotkey relaunch churn, `ctl.py`/`obs` probes) → tracked as **N-78 (host-process hygiene)**; full `debuglog`
+rollout across bridge/kernel/observers/schedule → **N-79**.
+**Edges.** `[D-52] --{unblocks}--> [N-61 desktop/host stress]` significant · `--{amplified-by}--> [proactive
+N-07]` significant · `--{seeds}--> [N-79 debug-logging]` load-bearing.
+
+---
+
 ## Live-stub index (every D-node's outflow, for audit) `[revised: F2 — added D-04→N-20, D-09→N-16]`
 D-01→N-02,N-18 · D-02→N-06 · D-03→N-07 · D-04→N-07,N-11,N-20 · D-05→N-02,N-08 ·
 D-06→N-07,N-21 · D-07→N-28 · D-08→N-08,N-02,N-11 · D-09→N-27,N-05,N-22,N-16 ·

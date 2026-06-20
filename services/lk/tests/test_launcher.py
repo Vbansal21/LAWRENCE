@@ -135,6 +135,28 @@ if HAVE_QT:
         print("  SKIP pyte unit — pyte/ptyprocess unavailable")
 
 
+section("F. chat VCS viewer (N-75) — read-only variant/edit history + diffs (no Qt)")
+from lk.launcher import chat_vcs
+from lk.ctx.chats import ChatStore
+_tmp = Path(tempfile.mkdtemp())
+_cs = ChatStore(mem_dir=_tmp)
+_cid = _cs.create_chat("vcs demo")["id"]
+_q = _cs.append_message(_cid, "user", "explain merge sort")
+_r = _cs.append_message(_cid, "assistant", "Merge sort splits then merges.")
+_r2 = _cs.add_variant(_cid, _r, "assistant", "Merge sort is a divide-and-conquer sort.")
+_cs.edit_message(_cid, _r2, "Merge sort is a stable divide-and-conquer sort.")
+hist = chat_vcs.chat_history(_cid, store=_cs)
+check("history lists every variant + edit node", len(hist["items"]) >= 4, f"items={len(hist['items'])}")
+check("history flags the active path", any(it["on_path"] for it in hist["items"]))
+check("history surfaces a stored diff for the edit", any(it["diff"] for it in hist["items"]))
+text = chat_vcs.format_history(_cid, store=_cs)
+check("formatted view marks on/off-path variants", "●" in text and "○" in text)
+check("formatted view shows the edit diff inline", "@@" in text and "edit of" in text)
+check("provider is read-only (no mutation of the log)",
+      len(_cs.messages(_cid)) == len(hist["items"]))
+import shutil as _sh; _sh.rmtree(_tmp, ignore_errors=True)
+
+
 print()
 if FAILS:
     print(f"  {len(FAILS)} FAILURE(S): {FAILS}")

@@ -24,6 +24,7 @@ const CONFIG_KEY = "lawrence-ui-config";
 const JOB_POLL_MS = 400;
 const JOB_SOFT_TIMEOUT_MS = 30_000;
 let messageUiId = 0;
+let submitAsNote = false;   // N-75: Ctrl/Cmd+Enter submits as a no-response note
 const PANEL_MODE = new URLSearchParams(window.location.search).get("panel") || "";
 if (PANEL_MODE) document.body.classList.add("panel-window", `panel-${PANEL_MODE}`);
 
@@ -143,10 +144,13 @@ function render(options = {}) {
           <div class="message-head">
             <strong>${speaker}</strong>
             <time>${message.time || currentTime()}</time>
+            ${renderVariantNav(message)}
           </div>
           <div class="mdx">${renderMdx(bodyText)}${cursor}</div>
+          ${renderDiff(message)}
           ${sources}
           ${actions}
+          ${message.streaming ? "" : renderMessageControls(message)}
           ${meta ? `<div class="meta">${meta}</div>` : ""}
         </div>
       </article>
@@ -206,6 +210,69 @@ function renderActions(actions) {
           <button type="button" class="chip ghost" data-action-decision="reject">Reject</button>
         </span>` : `<small>${escapeHtml(action.status === "pending" ? "confirmation expired; request again" : action.status)}</small>`}
     </div>`).join("")}</div>`;
+}
+
+// ── N-75 chat-ops: per-message controls, variant nav, inline diff ────────────
+// The §3a regeneration operations (default whole-response; section ops are Phase-2-
+// lite here = whole-response informed/preset/ground). Presets are listed by the UI;
+// their parameters live in the launcher config surface.
+const REGEN_OPS = [
+  { op: "informed",  label: "Informed…",  guided: true  },
+  { op: "ground",    label: "Stricter grounding" },
+  // §3a section ops — operate on the text the user selected inside the response.
+  { op: "selective", label: "Revise selection…", needsSelection: true, guided: true },
+  { op: "explain",   label: "Explain selection",  needsSelection: true },
+  { op: "preset", preset: "longer",   label: "Longer" },
+  { op: "preset", preset: "shorter",  label: "Shorter" },
+  { op: "preset", preset: "formal",   label: "Formal" },
+  { op: "preset", preset: "academic", label: "Academic" },
+  { op: "preset", preset: "casual",   label: "Casual" },
+  { op: "preset", preset: "humanize", label: "Humanize" },
+  { op: "preset", preset: "extend",   label: "Extend by N…",   needsN: true, nLabel: "Extend by how many points?" },
+  { op: "preset", preset: "compress", label: "Compress to N…", needsN: true, nLabel: "Compress to how many words?" },
+];
+
+function renderVariantNav(message) {
+  const n = message.variants?.length || 0;
+  if (n <= 1) return "";
+  const i = (message.variantIndex ?? 0) + 1;
+  return `<span class="variant-nav" title="browse regenerated variants">
+      <button type="button" class="variant-btn" data-chat-op="variant-prev" aria-label="previous variant">‹</button>
+      <span class="variant-count">${i}/${n}</span>
+      <button type="button" class="variant-btn" data-chat-op="variant-next" aria-label="next variant">›</button>
+    </span>`;
+}
+
+function renderMessageControls(message) {
+  if (!message.msgId) return "";
+  const isAssistant = message.role === "assistant";
+  const regen = isAssistant ? `
+      <span class="op-menu">
+        <button type="button" class="op-btn" data-chat-op="regen-menu">Regenerate ▾</button>
+        <span class="op-dropdown" hidden>${REGEN_OPS.map((o, idx) =>
+          `<button type="button" class="op-item" data-chat-op="regen" data-op-index="${idx}">${escapeHtml(o.label)}</button>`
+        ).join("")}</span>
+      </span>` : "";
+  const diffBtn = message.diff
+    ? `<button type="button" class="op-btn" data-chat-op="diff-toggle">${message.showDiff ? "Hide diff" : "Show diff"}</button>`
+    : "";
+  return `<div class="msg-ops">
+      ${regen}
+      <button type="button" class="op-btn" data-chat-op="edit">Edit</button>
+      <button type="button" class="op-btn" data-chat-op="branch">Branch from here</button>
+      ${diffBtn}
+    </div>`;
+}
+
+function renderDiff(message) {
+  if (!message.diff || !message.showDiff) return "";
+  const lines = String(message.diff).split("\n").map((ln) => {
+    const cls = ln.startsWith("+") && !ln.startsWith("+++") ? "add"
+      : ln.startsWith("-") && !ln.startsWith("---") ? "del"
+      : ln.startsWith("@@") ? "hunk" : "ctx";
+    return `<div class="diff-line ${cls}">${escapeHtml(ln)}</div>`;
+  }).join("");
+  return `<div class="msg-diff">${lines}</div>`;
 }
 
 function renderAttachments() {
@@ -823,6 +890,10 @@ async function sendTurn(text) {
         text: result.answer || "Kernel returned an empty answer.",
         sources: result.sources || result.citations || result.assets || [],
         actions: result.controls?.actionProposals || [],
+        // N-75: durable transcript ids → enable per-message regenerate/edit/branch.
+        chatId: result.chatId || "",
+        msgId: result.assistantMsgId || "",
+        userMsgId: result.userMsgId || "",
         meta: ["kernel bridge", ...configMarkerMeta(result.controls), ...(result.events || []).slice(0, 2)]
       };
     } catch (error) {
@@ -1003,6 +1074,9 @@ async function refreshHealth() {
   try {
     const health = await getBridge("/health");
     state.health = health;
+    // Adopt the kernel's active chat so per-message ops + no-response notes work
+    // even before this session has run its first turn.
+    if (health.activeChat && !state.chats.active) state.chats.active = health.activeChat;
     if (health.eventsUrl) connectEvents(health.eventsUrl);
     if (health.voice?.listening) applyPressed("#voice-listen-toggle", true);
     // SSE is best-effort under WSLg; poll tasks here so the panel/badge stay live.
@@ -1431,6 +1505,28 @@ async function streamAssistant(reply) {
   state.streaming = true;
   streamState.textContent = "Streaming";
   const draft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"], sources: normalized.sources, actions: normalized.actions };
+  // N-75: carry the durable transcript ids so this bubble supports regenerate/edit/branch.
+  if (reply && typeof reply === "object") {
+    if (reply.msgId) {
+      draft.msgId = reply.msgId;
+      draft.variants = [{ id: reply.msgId, text: normalized.text }];
+      draft.variantIndex = 0;
+    }
+    if (reply.chatId) {
+      draft.chatId = reply.chatId;
+      state.chats.active = reply.chatId;
+      // tag the originating user message (the most recent one) with its durable id
+      if (reply.userMsgId) {
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          if (state.messages[i].role === "user" && !state.messages[i].msgId) {
+            state.messages[i].msgId = reply.userMsgId;
+            state.messages[i].chatId = reply.chatId;
+            break;
+          }
+        }
+      }
+    }
+  }
   state.messages.push(draft);
   render({ persist: false });
   const draftEl = feed.querySelector(".message:last-child");
@@ -1477,8 +1573,11 @@ async function streamAssistant(reply) {
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
+  const asNote = submitAsNote;
+  submitAsNote = false;
   const text = promptInput.value.trim();
   if (!text || state.streaming) return;
+  if (asNote) { await submitNote(text); return; }
   addTokenEstimate(text);
   setTrajectory("user", state.kernelContext.length ? "context" : "query");
 
@@ -1519,7 +1618,217 @@ contextStrip.addEventListener("keydown", (event) => {
   renderTelemetry();
 });
 
+// N-75 no-response input: persist the user's text to the chat + logs + journal with
+// NO model turn; surface success in the stream-state metric (below the input bar).
+async function submitNote(text) {
+  state.messages.push({ role: "user", text, time: currentTime(), meta: ["note · no response"] });
+  promptInput.value = "";
+  promptInput.style.height = "";
+  render();
+  try {
+    let chatId = state.chats.active || state.health?.activeChat || "";
+    if (!chatId) {                          // no chat yet → create one so the note persists
+      const created = await postBridge("/chats", { title: `Notes ${new Date().toLocaleDateString()}` });
+      chatId = created.active || created.chat?.id || "";
+      if (chatId) state.chats.active = chatId;
+    }
+    if (!chatId) { streamState.textContent = "Could not open a chat for the note"; return; }
+    const res = await postBridge(`/chats/${encodeURIComponent(chatId)}/note`, { text, source: "typed-note" });
+    if (res.chatId) state.chats.active = res.chatId;
+    streamState.textContent = "Saved to logs + journal (no response)";
+  } catch (error) {
+    streamState.textContent = `Note failed: ${error.message}`;
+  }
+}
+
+// N-75 chat-ops handlers — all operate on the durable transcript via the bridge.
+async function handleChatOp(op, message, btn) {
+  const chatId = message.chatId || state.chats.active;
+  if (op === "regen-menu") {
+    const dd = btn.parentElement.querySelector(".op-dropdown");
+    if (dd) dd.hidden = !dd.hidden;
+    return;
+  }
+  if (op === "diff-toggle") { message.showDiff = !message.showDiff; render(); return; }
+  if (op === "variant-prev" || op === "variant-next") { await switchVariant(message, op === "variant-next" ? 1 : -1); return; }
+  if (op === "regen")   { await regenerateMessage(message, Number(btn.dataset.opIndex)); return; }
+  if (op === "edit")    { await editMessage(message); return; }
+  if (op === "branch")  { await branchFromMessage(message); return; }
+}
+
+async function regenerateMessage(message, opIndex) {
+  if (!message.msgId || state.streaming) return;
+  const chatId = message.chatId || state.chats.active;
+  const spec = REGEN_OPS[opIndex] || REGEN_OPS[0];
+  const prevText = message.text;          // capture BEFORE we overwrite (variant 0 keeps it)
+  const body = { message_id: message.msgId, op: spec.op, config: configSnapshot() };
+  if (spec.preset) body.preset = spec.preset;
+
+  // §3a section ops act on the text the user selected inside this response.
+  if (spec.needsSelection) {
+    const sel = selectionWithin(message.uiId);
+    if (!sel) {
+      streamState.textContent = "Select text in the response first, then choose the op";
+      return;
+    }
+    body.section = sel;
+  }
+  if (spec.needsN) {
+    const n = await promptInline(spec.nLabel || "N?", { kind: "number" });
+    if (n == null || !String(n).trim()) return;   // cancelled
+    body.n = Number(n);
+  }
+  if (spec.guided) {
+    const guidance = await promptInline(
+      spec.op === "selective" ? "How should the selection be revised?"
+                              : "What should the regeneration consider?",
+      { multiline: true });
+    if (guidance == null) return;          // cancelled
+    body.guidance = guidance;
+  }
+  try {
+    streamState.textContent = "Regenerating";
+    state.streaming = true;
+    const res = await postBridge(`/chats/${encodeURIComponent(chatId)}/regenerate`, body);
+    const text = normalizeAssistantReply(res).text;
+    message.variants = message.variants || [{ id: message.msgId, text: prevText }];
+    message.text = text;
+    if (res.assistantMsgId) {
+      message.variants.push({ id: res.assistantMsgId, text });
+      message.variantIndex = message.variants.length - 1;
+      message.msgId = res.assistantMsgId;
+    }
+    if (res.diff) { message.diff = res.diff; message.showDiff = false; }
+    message.meta = ["regenerated", spec.label.replace(/…$/, "")];
+  } catch (error) {
+    streamState.textContent = `Regenerate failed: ${error.message}`;
+  } finally {
+    state.streaming = false;
+    streamState.textContent = "Idle";
+    render();
+  }
+}
+
+// Text the user has selected within a given rendered message body (for §3a
+// selective/explain section ops). Tracked on selectionchange so a click on the
+// op menu does not lose it. Returns "" when nothing is selected in that message.
+let lastSelection = { uiId: "", text: "" };
+document.addEventListener("selectionchange", () => {
+  const sel = window.getSelection();
+  const text = sel ? String(sel).trim() : "";
+  if (!text) return;                       // keep the previous capture (menu clicks clear it)
+  const node = sel.anchorNode;
+  const host = (node?.nodeType === 1 ? node : node?.parentElement)?.closest?.("[data-message-id] .mdx");
+  const article = host?.closest("[data-message-id]");
+  if (article) lastSelection = { uiId: article.dataset.messageId, text };
+});
+
+function selectionWithin(uiId) {
+  return lastSelection.uiId === uiId ? lastSelection.text : "";
+}
+
+// In-UI replacement for window.prompt (unreliable inside the Tauri webview): a
+// small input bar above the composer that resolves a Promise. Enter = OK
+// (Ctrl/Cmd+Enter for multiline), Escape = cancel. Returns null when cancelled.
+function promptInline(label, { value = "", multiline = false, kind = "text" } = {}) {
+  return new Promise((resolve) => {
+    const host = document.createElement("div");
+    host.className = "inline-prompt";
+    host.innerHTML = `
+      <label class="ip-label">${escapeHtml(label)}</label>
+      ${multiline
+        ? `<textarea class="ip-input" rows="4"></textarea>`
+        : `<input class="ip-input" type="${kind === "number" ? "number" : "text"}" />`}
+      <span class="ip-actions">
+        <button type="button" class="op-btn" data-ip="ok">OK</button>
+        <button type="button" class="op-btn ghost" data-ip="cancel">Cancel</button>
+      </span>`;
+    (form?.parentElement || document.body).insertBefore(host, form);
+    const input = host.querySelector(".ip-input");
+    input.value = value;
+    input.focus();
+    input.select?.();
+    const done = (val) => { host.remove(); promptInput.focus(); resolve(val); };
+    host.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-ip]");
+      if (button) done(button.dataset.ip === "ok" ? input.value : null);
+    });
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") { event.preventDefault(); done(null); }
+      else if (event.key === "Enter" && (!multiline || event.ctrlKey || event.metaKey)) {
+        event.preventDefault();
+        done(input.value);
+      }
+    });
+  });
+}
+
+async function switchVariant(message, delta) {
+  const list = message.variants || [];
+  if (list.length <= 1) return;
+  let i = (message.variantIndex ?? 0) + delta;
+  i = Math.max(0, Math.min(list.length - 1, i));
+  if (i === message.variantIndex) return;
+  const chosen = list[i];
+  const chatId = message.chatId || state.chats.active;
+  try {
+    const parent = await parentOf(chatId, chosen.id);
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/head`, { parent_id: parent, child_id: chosen.id });
+    // Reload the active path so this node AND everything downstream re-resolve to
+    // the chosen branch (a local text swap would leave later turns stale).
+    await loadChatIntoFeed(chatId);
+  } catch (error) {
+    streamState.textContent = `Variant switch failed: ${error.message}`;
+  }
+}
+
+async function editMessage(message) {
+  if (!message.msgId) return;
+  const chatId = message.chatId || state.chats.active;
+  const next = await promptInline("Edit message:", { value: message.text || "", multiline: true });
+  if (next == null || next === message.text) return;
+  try {
+    const res = await postBridge(
+      `/chats/${encodeURIComponent(chatId)}/messages/${encodeURIComponent(message.msgId)}/edit`,
+      { text: next });
+    message.text = next;
+    if (res.id) message.msgId = res.id;
+    message.diff = res.diff || "";
+    message.showDiff = true;
+    message.meta = ["edited"];
+  } catch (error) {
+    streamState.textContent = `Edit failed: ${error.message}`;
+  }
+  render();
+}
+
+async function branchFromMessage(message) {
+  if (!message.msgId) return;
+  const chatId = message.chatId || state.chats.active;
+  try {
+    const res = await postBridge(`/chats/${encodeURIComponent(chatId)}/branch`, { at_message_id: message.msgId });
+    streamState.textContent = `Branched into a new chat (${res.chat?.title || res.active})`;
+    if (res.active) await loadChatIntoFeed(res.active);   // show the branched conversation
+    await refreshHistory();
+  } catch (error) {
+    streamState.textContent = `Branch failed: ${error.message}`;
+  }
+}
+
+// N-75 chat-ops: regenerate / edit / branch / variant-switch / diff-toggle.
+function messageFromEvent(event) {
+  const el = event.target.closest("[data-message-id]");
+  if (!el) return null;
+  return state.messages.find((m) => m.uiId === el.dataset.messageId) || null;
+}
+
 feed.addEventListener("click", async (event) => {
+  const opBtn = event.target.closest("[data-chat-op]");
+  if (opBtn) {
+    const message = messageFromEvent(event);
+    if (message) await handleChatOp(opBtn.dataset.chatOp, message, opBtn);
+    return;
+  }
   const button = event.target.closest("[data-action-decision]");
   const card = button?.closest("[data-action-id]");
   if (!button || !card) return;
@@ -1543,6 +1852,13 @@ feed.addEventListener("click", async (event) => {
 });
 
 promptInput.addEventListener("keydown", (event) => {
+  if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+    // N-75 no-response input: log to chat + journal, no model turn.
+    event.preventDefault();
+    submitAsNote = true;
+    form.requestSubmit();
+    return;
+  }
   if (event.key === "Enter" && !event.shiftKey) {
     event.preventDefault();
     form.requestSubmit();
@@ -1641,6 +1957,9 @@ document.addEventListener("click", (event) => {
 for (const id of ["#retrieval-toggle", "#proactive-toggle", "#deep-search-toggle"]) {
   document.querySelector(id).addEventListener("click", (event) => {
     setPressed(event.currentTarget);
+    // Proactive is a real consent gate on the kernel's unprompted-findings loop,
+    // not just a per-turn config flag — push the new state to the bridge (N-67).
+    if (id === "#proactive-toggle") setKernelObserver("proactive", pressed(id)).catch(() => {});
     if (id === "#deep-search-toggle") syncWebDepthButton();
     if (id === "#retrieval-toggle") {
       event.currentTarget.textContent = pressed(id) ? "On" : "Off";
@@ -2280,6 +2599,7 @@ function onRemoteResponse(payload) {
 
 async function startDefaultObservers() {
   setKernelObserver("vision", pressed("#video-toggle")).catch(() => {});
+  setKernelObserver("proactive", pressed("#proactive-toggle")).catch(() => {});   // sync the consent gate
   if (pressed("#audio-toggle")) {
     setKernelObserver("audio", true).catch(() => {});
     if (pressed("#voice-listen-toggle")) {
@@ -2388,6 +2708,52 @@ document.querySelector("#reminders-list")?.addEventListener("click", async (even
   }
 });
 
+// ── N-75 minimap: reduced branch/variant tree for the active chat ─────────────
+async function openMinimap() {
+  const panel = document.querySelector("#minimap-panel");
+  const body = document.querySelector("#minimap-body");
+  if (!panel || !body) return;
+  panel.hidden = false;
+  const chatId = state.chats.active || "";
+  if (!chatId) { body.innerHTML = '<span class="tasks-empty">No active chat.</span>'; return; }
+  body.innerHTML = "Loading…";
+  try {
+    const tree = await getBridge(`/chats/${encodeURIComponent(chatId)}/tree`);
+    body.innerHTML = renderMinimap(tree);
+  } catch (error) {
+    body.innerHTML = `<span class="tasks-empty">Could not load map: ${escapeHtml(error.message)}</span>`;
+  }
+}
+
+function renderMinimap(tree) {
+  const nodes = tree.nodes || [];
+  if (!nodes.length) return '<span class="tasks-empty">Empty chat.</span>';
+  const onPath = new Set(tree.path || []);
+  // group siblings by parent so variants render side-by-side under their query
+  const byParent = new Map();
+  for (const n of nodes) {
+    const key = n.parent || "";
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(n);
+  }
+  const childIds = new Set(nodes.map((n) => n.id));
+  const roots = nodes.filter((n) => !n.parent || !childIds.has(n.parent));
+  const seen = new Set();
+  const walk = (node, depth) => {
+    if (seen.has(node.id)) return "";
+    seen.add(node.id);
+    const sibs = (byParent.get(node.parent || "") || []);
+    const variant = sibs.length > 1 ? ` <em>(${sibs.indexOf(node) + 1}/${sibs.length} ${escapeHtml(node.kind)})</em>` : "";
+    const active = onPath.has(node.id) ? " active" : "";
+    const label = `${node.role === "user" ? "▸" : "◂"} ${escapeHtml(node.snippet || "")}`;
+    const self = `<div class="map-node${active}" style="margin-left:${depth * 14}px" data-map-id="${escapeAttr(node.id)}"
+        data-map-parent="${escapeAttr(node.parent || "")}">${label}${variant}</div>`;
+    const kids = (byParent.get(node.id) || []).map((c) => walk(c, depth + 1)).join("");
+    return self + kids;
+  };
+  return roots.map((r) => walk(r, 0)).join("");
+}
+
 // ── previous chats / journals ────────────────────────────────────────────────
 async function refreshHistory() {
   const [history, chats] = await Promise.allSettled([
@@ -2431,17 +2797,65 @@ function renderHistory() {
     : renderMdx(text);
 }
 
+function tsToTime(ts) {
+  const d = ts ? new Date(ts) : null;
+  return d && !Number.isNaN(d.getTime())
+    ? new Intl.DateTimeFormat([], { hour: "2-digit", minute: "2-digit" }).format(d)
+    : currentTime();
+}
+
+// N-75: render a stored chat's ACTIVE PATH into the live feed (not just the history
+// preview). Each node is hydrated with its durable id + chatId so regenerate/edit/
+// branch/diff work, and sibling counts from the tree drive the ‹n/m› variant nav.
+async function loadChatIntoFeed(chatId) {
+  if (!chatId) return;
+  await postBridge(`/chats/${encodeURIComponent(chatId)}/switch`, {});
+  const data = await getBridge(`/chats/${encodeURIComponent(chatId)}`);
+  state.chats.active = chatId;
+  const byParent = new Map();
+  for (const node of (data.tree?.nodes || [])) {
+    const key = node.parent || "";
+    if (!byParent.has(key)) byParent.set(key, []);
+    byParent.get(key).push(node);
+  }
+  state.liveDraft = null;
+  state.voiceBubble = null;
+  state.messages = (data.messages_list || []).map((m) => {
+    const msg = {
+      role: m.role, text: m.text || "", time: tsToTime(m.ts),
+      msgId: m.id, chatId, hydrated: true,
+      diff: m.diff || "",
+      meta: m.kind && m.kind !== "turn" ? [m.kind] : [],
+    };
+    const sibs = byParent.get(m.parent || "") || [];
+    if (sibs.length > 1) {
+      const idx = sibs.findIndex((s) => s.id === m.id);
+      // text held only for the active sibling; others reload on switch (snippet-free).
+      msg.variants = sibs.map((s) => ({ id: s.id, text: s.id === m.id ? msg.text : "" }));
+      msg.variantIndex = idx < 0 ? sibs.length - 1 : idx;
+    }
+    return msg;
+  });
+  render();
+}
+
+async function parentOf(chatId, messageId) {
+  const tree = await getBridge(`/chats/${encodeURIComponent(chatId)}/tree`);
+  const node = (tree.nodes || []).find((n) => n.id === messageId);
+  return node ? node.parent : null;
+}
+
 async function loadChat(chatId) {
   try {
-    await postBridge(`/chats/${encodeURIComponent(chatId)}/switch`, {});
-    const data = await getBridge(`/chats/${encodeURIComponent(chatId)}`);
-    state.chats.active = chatId;
+    await loadChatIntoFeed(chatId);
     state.history.selected = { id: `session:${chatId}` };
     state.history.format = "mdx";
-    state.history.text = (data.messages_list || []).map((message) => {
-      const who = message.role === "user" ? "You" : "LAWRENCE";
-      return `## ${who}\n\n${message.text || ""}`;
-    }).join("\n\n") || "_No messages in this chat._";
+    state.history.text = state.messages.length
+      ? state.messages.map((message) => {
+          const who = message.role === "user" ? "You" : "LAWRENCE";
+          return `## ${who}\n\n${message.text || ""}`;
+        }).join("\n\n")
+      : "_No messages in this chat._";
   } catch (error) {
     state.history.text = `Could not load chat: ${error.message}`;
   }
@@ -2540,6 +2954,24 @@ document.querySelector("#history-open")?.addEventListener("click", () => {
 });
 document.querySelector("#history-close")?.addEventListener("click", () => closeHistoryPanel(true));
 document.querySelector("#history-refresh")?.addEventListener("click", refreshHistory);
+document.querySelector("#minimap-open")?.addEventListener("click", openMinimap);
+document.querySelector("#minimap-close")?.addEventListener("click", () => {
+  const p = document.querySelector("#minimap-panel"); if (p) p.hidden = true;
+});
+document.querySelector("#minimap-body")?.addEventListener("click", async (event) => {
+  const node = event.target.closest("[data-map-id]");
+  if (!node) return;
+  const chatId = state.chats.active || "";
+  const child = node.dataset.mapId, parent = node.dataset.mapParent || null;
+  if (!chatId || !child) return;
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/head`, { parent_id: parent, child_id: child });
+    await loadChatIntoFeed(chatId);   // reflect the chosen path in the feed
+    await openMinimap();              // re-render with the new active path highlighted
+  } catch (error) {
+    streamState.textContent = `Map switch failed: ${error.message}`;
+  }
+});
 document.querySelector("#chat-new")?.addEventListener("click", async () => {
   try {
     await postBridge("/chats", { title: `Chat ${new Date().toLocaleString()}` });

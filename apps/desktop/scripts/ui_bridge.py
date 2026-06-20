@@ -224,6 +224,9 @@ class DesktopBridge:
         self.proactive_interval = float(os.environ.get("LK_PROACTIVE_INTERVAL", "600"))
         self._last_proactive = 0.0
         self._proactive_busy = False
+        # User consent gate for unprompted findings (the UI proactive toggle). Default
+        # on (matches the UI default); flipping it off truly silences the loop (N-67).
+        self.proactive_enabled = os.environ.get("LK_PROACTIVE", "1") not in ("0", "false", "")
         # In-flight turn tracking — voice-listen mode auto-submits a turn per
         # transcribed segment, which floods the single-slot CPU queue when a
         # video/conversation plays. Drop voice turns while one is already running.
@@ -440,6 +443,9 @@ class DesktopBridge:
             changed = self._set_vision(enabled)
         elif observer == "audio":
             changed = self._set_audio(enabled)
+        elif observer == "proactive":
+            changed = self.proactive_enabled != enabled
+            self.proactive_enabled = enabled       # gate the unprompted-findings loop
         else:
             raise BridgeError(400, f"unsupported observer: {observer or '(missing)'}")
         return {"accepted": True, "observer": observer, "enabled": enabled, "changed": changed}
@@ -530,6 +536,8 @@ class DesktopBridge:
         event — the same loop the REPL wires (G4); previously missing in UI
         mode. Rate-limited; the inference gate additionally drops the call when
         the model slot is busy."""
+        if not self.proactive_enabled:        # user turned unprompted findings off (N-67)
+            return
         now = time.monotonic()
         if now - self._last_proactive < self.proactive_interval:
             return
@@ -1006,6 +1014,7 @@ class DesktopBridge:
         transcript   = str(request.get("transcript") or turn.get("transcript") or "")
         job_id       = str(request.get("jobId") or request.get("job_id") or "")
         should_stop  = request.get("should_stop")   # cooperative cancel probe (set by the job runner)
+        regen        = request.get("_regen") or {}  # N-75: regenerate/edit a variant (no new user msg)
 
         images, audios, notes = self._media_for_turn(turn, mode)
         explicit_media = (
@@ -1141,23 +1150,8 @@ class DesktopBridge:
             answer = _process_answer(answer)
             answer = _append_once(answer, forced_suffix)
             # Durable per-chat transcript (addressable message ids for Track 2 links).
-            user_mid = asst_mid = ""
-            try:
-                user_mid = self.chats.append_message(
-                    chat_id, "user", user_message,
-                    meta={"source": source} if source else None)
-                asst_mid = self.chats.append_message(chat_id, "assistant", answer)
-                # Feed the durable transcript into hybrid recall (N-02), so past
-                # conversation becomes recallable in future turns. Best-effort.
-                try:
-                    if user_mid:
-                        self.memory.upsert(user_mid, "chat", user_message, title="chat[user]")
-                    if asst_mid:
-                        self.memory.upsert(asst_mid, "chat", answer, title="chat[assistant]")
-                except Exception:
-                    pass
-            except Exception as exc:
-                self.events.append(f"[chat] transcript write failed: {exc}")
+            user_mid, asst_mid = self._persist_turn(
+                chat_id, user_message, answer, source, regen)
             controls = dict(controls or {})
             applied = self._apply_model_controls(controls)
             if applied:
@@ -1179,6 +1173,203 @@ class DesktopBridge:
                 "answer": answer, "controls": controls, "events": list(self.events),
                 "chatId": chat_id, "userMsgId": user_mid, "assistantMsgId": asst_mid,
             }
+
+    # ── transcript persistence (turn + regenerate/edit variants) ─────────────────
+    def _persist_turn(self, chat_id: str, user_message: str, answer: str,
+                      source: str, regen: dict[str, Any]) -> tuple[str, str]:
+        """Write a turn to the durable per-chat transcript and feed hybrid recall.
+        A normal turn appends user+assistant; a regeneration (``regen``) appends ONLY
+        a new assistant variant (sibling or in-place edit) — no phantom user message."""
+        user_mid = asst_mid = ""
+        try:
+            if regen:
+                mid = str(regen.get("message_id") or "")
+                if regen.get("as_edit"):
+                    res = self.chats.edit_message(chat_id, mid, answer)
+                    asst_mid = (res or {}).get("id", "") if res else ""
+                else:
+                    asst_mid = self.chats.add_variant(
+                        chat_id, mid, "assistant", answer,
+                        kind=str(regen.get("kind") or "regen")) or ""
+                if asst_mid:
+                    try:
+                        self.memory.upsert(asst_mid, "chat", answer, title="chat[assistant]")
+                    except Exception:
+                        pass
+                return user_mid, asst_mid
+            user_mid = self.chats.append_message(
+                chat_id, "user", user_message,
+                meta={"source": source} if source else None)
+            asst_mid = self.chats.append_message(chat_id, "assistant", answer)
+            # Feed the durable transcript into hybrid recall (N-02), so past
+            # conversation becomes recallable in future turns. Best-effort.
+            try:
+                if user_mid:
+                    self.memory.upsert(user_mid, "chat", user_message, title="chat[user]")
+                if asst_mid:
+                    self.memory.upsert(asst_mid, "chat", answer, title="chat[assistant]")
+            except Exception:
+                pass
+        except Exception as exc:
+            self.events.append(f"[chat] transcript write failed: {exc}")
+        return user_mid, asst_mid
+
+    # ── N-75 §3a: regeneration operations (single-response, scoped) ───────────────
+    # Preset directives are the built-in defaults; the launcher's config surface may
+    # override/extend the set per request via {presetText}. KISS, extensible (I4).
+    _REGEN_PRESETS = {
+        "longer":   "Regenerate a substantially longer, more thorough version. Add depth, examples, and edge cases.",
+        "shorter":  "Regenerate a much shorter, tighter version. Keep only the essential points.",
+        "formal":   "Regenerate in a formal, professional register.",
+        "academic": "Regenerate in a rigorous academic register with precise terminology.",
+        "casual":   "Regenerate in a relaxed, conversational tone.",
+        "humanize": "Rewrite to read naturally as a human author would — vary sentence rhythm, avoid"
+                    " formulaic AI phrasing and boilerplate, keep every fact intact.",
+        "extend":   "Extend the response with roughly {n} additional, non-redundant points or paragraphs.",
+        "compress": "Compress the response to about {n} words while preserving the key content.",
+    }
+
+    def _regen_directive(self, op: str, *, guidance: str, preset: str, n: Any,
+                         section: str, preset_text: str, original: str) -> tuple[str, bool]:
+        """Build the op-specific instruction appended to the originating query.
+        Returns (directive, as_edit) — ``as_edit`` ⇒ persist as an in-place edit+diff."""
+        sec = f' Operate ONLY on this section: «{section.strip()}».' if section.strip() else ""
+        if op == "informed":
+            g = guidance.strip() or "Improve the response."
+            return (f"Regenerate your previous response.{sec} Consider this guidance: {g}", False)
+        if op == "preset":
+            tmpl = (preset_text.strip() or self._REGEN_PRESETS.get(preset, ""))
+            if not tmpl:
+                return (f"Regenerate your previous response.{sec}", False)
+            try:
+                tmpl = tmpl.format(n=n if n is not None else "")
+            except Exception:
+                pass
+            return (f"{tmpl}{sec}", False)
+        if op == "ground":
+            return (
+                f"Regenerate with STRICTER citation grounding.{sec} Cross-check every claim against"
+                " sources, attach citations at the point of evidence, remove anything you cannot"
+                " ground, and add more supporting evidence where claims are thin.", False)
+        if op == "selective":
+            g = guidance.strip()
+            extra = f" Apply this guidance: {g}." if g else ""
+            return (
+                f"Revise ONLY the following section, leaving everything else byte-for-byte"
+                f" unchanged: «{section.strip()}».{extra} Return the COMPLETE response with just"
+                f" that section changed.", True)
+        if op == "explain":
+            return (
+                f"Elaborate/explain this section in place: «{section.strip()}». Return the COMPLETE"
+                f" response with the elaboration integrated where that section was.", True)
+        # unknown op → plain regenerate
+        return (f"Regenerate your previous response.{sec}", False)
+
+    def regenerate(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-75 §3a. Regenerate an assistant response as a browsable variant (or an
+        in-place section edit). Reconstructs the originating user query, appends an
+        op-specific directive, runs the turn, and persists via ``_persist_turn``."""
+        message_id = str(request.get("message_id") or request.get("messageId") or "")
+        if not message_id:
+            raise BridgeError(400, "regenerate needs {message_id}")
+        orig = self.chats.get_by_id(chat_id, message_id)
+        if orig is None:
+            raise BridgeError(404, f"unknown message: {message_id}")
+        if orig.get("role") != "assistant":
+            raise BridgeError(400, "can only regenerate an assistant response")
+        op = str(request.get("op") or "informed")
+        parent_id = self.chats.parent_of(chat_id, message_id)
+        parent = self.chats.get_by_id(chat_id, parent_id) if parent_id else None
+        base_query = str((parent or {}).get("text") or "")
+        directive, as_edit = self._regen_directive(
+            op,
+            guidance=str(request.get("guidance") or ""),
+            preset=str(request.get("preset") or ""),
+            n=request.get("n"),
+            section=str(request.get("section") or ""),
+            preset_text=str(request.get("presetText") or ""),
+            original=str(orig.get("text") or ""),
+        )
+        text = f"{base_query}\n\n{directive}" if directive else base_query
+        turn_req = {
+            "turn": {"text": text, "config": request.get("config") or {}},
+            "source": "regenerate", "chatId": chat_id,
+            "_regen": {"message_id": message_id, "kind": op,
+                       "as_edit": as_edit},
+        }
+        result = self.turn(turn_req)
+        result["op"] = op
+        new_mid = result.get("assistantMsgId") or ""
+        if as_edit and new_mid:                    # surface the stored diff for the inline view
+            rec = self.chats.get_by_id(chat_id, new_mid) or {}
+            result["diff"] = rec.get("diff", "")
+            result["editOf"] = message_id
+        return result
+
+    def message_edit(self, chat_id: str, message_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-75. User-authored edit of any message (query or response) → an `edit`
+        variant carrying a unified diff. No model call; the diff drives the inline view."""
+        text = request.get("text")
+        if text is None:
+            raise BridgeError(400, "edit needs {'text': ...}")
+        res = self.chats.edit_message(chat_id, message_id, str(text))
+        if res is None:
+            raise BridgeError(404, f"unknown message: {message_id}")
+        self.ui.push_context_event("chat", f"edited {message_id}")
+        return {"ok": True, "chatId": chat_id, **res}
+
+    def variant_head(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-75. Select which variant sits on the active path (variant switch)."""
+        child = str(request.get("child_id") or request.get("childId") or "")
+        if not child:
+            raise BridgeError(400, "head needs {child_id}")
+        parent = request.get("parent_id", request.get("parentId"))
+        parent = str(parent) if parent else None
+        if not self.chats.set_head(chat_id, parent, child):
+            raise BridgeError(404, f"unknown child message: {child}")
+        return {"ok": True, "chatId": chat_id, "tree": self.chats.tree(chat_id)}
+
+    def chat_branch(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-75 kind-2. Branch-off into a NEW chat seeded with the active-path prefix
+        up to the chosen message; the new chat becomes active."""
+        at = str(request.get("at_message_id") or request.get("atMessageId") or "")
+        if not at:
+            raise BridgeError(400, "branch needs {at_message_id}")
+        new = self.chats.fork_chat(chat_id, at, title=str(request.get("title") or ""))
+        if new is None:
+            raise BridgeError(404, f"message not on active path: {at}")
+        self.active_chat_id = new["id"]
+        self.chats.set_active(new["id"])
+        self.ui.push_context_event("chat", f"branched {chat_id}@{at} → {new['id']}")
+        return {"ok": True, "active": new["id"], "chat": new, "from": {"chatId": chat_id, "at": at}}
+
+    def chat_tree(self, chat_id: str) -> dict[str, Any]:
+        """N-75. DAG view for the minimap: every variant + active path + head."""
+        if self.chats.chat_meta(chat_id) is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, **self.chats.tree(chat_id)}
+
+    def chat_note(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-75. No-response input: persist the user's text to the durable transcript,
+        feed logs + journal + recall, but run NO model turn. Success → metrics/notif."""
+        text = str(request.get("text") or "").strip()
+        if not text:
+            raise BridgeError(400, "note needs {'text': ...}")
+        source = str(request.get("source") or "note")
+        ts = datetime.now(timezone.utc).isoformat()
+        mid = self.chats.append_message(
+            chat_id, "user", text, meta={"source": source, "noResponse": True})
+        # Feed the journal/logs (rolling context the journal consumes) + hybrid recall.
+        try:
+            self.ctx.append(ts=ts, kind="note", compact=text[:120], detailed=text)
+        except Exception as exc:
+            self.events.append(f"[note] ctx append failed: {exc}")
+        try:
+            self.memory.upsert(mid, "chat", text, title="chat[note]")
+        except Exception:
+            pass
+        self.ui.push_context_event("chat", f"note (no-response) saved to logs + journal")
+        return {"ok": True, "chatId": chat_id, "messageId": mid, "responded": False}
 
     def _forced_web_results(self, text: str, config: dict[str, Any], deep: bool) -> list[Any]:
         web_intent = config.get("webIntent") or {}
@@ -2028,6 +2219,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, self.bridge.chat_get(unquote(parts[1])))
                 elif len(parts) == 3 and parts[2] == "export":
                     self._send(200, self.bridge.chat_export(unquote(parts[1])))
+                elif len(parts) == 3 and parts[2] == "tree":
+                    self._send(200, self.bridge.chat_tree(unquote(parts[1])))
                 else:
                     self._send(404, {"error": "not found"})
             except BridgeError as exc:
@@ -2072,12 +2265,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.chat_create(body))
             elif self.path == "/links":
                 self._send(200, self.bridge.create_link(body))
-            elif self.path.startswith("/chats/") and self.path.endswith("/switch"):
-                cid = unquote(self.path.strip("/").split("/")[1])
-                self._send(200, self.bridge.chat_switch(cid))
-            elif self.path.startswith("/chats/") and self.path.endswith("/restore"):
-                cid = unquote(self.path.strip("/").split("/")[1])
-                self._send(200, self.bridge.chat_restore(cid))
+            elif self.path.startswith("/chats/"):
+                parts = urlparse(self.path).path.strip("/").split("/")
+                cid = unquote(parts[1]) if len(parts) > 1 else ""
+                if len(parts) == 3 and parts[2] == "switch":
+                    self._send(200, self.bridge.chat_switch(cid))
+                elif len(parts) == 3 and parts[2] == "restore":
+                    self._send(200, self.bridge.chat_restore(cid))
+                elif len(parts) == 3 and parts[2] == "regenerate":
+                    self._send(200, self.bridge.regenerate(cid, body))
+                elif len(parts) == 3 and parts[2] == "branch":
+                    self._send(200, self.bridge.chat_branch(cid, body))
+                elif len(parts) == 3 and parts[2] == "head":
+                    self._send(200, self.bridge.variant_head(cid, body))
+                elif len(parts) == 3 and parts[2] == "note":
+                    self._send(200, self.bridge.chat_note(cid, body))
+                elif len(parts) == 5 and parts[2] == "messages" and parts[4] == "edit":
+                    self._send(200, self.bridge.message_edit(cid, unquote(parts[3]), body))
+                else:
+                    self._send(404, {"error": "not found"})
             else:
                 self._send(404, {"error": "not found"})
         except BridgeError as exc:

@@ -351,10 +351,54 @@ class KnowledgeTab(QtWidgets.QWidget):
         self.rem_list.setMinimumHeight(160)
         col.addWidget(self.rem_list, 1)
 
+        # N-75 chat VCS: read-only variant/edit history + diffs for a chosen chat.
+        col.addWidget(W.hline())
+        vhead = QtWidgets.QHBoxLayout()
+        vhead.addWidget(W.label("Chat history / VCS — variants + edit diffs (read-only)", kind="head"))
+        vhead.addStretch(1)
+        self.vcs_pick = QtWidgets.QComboBox()
+        vhead.addWidget(self.vcs_pick)
+        vrefresh = QtWidgets.QPushButton("Refresh")
+        vrefresh.clicked.connect(self._reload_vcs)
+        vhead.addWidget(vrefresh)
+        col.addLayout(vhead)
+        self.vcs_view = QtWidgets.QPlainTextEdit()
+        self.vcs_view.setReadOnly(True)
+        self.vcs_view.setMinimumHeight(160)
+        col.addWidget(self.vcs_view, 1)
+        self.vcs_pick.currentIndexChanged.connect(self._show_vcs)
+
         self.setLayout(QtWidgets.QVBoxLayout())
         self.layout().setContentsMargins(0, 0, 0, 0)
         self.layout().addWidget(_scroll(inner))
         self._reload_reminders()
+        self._reload_vcs()
+
+    def _reload_vcs(self) -> None:
+        try:
+            from . import chat_vcs
+            chats = chat_vcs.list_chats()
+        except Exception as exc:
+            self.vcs_view.setPlainText(f"chats unavailable: {exc}")
+            return
+        self.vcs_pick.blockSignals(True)
+        self.vcs_pick.clear()
+        for c in chats:
+            title = c.get("title") or c.get("id")
+            self.vcs_pick.addItem(f"{title}{' · archived' if c.get('archived') else ''}", c.get("id"))
+        self.vcs_pick.blockSignals(False)
+        self._show_vcs()
+
+    def _show_vcs(self) -> None:
+        cid = self.vcs_pick.currentData()
+        if not cid:
+            self.vcs_view.setPlainText("(no chats)")
+            return
+        try:
+            from . import chat_vcs
+            self.vcs_view.setPlainText(chat_vcs.format_history(cid))
+        except Exception as exc:
+            self.vcs_view.setPlainText(f"history unavailable: {exc}")
 
     def _reload_reminders(self) -> None:
         try:
