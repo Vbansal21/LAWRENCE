@@ -3270,7 +3270,10 @@ Ties directly to chat-flow Phase-1 (a turn must feel responsive). **HIGH priorit
 
 **The formal MVP gates (§K.0.1) still open:**
 - **#1 INTEGRITY → N-67** UI integrity audit — **pass-1 DONE (D-51: control-surface sweep; proactive
-  over-claim fixed)**; remainder = qualitative pass + D-35/39/40/41 re-grade. Blocking; also gates §Q Phase-1.
+  over-claim fixed)** + **pass-2 progress (D-56: pathway audit found & fixed a real observer-lifecycle RACE —
+  rapid/conflicting toggles leaked a running observer; now lock-serialized + a concurrency harness
+  `test_bridge_races.py` proving "press X then W within K s holds")**; remainder = qualitative pass +
+  D-35/39/40/41 re-grade. Blocking; also gates §Q Phase-1.
 - **#2 ATOMIC/NODAL → N-66** — **pass-1 DONE (D-53)**: the 14-subsystem partition is now gate-guarded code
   (`services.py` + `test_services.py`, disjoint+total ownership, one objective/contract/invariant each) +
   `docs/SERVICE_INVENTORY.md`. **Remaining (`[~]`):** per-subsystem internal extraction (break residual
@@ -3289,17 +3292,31 @@ Ties directly to chat-flow Phase-1 (a turn must feel responsive). **HIGH priorit
   **N-18/N-19/N-20/N-23** small refinement streams.
 - **NEW (2026-06-20):**
   - **N-78 (HOST-PROCESS HYGIENE)** `[~]` — the Windows host accrued 100+ `aspnet_compiler.exe` +
-    powershells + `msiexec`. **Root-cause fixed → D-52** (notify dedupe/throttle/cap+reap, `cli._notify`
-    delegates, `screen_windows()` TTL-cached, no Popen leak). **Remaining:** audit the *other* powershell
-    callers for churn/leaks (hotkey relaunch path in `desktopctl.sh`, `ctl.py` status probes, `obs`
-    one-shots); prefer a single long-lived helper / WSLg-native notifier over per-event WinForms spawns.
-    Feeds **#4 N-61** (desktop/host endurance).
+    powershells + `msiexec`. **D-52** fixed notify + window-layout; **D-59 fixed the ACTUAL dominant source**
+    — `vision.capture_foreground` (the PRIMARY ~10s poll) was `Add-Type`-ing an inline C# class EVERY poll
+    (→ C# compiler + msiexec storm). Now a **persistent powershell host** ([obs/winhost.py]) loads everything
+    ONCE → one host process/session instead of one compiler-spawning process/poll; `LK_WINHOST=0` safety
+    valve; `test_winhost.py` proves 25 calls → 1 spawn. **Remaining:** (a) **live-verify** on the Windows host
+    that powershell/aspnet_compiler/msiexec counts stay flat over an hour of vision-on; (b) the low-frequency
+    callers (hotkey relaunch in `desktopctl.sh`, `ctl.py` status probes) — bounded, optional; (c) optionally
+    route notify's balloon through the host (render-risk, deferred). Feeds **#4 N-61** (desktop/host endurance).
   - **N-79 (DEBUG-LOGGING)** `[~]` — shared `debuglog.py` mechanism shipped (D-52; counters + structured
     `[debug]`, `LK_DEBUG`). **Remaining:** roll `debug(...)` calls into bridge turn, proactive (the firing
     audit), observers, schedule; surface counters on `/metrics`; add a launcher debug toggle. Supports
     N-07 firing observability + N-67 integrity.
 - **N-07 (PROACTIVE)** firing-audit + scope-preserving refinement — see the 2026-06-20 refinement block at
   N-07 (significance-gated trigger · adaptive cadence · firing observability via N-79 · de-starve via N-21).
+  **Concurrency reinforced (D-56):** the trigger is now single-flight (lock-guarded check-then-claim, no
+  double-spawn) and runs **async** in a daemon thread (non-blocking the tick/observers); inside, `run_proactive`
+  uses `engine.gather` which **parallelizes** the retrieval arms. So proactive = async + internally-parallel;
+  the open work is *when it fires* (significance gate), not *how* it runs.
+- **NEW (2026-06-20, reliability/compliance):**
+  - **CI/CD shipped → D-57** (`.github/workflows/ci.yml`: offline gate on 3.11/3.12 + Graphviz diagram lint).
+  - **Backup retention → D-57** (`prune_backups`, `LK_BACKUP_KEEP`=10) — `.runtime/` can no longer grow
+    unbounded. Crash-recovery surface confirmed sound: atomic tmp+`os.replace` writes (ctx/store), flock
+    self-releases on kill (lock.py), startup trims a crashed session's raw buffer.
+  - **N-10 declutter pass-1 → D-58** (flattened nested drawer chrome; CSS-only, all IDs intact; **live-verify
+    pending** rebuild). N-10 deep pass + §Q.9 P1 renderer remain.
 - **Carry-overs:** N-63 live-mic verify (pending hardware) · the `test_retrieval_engine` full-suite
   ordering flake (housekeeping).
 
@@ -3308,11 +3325,12 @@ done (D-54/D-55)** → ~~N-66 atomic/nodal~~ **pass-1 done (D-53)** → **next: 
 parallelism/prefetch) + N-66 pass-2 (internal extraction)** → N-67 integrity audit (pass-2) → N-59/60/61 →
 N-62 acceptance; **N-78/N-79 host-hygiene + debug-logging fold into N-61/N-67**; N-07 proactive refinement
 rides N-21+N-79; N-68 + N-17/55 triaged in.
-**Status note (2026-06-20, this session):** §K.0.1 gate #2 (ATOMIC) + the N-32/N-22 latency-substrate of
-gate #3 now have landed, gate-guarded, offline-verified pass-1 implementations (D-53/D-54/D-55, `make check`
-44 suites green). The remaining MVP-blocking work is **live-verification-bound** (#3 real tok/s + turn-time
-profile, #4 deployment stress, #1 N-67 qualitative pass) — i.e. needs the Tauri/Rust/WSLg rebuild + on-host
-runs that the sandbox can't perform; see the live-verify checklist below.
+**Status note (2026-06-20, this session):** §K.0.1 gate #2 (ATOMIC, D-53) + the N-32/N-22 latency-substrate
+of gate #3 (D-54/D-55) + an N-67 pass-2 concurrency fix (D-56) + CI/CD & backup retention (D-57) + UI
+declutter pass-1 (D-58) all landed gate-guarded & offline-verified (`make check` **47 suites green**). The
+remaining MVP-blocking work is **live-verification-bound** (#3 real tok/s + turn-time profile, #4 deployment
+stress, #1 N-67 qualitative pass, UI visual) — needs the Tauri/Rust/WSLg rebuild + on-host runs the sandbox
+can't perform; see the live-verify checklist below.
 
 **LIVE-VERIFY CHECKLIST (sandbox can't run these — needs rebuild + on-host execution):**
 - [ ] N-32: capture `turn.stagesMs` over real turns on the deployment host; confirm where the minutes go;
@@ -3321,6 +3339,9 @@ runs that the sandbox can't perform; see the live-verify checklist below.
 - [ ] N-67 pass-2: qualitative control-by-control pass in the live UI; re-grade D-35/39/40/41.
 - [ ] N-59/60/61 → N-62: deployment-stress lanes (held until user confirms scope per §N).
 - [ ] N-75/N-72/UI Phase-1: live webview checks after `cargo build --release` + WSLg relaunch.
+- [ ] N-10 declutter (D-58): visually confirm the flattened drawer in the live webview; continue the deep pass.
+- [ ] D-56 races: optional live multi-toggle smoke (rapid vision/audio/voice clicks) — unit harness already
+      proves the invariant; live run confirms no UX regression.
 
 ### §Q.11 — PHASE-2 is / isn't spec (user 2026-06-20; details §Q.10; to re-confirm before Phase-2)
 > Bounds each deferred item so Phase-2 scope is unambiguous when we open it. **IS** = delivers · **ISN'T** = boundary.

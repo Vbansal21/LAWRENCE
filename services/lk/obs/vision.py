@@ -31,6 +31,7 @@ from pathlib import Path
 from ..ctx import ContextStore, vision_gate
 from ..ctx import distill as D
 from ..ctx import gate as _gate
+from . import winhost
 from .regions import RegionTracker, WinRect, screen_windows
 
 # ── default tunables (instance attrs on VisionObserver, overridable live) ────
@@ -72,23 +73,35 @@ def _wsl_win_path(p: Path) -> str:
     return subprocess.check_output(["wslpath", "-w", str(p)], text=True).strip()
 
 
+# Legacy per-call script (used only when LK_WINHOST=0 — the safety valve). The
+# warm-host path (default) preloads these assemblies ONCE; see winhost.py.
+_PS_SCALED_LEGACY = (
+    "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
+    "$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;"
+    "$src=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
+    "$g=[System.Drawing.Graphics]::FromImage($src);"
+    "$g.CopyFromScreen($b.Left,$b.Top,0,0,$b.Size);"
+    "$dst=New-Object System.Drawing.Bitmap {w},{h};"
+    "$g2=[System.Drawing.Graphics]::FromImage($dst);"
+    "$g2.DrawImage($src,0,0,$dst.Width,$dst.Height);"
+    "$dst.Save('{wp}',[System.Drawing.Imaging.ImageFormat]::Png);"
+    "$g.Dispose();$g2.Dispose();$src.Dispose();$dst.Dispose();"
+)
+
+
 def _powershell_capture(out: Path, w: int, h: int) -> bool:
+    # N-78 bloat fix: route through the persistent powershell host so the
+    # WinForms/GDI assemblies are Add-Type'd ONCE for the whole session instead
+    # of per ~10s poll (the per-poll Add-Type was what spawned aspnet_compiler.exe
+    # + msiexec). Falls back to a fresh per-call powershell only if LK_WINHOST=0.
     if not shutil.which("powershell.exe"):
         return False
     out.parent.mkdir(parents=True, exist_ok=True)
     wp = _wsl_win_path(out)
-    ps = (
-        "Add-Type -AssemblyName System.Windows.Forms,System.Drawing;"
-        "$b=[System.Windows.Forms.SystemInformation]::VirtualScreen;"
-        "$src=New-Object System.Drawing.Bitmap $b.Width,$b.Height;"
-        "$g=[System.Drawing.Graphics]::FromImage($src);"
-        "$g.CopyFromScreen($b.Left,$b.Top,0,0,$b.Size);"
-        f"$dst=New-Object System.Drawing.Bitmap {w},{h};"
-        "$g2=[System.Drawing.Graphics]::FromImage($dst);"
-        "$g2.DrawImage($src,0,0,$dst.Width,$dst.Height);"
-        f"$dst.Save('{wp}',[System.Drawing.Imaging.ImageFormat]::Png);"
-        "$g.Dispose();$g2.Dispose();$src.Dispose();$dst.Dispose();"
-    )
+    if winhost.enabled():
+        ok, _o = winhost.host().run(f"LkScaled '{wp}' {w} {h}", timeout=20.0)
+        return ok and out.exists()
+    ps = _PS_SCALED_LEGACY.format(w=w, h=h, wp=wp)
     r = subprocess.run(
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
         stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, cwd=_WIN_CWD,
@@ -183,17 +196,24 @@ def capture_fullres(out: Path) -> tuple[int, int, int, int] | None:
     origin_y) — origin = virtual-screen top-left — or None on failure."""
     out.parent.mkdir(parents=True, exist_ok=True)
     if shutil.which("powershell.exe"):
-        ps = _PS_FULLRES.replace("__OUT__", _wsl_win_path(out))
-        try:
-            r = subprocess.run(
-                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-                capture_output=True, text=True, timeout=20, cwd=_WIN_CWD,
-            )
-        except Exception:
-            return None
-        if r.returncode != 0 or not out.exists():
-            return None
-        for line in reversed(r.stdout.splitlines()):
+        wp = _wsl_win_path(out)
+        if winhost.enabled():
+            ok, stdout = winhost.host().run(f"LkFullres '{wp}'", timeout=20.0)
+            if not ok or not out.exists():
+                return None
+        else:
+            ps = _PS_FULLRES.replace("__OUT__", wp)
+            try:
+                r = subprocess.run(
+                    ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                    capture_output=True, text=True, timeout=20, cwd=_WIN_CWD,
+                )
+            except Exception:
+                return None
+            if r.returncode != 0 or not out.exists():
+                return None
+            stdout = r.stdout
+        for line in reversed(stdout.splitlines()):
             nums = line.strip().split(",")
             if len(nums) == 4:
                 try:
@@ -285,17 +305,27 @@ def capture_foreground(out: Path) -> tuple[tuple[int, int, int, int], str] | Non
     if not shutil.which("powershell.exe"):
         return None
     out.parent.mkdir(parents=True, exist_ok=True)
-    ps = _PS_FOREGROUND.replace("__OUT__", _wsl_win_path(out))
-    try:
-        r = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
-            capture_output=True, text=True, timeout=20, cwd=_WIN_CWD,
-        )
-    except Exception:
-        return None
-    if r.returncode != 0 or not out.exists():
-        return None
-    for line in reversed(r.stdout.splitlines()):
+    wp = _wsl_win_path(out)
+    # N-78: foreground capture is the PRIMARY ~10s path and the legacy script
+    # Add-Type'd an inline C# class every call (the worst aspnet_compiler offender).
+    # The warm host defines LkForeground once; here we just call it.
+    if winhost.enabled():
+        ok, stdout = winhost.host().run(f"LkForeground '{wp}'", timeout=20.0)
+        if not ok or not out.exists():
+            return None
+    else:
+        ps = _PS_FOREGROUND.replace("__OUT__", wp)
+        try:
+            r = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                capture_output=True, text=True, timeout=20, cwd=_WIN_CWD,
+            )
+        except Exception:
+            return None
+        if r.returncode != 0 or not out.exists():
+            return None
+        stdout = r.stdout
+    for line in reversed(stdout.splitlines()):
         line = line.strip()
         if not line or line.startswith("ERR"):
             continue
@@ -491,6 +521,12 @@ class VisionObserver(threading.Thread):
     def stop(self) -> None:
         self._stop_evt.set()
         self.active = False
+        # Free the warm powershell host when the user turns vision off — nothing
+        # else uses it; it respawns lazily on the next capture. (N-78)
+        try:
+            winhost.shutdown()
+        except Exception:
+            pass
 
     def consume_pending_hi(self) -> Path | None:
         p, self.pending_hi = self.pending_hi, None

@@ -226,6 +226,19 @@ class DesktopBridge:
         self.proactive_interval = float(os.environ.get("LK_PROACTIVE_INTERVAL", "600"))
         self._last_proactive = 0.0
         self._proactive_busy = False
+        # Serializes the proactive trigger's check-then-set ONLY. Kept separate from
+        # the observer-lifecycle lock so a sensor stop()/join (which can wake the
+        # observer thread mid-_on_context_event → _maybe_proactive) can never
+        # deadlock against a concurrent toggle.
+        self._proactive_lock = threading.Lock()
+        # N-67/race-fix: one lock for ALL sensor + voice LIFECYCLE transitions
+        # (vision/audio via set_observer, voice via set_voice_listen). Without it,
+        # ThreadingHTTPServer runs each request in its own thread, so rapid or
+        # conflicting toggles ("vision on" twice, "audio on" + "voice on" within K
+        # ms) raced the check-then-act in _set_vision/_set_audio and could leak a
+        # running observer (self.vision=None while an observer keeps capturing).
+        # RLock: set_voice_listen may nest into _start/_restart_audio.
+        self._observer_lock = threading.RLock()
         # User consent gate for unprompted findings (the UI proactive toggle). Default
         # on (matches the UI default); flipping it off truly silences the loop (N-67).
         self.proactive_enabled = os.environ.get("LK_PROACTIVE", "1") not in ("0", "false", "")
@@ -445,15 +458,18 @@ class DesktopBridge:
     def set_observer(self, request: dict[str, Any]) -> dict[str, Any]:
         observer = str(request.get("observer", ""))
         enabled = bool(request.get("enabled"))
-        if observer == "vision":
-            changed = self._set_vision(enabled)
-        elif observer == "audio":
-            changed = self._set_audio(enabled)
-        elif observer == "proactive":
-            changed = self.proactive_enabled != enabled
-            self.proactive_enabled = enabled       # gate the unprompted-findings loop
-        else:
-            raise BridgeError(400, f"unsupported observer: {observer or '(missing)'}")
+        # Serialize the whole transition: concurrent toggles can no longer
+        # interleave check-then-act and leak a running observer (race-fix).
+        with self._observer_lock:
+            if observer == "vision":
+                changed = self._set_vision(enabled)
+            elif observer == "audio":
+                changed = self._set_audio(enabled)
+            elif observer == "proactive":
+                changed = self.proactive_enabled != enabled
+                self.proactive_enabled = enabled   # gate the unprompted-findings loop
+            else:
+                raise BridgeError(400, f"unsupported observer: {observer or '(missing)'}")
         return {"accepted": True, "observer": observer, "enabled": enabled, "changed": changed}
 
     def _set_vision(self, enabled: bool) -> bool:
@@ -545,11 +561,16 @@ class DesktopBridge:
         if not self.proactive_enabled:        # user turned unprompted findings off (N-67)
             return
         now = time.monotonic()
-        if now - self._last_proactive < self.proactive_interval:
-            return
-        if self._proactive_busy:
-            return
-        self._proactive_busy = True
+        # Atomic check-then-claim: concurrent observer events (vision + audio firing
+        # together) could otherwise both pass the busy check and double-spawn the
+        # loop. A dedicated short lock (never held across sensor stop()/join) claims
+        # the slot exactly once.
+        with self._proactive_lock:
+            if now - self._last_proactive < self.proactive_interval:
+                return
+            if self._proactive_busy:
+                return
+            self._proactive_busy = True
 
         def _run() -> None:
             try:
@@ -564,7 +585,8 @@ class DesktopBridge:
             except Exception:
                 pass
             finally:
-                self._proactive_busy = False
+                with self._proactive_lock:
+                    self._proactive_busy = False
 
         threading.Thread(target=_run, daemon=True, name="ui-proactive").start()
 
@@ -894,7 +916,10 @@ class DesktopBridge:
         """Always-listen voice mode: speech is auto-run as turns; replies go via SSE."""
         enabled = bool(request.get("enabled"))
         cfg_obj = request.get("config") or {}
-        with self._voice_lock:
+        # Unified observer lock (was _voice_lock): "audio on" via set_observer and
+        # "voice on" via this path both mutate self.audio — they must serialize, or
+        # one leaks an observer. RLock allows the nested _start/_restart_audio calls.
+        with self._observer_lock:
             if enabled:
                 changed = not self.voice_enabled
                 self.voice_enabled = True

@@ -50,6 +50,9 @@ step "schedule suite"       python3 services/lk/tests/test_schedule.py
 step "converters suite"     python3 services/lk/tests/test_converters.py
 step "service-registry suite" python3 services/lk/tests/test_services.py
 step "turn-cache suite"     python3 services/lk/tests/test_turncache.py
+step "bridge-race suite"    python3 services/lk/tests/test_bridge_races.py
+step "backup/retention"     python3 services/lk/tests/test_backup.py
+step "winhost (bloat fix)"  python3 services/lk/tests/test_winhost.py
 step "notify/bloat suite"   python3 services/lk/tests/test_notify.py
 step "recent-findings suite" python3 services/lk/tests/test_recent_findings.py
 step "launcher suite"       python3 services/lk/tests/test_launcher.py

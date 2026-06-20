@@ -26,6 +26,7 @@ import time
 from dataclasses import dataclass
 
 from ..debuglog import debug
+from . import winhost
 
 # Spawn Windows powershell.exe from a Windows-valid CWD (C:\): a WSL \\wsl$\ CWD
 # makes the Win32 loader fail with the 0xc0000142 "unable to start" dialog.
@@ -184,19 +185,27 @@ OFFSCREEN    = -10000 # minimized windows report large negative coords
 def _powershell_windows() -> tuple[list[WinRect], tuple[int, int, int, int]] | None:
     if not shutil.which("powershell.exe"):
         return None
-    try:
-        r = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", _PS_WINDOWS],
-            capture_output=True, text=True, timeout=12, cwd=_WIN_CWD,
-        )
-        if r.returncode != 0 or not r.stdout.strip():
+    # N-78: route through the warm host (LkWindows defined once) so the window
+    # enumeration probe stops Add-Type'ing per call; legacy under LK_WINHOST=0.
+    if winhost.enabled():
+        ok, stdout = winhost.host().run("LkWindows", timeout=12.0)
+        if not ok or not stdout.strip():
             return None
-    except Exception:
-        return None
+    else:
+        try:
+            r = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", _PS_WINDOWS],
+                capture_output=True, text=True, timeout=12, cwd=_WIN_CWD,
+            )
+            if r.returncode != 0 or not r.stdout.strip():
+                return None
+        except Exception:
+            return None
+        stdout = r.stdout
 
     bounds = (0, 0, 0, 0)
     wins: list[WinRect] = []
-    for line in r.stdout.splitlines():
+    for line in stdout.splitlines():
         if line.startswith("VS\t"):
             try:
                 _, l, t, w, h = line.split("\t")

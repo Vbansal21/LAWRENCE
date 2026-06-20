@@ -24,6 +24,7 @@ behaviour from either entry point.
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import time
 from pathlib import Path
@@ -112,13 +113,49 @@ def stats() -> dict:
     return out
 
 
+def _backup_keep() -> int:
+    """How many backups to retain (env LK_BACKUP_KEEP, default 10; 0 = unbounded)."""
+    try:
+        return max(0, int(os.environ.get("LK_BACKUP_KEEP", "10")))
+    except ValueError:
+        return 10
+
+
+def prune_backups(keep: int | None = None) -> list[Path]:
+    """Delete all but the newest ``keep`` backup zips. Returns the removed paths.
+
+    Reliability: without this, every clear()/manual backup grows .runtime/ forever
+    until the disk fills — which would itself crash the kernel. Newest are kept by
+    filename stamp (lexicographically sortable: memory-YYYYMMDD-HHMMSS.zip).
+    """
+    keep = _backup_keep() if keep is None else keep
+    if keep <= 0:
+        return []
+    if not BACKUP_DIR.exists():
+        return []
+    zips = sorted(BACKUP_DIR.glob("memory-*.zip"))
+    removed: list[Path] = []
+    for old in zips[:-keep] if len(zips) > keep else []:
+        try:
+            old.unlink()
+            removed.append(old)
+        except OSError:
+            pass
+    return removed
+
+
 def backup() -> Path:
-    """Zip the whole memory/ tree (minus the lock) into .runtime/memory-backups."""
+    """Zip the whole memory/ tree (minus the lock) into .runtime/memory-backups.
+
+    Old backups are pruned to LK_BACKUP_KEEP (default 10) so .runtime/ can't grow
+    without bound.
+    """
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
     base = BACKUP_DIR / f"memory-{stamp}"
     # shutil.make_archive zips MEM_DIR; the live lock file is harmless inside a zip.
     path = shutil.make_archive(str(base), "zip", root_dir=str(MEM_DIR))
+    prune_backups()
     return Path(path)
 
 

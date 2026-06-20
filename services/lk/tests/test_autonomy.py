@@ -28,6 +28,8 @@ bridge = bridge_module.DesktopBridge.__new__(bridge_module.DesktopBridge)
 bridge.proactive_interval = 600.0
 bridge._last_proactive = 0.0
 bridge._proactive_busy = False
+import threading as _threading
+bridge._proactive_lock = _threading.Lock()   # race-fix: single-flight trigger guard
 bridge.proactive_enabled = True        # N-67: consent gate on the unprompted-findings loop
 bridge.ctx = bridge.retrieval = bridge.engine = bridge.memory = object()
 bridge._present_finding = lambda finding: None

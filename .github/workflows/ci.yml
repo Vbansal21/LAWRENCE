@@ -1,0 +1,59 @@
+name: CI
+
+# Offline gate only — no model, no server, no network. Mirrors `make check`
+# (scripts/check.sh), the same gate every plan task runs locally. Heavy deps
+# (numpy/torch/etc.) are lazy in the kernel (I4), so the core suite needs only
+# the stdlib; Node is optional (the web-entrypoint syntax check skips if absent).
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  offline-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Set up Node (optional web-entrypoint syntax check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Byte-compile (fast syntax check)
+        run: make lint
+
+      - name: Import-check every module
+        run: make test-fast
+
+      - name: Full offline gate (make check)
+        run: make check
+
+  diagram-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Graphviz (diagram geometry lint)
+        run: sudo apt-get update && sudo apt-get install -y graphviz
+      - name: Build + lint system diagrams (N-68)
+        run: python3 docs/diagrams/tools/mmd2svg.py build

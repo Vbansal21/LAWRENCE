@@ -105,7 +105,8 @@ SERVICES: dict[str, ServiceNode] = _n(
     ServiceNode(
         id="S1", title="Perception / sensors",
         objective="Capture the live environment continuously and emit clean, timestamped perception events independently of the model.",
-        modules=("sensor.py", "obs/audio.py", "obs/vision.py", "obs/regions.py", "obs/spool.py"),
+        modules=("sensor.py", "obs/audio.py", "obs/vision.py", "obs/regions.py",
+                 "obs/spool.py", "obs/winhost.py"),
         inputs="screen frames, microphone audio, active-window layout",
         outputs="OCR text, transcripts, window/region events (to S2)",
         contract=("obs/vision.py:VisionObserver", "obs/audio.py:AudioObserver", "sensor.py:main"),

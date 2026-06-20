@@ -1475,6 +1475,95 @@ without touching each call site.
 
 ---
 
+## D-56 — Bridge concurrency hardening: observer-lifecycle race fixed + conflict harness (2026-06-20) — N-67/reliability
+**Defect (real, found by pathway audit).** The bridge runs under `ThreadingHTTPServer` (one thread per
+request), but `_set_vision`/`_set_audio` used **check-then-act with no lock** (`if self.vision: return;
+self.vision = VisionObserver(); .start()`). Two UI actions within K ms — "vision on" double-clicked, or "audio
+on" (set_observer) racing "voice on" (set_voice_listen, which used a *different* lock) — could interleave and
+**leak a running observer** (`self.vision=None` while an observer keeps capturing → the exact bloat class of
+[D-52]). The proactive trigger had the same check-then-set double-spawn race on `_proactive_busy`.
+**Fix.**
+- One **`_observer_lock` (RLock)** serializes ALL sensor+voice lifecycle transitions (set_observer vision/
+  audio/proactive + set_voice_listen, which replaced its narrow `_voice_lock`).
+- A **separate `_proactive_lock`** guards the proactive busy-flag check-then-claim and its reset — kept
+  distinct from the lifecycle lock so a sensor `stop()/join()` (which can wake the observer thread mid
+  `_on_context_event → _maybe_proactive`) **can never deadlock** against a concurrent toggle.
+- Result matches the **journal's** already-correct single-flight pattern ([kernel/journal.py](../services/lk/kernel/journal.py) `fire()`); proactive was the laggard, now aligned.
+**Typed test contract** — [test_bridge_races.py](../services/lk/tests/test_bridge_races.py) (in `make check`):
+fake observers keep a global start/stop ledger; under a 60-thread on/off **storm** the invariant
+**live == (1 if bridge thinks on else 0)** holds (no leak) for vision (A), audio across *both* control paths
+(B), redundant on/off is idempotent & reports `changed` truthfully (C), and concurrent events spawn proactive
+**at most once** (D). Directly answers "press X then W within K seconds — does it hold?": **now yes.**
+**`make check` green (47 suites).**
+**Edges.** `[D-56] --{operationalizes}--> [§K.0.1 #1 INTEGRITY]` load-bearing · `--{prevents}--> [D-52 host
+bloat class]` significant · `--{aligns-with}--> [journal single-flight]` significant · `--{feeds}--> [N-61
+desktop stress]`.
+
+---
+
+## D-57 — CI/CD pipeline + backup retention (2026-06-20) — compliance / reliability
+**CI/CD.** New [.github/workflows/ci.yml](../.github/workflows/ci.yml): an **offline-gate** job
+(`make lint` + `make test-fast` + `make check`) on a Python **3.11/3.12 matrix** (no model/server/network —
+the kernel keeps heavy deps lazy, I4), concurrency-cancel on re-push, plus a **diagram-lint** job that
+installs Graphviz and runs `mmd2svg.py build` (the N-68 geometry gate). Every push/PR to master now runs the
+same gate developers run locally.
+**Backup retention (reliability).** `memops.backup()` previously wrote zips into `.runtime/memory-backups`
+**forever** — every `clear()`/manual backup grew the tree until the disk fills (itself a crash cause). Added
+`prune_backups(keep=LK_BACKUP_KEEP, default 10)` called after each `backup()`; `KEEP=0` = explicit unbounded.
+**Typed test** — [test_backup.py](../services/lk/tests/test_backup.py) (in `make check`): backup() yields a
+zip; the dir never exceeds KEEP (newest kept); explicit prune trims to N; KEEP=0 disables. Paths redirected to
+a temp tree so real memory/ is untouched.
+**Edges.** `[D-57] --{serves}--> [compliance/CI]` · `--{hardens}--> [crash/recovery]` significant ·
+`--{runs}--> [make check + N-68 lint]`.
+
+---
+
+## D-58 — UI declutter pass-1: flatten nested drawer chrome (2026-06-20) — N-10
+**Problem (user: "the UI is too cluttered in the way it presents itself").** The options drawer rendered as
+**boxes-inside-a-box**: each of 6 sections (Context/Runtime/Journal/Reminders/History/Files) had its own
+border + fill *inside* the already-bordered, blurred drawer — doubling the visual chrome.
+**Change (CSS-only, [styles.css](../apps/desktop/web/styles.css), ALL control IDs unchanged → integrity
+preserved).** Flattened `.drawer-section` (no border/fill), demoted `.drawer-title` to a light uppercase
+label, grouped by whitespace + roomier gaps/padding, and gave the (now lighter) drawer more max-height so it
+breathes instead of scroll-cramping. Reversible; no JS/markup change.
+**Status.** `[~]` — **LIVE-VERIFY pending** (sandbox can't render the Tauri webview; needs `cargo build
+--release` + WSLg relaunch to confirm the visual). The N-10 deep pass (information hierarchy across the whole
+surface, the §Q.9 P1 renderer, N-72 frames) remains the larger refinement.
+**Edges.** `[D-58] --{advances}--> [N-10 canonical UI]` · `--{gated-by}--> [N-67 integrity]` (no control
+removed) · `--{precedes}--> [N-72 shared-space]`.
+
+---
+
+## D-59 — The actual bloat source: warm powershell host kills the per-poll Add-Type storm (2026-06-20) — N-78
+**User: "still too many bloat process zombies."** D-52 fixed the notification + window-layout powershell
+paths but **missed the highest-frequency one.** Re-audit found it:
+- **`vision.py:capture_foreground`** is the **PRIMARY ~10s watch path** ([_tick](../services/lk/obs/vision.py)
+  line 521 calls it every poll) and it ran **`Add-Type @"...inline C# class..."@` every single call** — that
+  invokes the **C# compiler (`aspnet_compiler.exe`) + assembly self-repair (`msiexec`) on every poll**, the
+  worst offender of all. `capture_fullres` and `_powershell_capture` had the same per-call `Add-Type`.
+  **D-52 never touched any of these** (it only fixed `regions.screen_windows` window-layout + `notify`).
+**Fix — a persistent powershell host** ([obs/winhost.py](../services/lk/obs/winhost.py)). ONE long-lived
+`powershell.exe` reads commands from stdin in a loop; the WinForms/GDI assemblies + the P/Invoke class
+(`LkN`) + the capture **functions** (`LkScaled`/`LkFullres`/`LkForeground`/`LkWindows`) are `Add-Type`'d
+**exactly once** at startup. Each ~10s poll is then just a function call to the already-warm runtime — **one
+host process for the whole session instead of one (compiler-spawning) process per poll.** Robustness:
+single-flight lock · self-heal (respawn on death, kill+recover on timeout) · degrades to `(False,"")` (callers
+fall back) · `atexit` + `VisionObserver.stop()` reap it · **`LK_WINHOST=0`** safety valve restores the legacy
+per-call path. Routed: `vision._powershell_capture` / `capture_fullres` / `capture_foreground` +
+`regions._powershell_windows`. (notify's balloon stays a bounded short-lived process — D-52 caps it, and it
+must own its tray icon ~1s; not worth the host's render risk.)
+**Typed test** — [test_winhost.py](../services/lk/tests/test_winhost.py) (in `make check`) with a FAKE
+interpreter (offline, OS-independent): **25 commands → exactly 1 process spawned** (`starts==1` — the bloat
+fix, proving no per-call spawn); ERR framing keeps the host alive; death (EOF) → respawn; wedged command →
+timeout-kill + recover; missing interpreter → degrade. Plus `obs/winhost.py` added to the S1 service-registry
+partition (test_services now 49 modules).
+**`make check` green (49 suites).** Live-verify: confirm on the Windows host that, with vision on for an hour,
+`powershell.exe`/`aspnet_compiler.exe`/`msiexec` counts stay flat (≈1) instead of climbing.
+**Edges.** `[D-59] --{completes}--> [N-78 host hygiene]` load-bearing · `--{fixes}--> [D-52 missed path]`
+load-bearing · `--{feeds}--> [N-61 desktop/host endurance]` significant · `--{uses}--> [D-52 debuglog]`.
+
+---
+
 ## Live-stub index (every D-node's outflow, for audit) `[revised: F2 — added D-04→N-20, D-09→N-16]`
 D-01→N-02,N-18 · D-02→N-06 · D-03→N-07 · D-04→N-07,N-11,N-20 · D-05→N-02,N-08 ·
 D-06→N-07,N-21 · D-07→N-28 · D-08→N-08,N-02,N-11 · D-09→N-27,N-05,N-22,N-16 ·
