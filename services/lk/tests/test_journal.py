@@ -221,6 +221,61 @@ release.set()
 for k in ("LK_JOURNAL_MIN_INTERVAL", "LK_JOURNAL_MAX_INTERVAL"):
     os.environ.pop(k, None)
 
+# ─────────────────────── G. N-46 comprehensive per-entry research ───────────────────────
+section("G. journal researches its own open threads (memory default-on; web gated+throttled)")
+reset_env()
+
+class _Entry:
+    def __init__(self, body): self.body = body
+
+# multi-seed extraction pulls the explicit open thread + bodies (not a single seed)
+win = [_Entry("Worked on retrieval.\n\n> **Next:** finish the FAISS ANN backend evaluation")]
+seeds = journal._research_seeds(win, "live tail: comparing usearch vs hnswlib latency")
+check("research extracts the explicit Next: open thread",
+      any("FAISS ANN backend" in s for s in seeds), str(seeds))
+check("research is multi-seed (not the old single seed)", len(seeds) >= 2, str(seeds))
+check("seed cap respected", len(seeds) <= journal._max_queries())
+
+class _FakeMem:
+    def __init__(self): self.qs = []
+    def recall(self, q, k=8):
+        self.qs.append(q)
+        return [_RR(f"n-{len(self.qs)}", f"recalled about {q[:20]}")]
+class _RR:
+    def __init__(self, nid, text): self.node_id, self.text, self.title, self.source_kind, self.ts, self.score, self.arms = nid, text, "t", "note", 0.0, 1.0, ()
+from lk.retrieval.pipeline import CitedResult
+class _FakeRetr:
+    def __init__(self): self.calls = 0
+    def retrieve(self, qs):
+        self.calls += 1
+        return [CitedResult(citation_num=1, url="https://x.test/a", title="A", text="web evidence")]
+
+# memory recall is folded in by default (local, cheap) — no web flag needed
+mem = _FakeMem()
+out = journal._gather_research(win, "tail", retrieval=_FakeRetr(), memory=mem)
+check("own-memory context folded in by default", "[MEMORY CONTEXT]" in out, out[:80])
+check("memory queried with multiple seeds", len(mem.qs) >= 2, str(mem.qs))
+check("external research NOT pulled while LK_JOURNAL_WEB off", "[RESEARCH CONTEXT]" not in out)
+
+# enabling web + clearing the throttle pulls the unified engine's web/doc arm too
+os.environ["LK_JOURNAL_WEB"] = "1"
+journal._web_last[0] = 0.0
+retr = _FakeRetr()
+out2 = journal._gather_research(win, "tail", retrieval=retr, memory=_FakeMem())
+check("external research folded in when LK_JOURNAL_WEB=1", "[RESEARCH CONTEXT]" in out2, out2[:120])
+check("unified engine retrieve() called once", retr.calls == 1, str(retr.calls))
+# throttle: an immediate second call must NOT re-hit the external arm (cost ceiling)
+retr2 = _FakeRetr()
+out3 = journal._gather_research(win, "tail", retrieval=retr2, memory=_FakeMem())
+check("external arm throttled on rapid re-entry", retr2.calls == 0, str(retr2.calls))
+
+# master kill switch disables all per-entry research
+os.environ["LK_JOURNAL_RESEARCH"] = "0"
+check("LK_JOURNAL_RESEARCH=0 disables research entirely",
+      journal._gather_research(win, "tail", retrieval=_FakeRetr(), memory=_FakeMem()) == "")
+reset_env(); os.environ.pop("LK_JOURNAL_RESEARCH", None)
+
+
 journal.call_model = _orig_call
 for d in (tmpA, tmpC, tmpD, tmpF): shutil.rmtree(d, ignore_errors=True)
 

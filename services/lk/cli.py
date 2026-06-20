@@ -132,7 +132,7 @@ class _LiveState:
     mmproj_path:  Path | None   # None = auto-detect from model dir
     ctx_size:     int
     gpu_layers:   int | None    # None → 0 (CPU)
-    threads:      int | None    # None → 9 (default)
+    threads:      int | None    # None → bandwidth-aware default (server._default_threads)
     kv_type:      str           # q4_0 | q8_0 | f16 | none
     flash_attn:   str           # on | off | auto
     jinja:        bool
@@ -679,7 +679,7 @@ def _print_config(state: _LiveState, profile: ModelProfile, pipeline: RetrievalP
         f"\n  mmproj      : {state.mmproj_path.name if state.mmproj_path else 'auto'}"
         f"\n  bin         : {state.bin_path.name}"
         f"\n  ctx-size    : {state.ctx_size}"
-        f"\n  threads     : {state.threads or 9}"
+        f"\n  threads     : {state.threads or _server._default_threads()}"
         f"\n  gpu-layers  : {state.gpu_layers or 0}"
         f"\n  kv-type     : {state.kv_type}"
         f"\n  flash-attn  : {state.flash_attn}"
@@ -711,6 +711,7 @@ def _print_config(state: _LiveState, profile: ModelProfile, pipeline: RetrievalP
         f"\n  ── proactive (live) ───────────────────────────────────────────────────"
         f"\n  proactive-interval : {state.proactive_interval}s"
         f"\n  proactive-present  : {'on' if state.proactive_present else 'off'}"
+        f"\n  proactive-fired    : {_proactive_fired_summary()}"
         f"\n  ── memory compaction (live) ────────────────────────────────────────────"
         f"\n  compact-min : {state.compact_min}s"
         f"\n  l2-budget   : {state.l2_budget} chars"
@@ -1117,7 +1118,7 @@ def _print_help_set() -> None:
         "  bin PATH            path to llama-server binary\n"
         "  mmproj PATH|auto    multimodal projector (auto = detect next to model)\n"
         "  ctx N               context window tokens (default 65536)\n"
-        "  threads N           inference threads (default 9)\n"
+        "  threads N           inference threads (default: physical cores)\n"
         "  gpu-layers N        GPU offload layers (0 = CPU only)\n"
         "  kv-type q4_0|q8_0|f16|none\n"
         "  flash-attn on|off|auto\n"
@@ -1220,6 +1221,18 @@ def _notify(title: str, body: str) -> None:
 
 
 # ── proactive trigger ────────────────────────────────────────────────────────
+
+def _proactive_fired_summary() -> str:
+    """One-line proactive-loop firing summary for /status (N-07 observability).
+    Reads the kernel's process-global counters; lazy import keeps cli import light."""
+    try:
+        from .kernel.invoke import proactive_stats
+        s = proactive_stats()
+        return (f"{s['calls']} run · {s['surfaced']} surfaced · {s['warmed']} warmed "
+                f"· {s['stale'] + s['dup']} dropped · {s['skipped']} skipped")
+    except Exception:
+        return "—"
+
 
 def _make_proactive_trigger(
     ctx: ContextStore,

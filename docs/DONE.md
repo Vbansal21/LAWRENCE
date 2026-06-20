@@ -724,10 +724,26 @@ replay proves two speech windows produce one turn, not two.
   triggers independent of the selected LLM.
 - `--dependency--> D-38` **load-bearing**: terminal acceptance proves real target-
   host capture, including non-silent audio.
+- `[D-29] --{partial-completion}--> [N-45]`
+  Weight: load-bearing
+  Meaning: D-29 proves model-independent observer lifecycle and bounded event delivery;
+  N-45 generalizes this into independent instances of one modality-agnostic,
+  asynchronous, continuously pipelined cascade from acquisition through semantic
+  refinement and final emission.
+  Break condition: Coupling sensor acquisition to model response, blocking acquisition
+  on refinement, or erasing modality-native segment/time identity violates N-45.
 
 **Assumptions baked in.** Fixed heuristic/statistical gates are sufficient for MVP.
 Learned edge models and richer region histories wait for measured misses. Audio still
 uses bounded recording windows; D-38 includes deterministic utterance replay.
+
+**N-45 clarification addendum (2026-06-20).** D-29 does **not** implement the planned
+cascade beyond its minimal observer/spool substrate. The future abstraction is not a
+single serial pipeline: every modality runs an independent, parallel instance of the
+same modality-agnostic realtime cascade; pixels remain the primary screen signal with
+asynchronous system/tool metadata layered onto them; stages 1–5 target the hot realtime
+path; longer same-modality context, selective specialists and cross-modal/contextual
+arbitration progressively refine stable segment/time identities before emission.
 
 ## D-30 — Frozen versioned context boundary (2026-06-18)
 **Implemented and verified.** `freeze_context()` captures one immutable
@@ -1073,6 +1089,168 @@ Older context remains available when relevant or explicitly requested.
   Weight: load-bearing
   Meaning: Future grounding must preserve current-over-historical precedence.
   Break condition: Letting stale memory override current state regresses D-42.
+
+---
+
+## D-43 — Durable-memory formation: P_dist promotion + S_link auto-linking (2026-06-19) — N-71, §P
+**Soul gap closed.** The soul (paper Eq.3/Eq.4, Alg.2) requires finished turns to be
+*scored* for durable promotion and, when promoted, written as a **linked** Zettelkasten
+note. The live turn only wrote the rolling ContextStore + the retrieval index and **never**
+promoted a turn to a durable note; links were manual `[[id]]` only; the note taxonomy had
+collapsed to `turn`/`finding`. §P.1 graded this **ABSENT (P_dist, S_link)** + **DEGENERATE
+(taxonomy)**.
+
+**Implemented.** New `ctx/promote.py` (stdlib, **model-free**, never raises):
+- `pdist()` — soul Eq.3 priority `αn·N + αs·S + αu·U + αt·T + αa·A` over signals the turn
+  already produced (novelty vs recent notes, the model's confidence, user emphasis /
+  `remember`, tag-thread overlap, tasks/actions). Promote on `≥τ` **OR** explicit pin **OR**
+  confirmed action (the soul's exact rule).
+- `slink()` — soul Eq.4 `λ1·cos + λ2·Jaccard + λ3·R_time + λ4·R_thread`; the cos term is a
+  lexical cosine (model-free stand-in, **honestly labelled** — no embedding claimed).
+- `promote_turn()` — DistillAndLink (Alg.2): bounded candidate read, score, keep links
+  `>τ_link`, write `context_log` / `task_note` / `knowledge_note` with auto-links.
+- Wired best-effort into `run_turn` **after** the answer is surfaced (`memory.notes`
+  property added); `LK_DISTILL_OFF` / `LK_DISTILL_TAU` / `LK_DISTILL_LINK_TAU` knobs.
+
+**Verification.** `tests/test_promote.py` (added to `make test`): small-talk → not promoted;
+`remember` → `knowledge_note`; tasks → `task_note`; a related follow-up **auto-links** back
+to the earlier note via S_link; P_dist/S_link monotonicity. Import-check (26 modules) + the
+touched-module regression set (notes, memory-index, retrieval-engine, context-snapshot,
+refine, stress-memory) all green.
+
+**Scope / honesty.** Conservative by default (won't make the vault an event dump — the
+soul's explicit warning). Findings-promotion (proactive path) and embedding-based cos are
+deliberate follow-ups, not claimed here. This does **not** touch the turn's serial/parallel
+structure — N-70 (parallel-facet runtime) is **deferred to the next MVP iteration** per
+user (2026-06-19).
+
+**Live edges.**
+- `[D-43] --{feeds}--> [N-02]`
+  Weight: significant
+  Meaning: Auto-links populate retrieval's (conformant but edge-starved) graph arm G.
+  Break condition: If promotion stops writing links, the graph arm degrades to manual-only.
+- `[D-43] --{realizes}--> [soul §VIII/§X]`
+  Weight: load-bearing
+  Meaning: Durable memory + linking is the soul's "strongest architectural commitment."
+  Break condition: Disabling promotion returns durable memory to manual-only.
+
+---
+
+## D-44 — Proactive loop verified end-to-end + instrumented (2026-06-19) — N-07, §P
+**Verified (the actual question).** §P graded the proactive loop PARTIAL because "it may
+never fire" (the 2026-06-17 worry). Tracing the live wiring resolves it: the single
+throttled convergence `kernel.invoke.run_proactive` is attached to **four** drivers —
+`VisionObserver`, `AudioObserver` (unless audio-query mode), the `CognitiveTick.act_fn`
+(`lambda events: on_proactive("tick", …)`, started), and the `SpoolReader` — all via the
+one `_make_proactive_trigger` callback (`cli.py`). It **is** wired end-to-end
+(driver → run_proactive → `present_fn` → UI card + OS notify); the silence is **by design**
+(600 s `proactive_interval` + droppable `PRI_PROACTIVE` + significance tier ≥ 2), not a break.
+
+**Instrumented (the real gap).** You could not previously tell *at runtime* whether the
+autonomous loop was firing or merely throttled/dropped. Added thread-safe process-global
+counters in `run_proactive` (`calls / warmed / surfaced / stale / dup / skipped / error`)
++ a public `proactive_stats()` accessor (covers **all** drivers, CLI and bridge, since they
+share the one convergence) + a `/status` line (`_proactive_fired_summary`).
+
+**Verification.** `tests/test_proactive_dedup.py` extended: its 7 scripted `run_proactive`
+calls assert the counters (≥3 surfaced, ≥2 dup, ≥1 stale, ≥1 busy-skip). Import-check (26
+modules) + regressions (offline, edge, autonomy, tick, stress-sensors, stress-ui) all green.
+
+**Honesty.** This does NOT change firing behavior or the 600 s throttle (kept — the soul asks
+for *low-frequency* contextual suggestions); it makes firing observable so the throttle can
+later be tuned with evidence. The serial turn (N-70) remains deferred per user.
+
+**Live edges.**
+- `[D-44] --{observability}--> [N-62]`
+  Weight: significant
+  Meaning: Deployment acceptance can now verify the autonomous loop actually fired.
+  Break condition: If counters stop tracking outcomes, "is it firing?" is unanswerable again.
+- `[D-44] --{realizes}--> [soul §VII]`
+  Weight: load-bearing
+  Meaning: An autonomous loop with no user/event is core to watcher-assistant (not chatbot).
+  Break condition: A dead/never-fired proactive loop regresses LAWRENCE to a reactive chatbot.
+
+---
+
+## D-45 — Serving levers measured; native>WSL confirmed; N-65 still open (2026-06-20) — N-65
+**⚠ N-65 TARGET NOT YET REPRODUCED — and I over-concluded TWICE; corrected here.** First wrote
+this as a clean "done"; then benchmarked and over-corrected again. The honest, humbler record:
+
+**Host:** **Snapdragon X Elite (Oryon, 12 cores), ARM64**, Windows-on-ARM + WSL2. Model =
+**Gemma-3n-E4B**: `model params = 7.52 B` *total* but **~4B EFFECTIVE** (Per-Layer Embeddings /
+MatFormer — user corrected me; the decode hot path is ~4B), so **≥15 tok/s IS plausible** and my
+"too big for CPU" conclusion was wrong. The plan's x86 levers (AVX/AMX) are N/A on ARM.
+
+**Verified working:**
+- **Cross-turn KV prefix reuse — REAL.** `--cache-reuse` (env `LK_CACHE_REUSE`=256) +
+  `cache_prompt:true`: turn 2 with a shared ~1.2K prefix re-evaluated only `prompt_n=10`,
+  reused `cache_n=1217`. Also `--keep` via `LK_KEEP`. FA + KV-q4_0 + slot save/restore present.
+- **Native Windows ARM64 ≫ WSL.** Same model, llama-bench tg, peak: **WSL 7.4 → native ~10 tok/s
+  (+~37%)**, and WSL's hard thread-cliff (10–12t → 2.4–2.7) is ABSENT natively. WSL virtualization
+  was a real tax. (Native run = official prebuilt `llama-b9733-bin-win-cpu-arm64`, model on C:\.)
+
+**Where I was wrong on threads (corrected):** I changed the default 9 → "all cores" → cap-8 from a
+sweep, but the sweep ran **on BATTERY**, where Snapdragon throttling makes tok/s wildly noisy
+(±4–5): native 7/8/9/10/11t = 7.67/9.42/8.06/6.10/6.57 — **8 and 9 statistically identical.** No
+basis to override the user's deliberate **9**. **Reverted: `_default_threads()` = 9 (capped by
+core count); `LK_THREADS` overrides.** Power state (AC vs battery) matters far more than ±1 thread.
+
+**Still open (NOT disproven):** measured peak ~10 tok/s, but **on battery + a generic (non-Oryon)
+prebuilt**. The two remaining CPU levers to reach ≥15: (1) **AC power** (battery throttles hard),
+(2) a **from-source `-mcpu=native` Oryon build**. The from-source build is BLOCKED: clang is
+present (C:\LLVM) but the **MSVC CRT (`libcmt.lib`) is missing** (no VS/Build Tools; not admin) —
+needs a VS Build Tools install. **Decision path (user 2026-06-20):** build natively for Windows;
+once ≥12 tok/s verified → add NPU/GPU + speculative decoding with **Gemma-3n-E2B as the draft**.
+**Edges.** `[D-45] --{partially-addresses}--> [N-65]` (open) · `--{verified}--> [prefix-reuse;
+native≫WSL]` · `--{corrected}--> [own thread overreach → back to 9]` · `--{feeds}--> [N-62]`.
+
+---
+
+## D-46 — Voice/runtime regression remediation + Windows-host capture workaround (2026-06-20) — N-63
+**Implemented** ([obs/audio.py](../services/lk/obs/audio.py)):
+- **VAD floor −45 → −55** (the silence bug): the streaming capture `vad_db` now defaults to
+  `SILENCE_DB` (−55, the documented WSLg-working value) as the single source of truth;
+  `LK_AUDIO_VAD_DB` still overrides. At −45 the per-frame gate rarely fired → silent loop.
+- **Transcription moved OFF the capture thread**: a bounded decode-worker queue (`_decode_worker`,
+  `_submit`) drains PCM jobs so `proc.stdout` is read continuously — no pipe overflow / dropped
+  audio / blocked loop. Inline fallback when the worker isn't running keeps unit-driving intact.
+- **Short read finalizes the open utterance** before the outer loop reopens (no tail loss).
+- **Gain path resolved**: `_normalize_gain` is now a real opt-in (`LK_AUDIO_GAIN=1`) applied in
+  `_transcribe_buf` on VAD-confirmed audio — no more comment-only "feature."
+- **Windows-host capture workaround** (the WSLg RDP virtual-mic root cause): opt-in
+  `LK_AUDIO_WIN_CAPTURE=1` drives a Windows-side `ffmpeg.exe` (`-f dshow`) over WSL interop,
+  reading the REAL Windows mic as s16le PCM — bypassing PulseAudio/WSLg. Self-disables when no
+  Windows ffmpeg is found (`LK_FFMPEG_WIN` / PATH / common C:\ paths) → falls back to the WSLg
+  recorders. Device auto-detected or `LK_AUDIO_WIN_DEVICE`. Additive + degrades (I4).
+- `cmd_rebuild` was **already** compile-only (root cause #1 fixed in a prior pass; stress §F confirms).
+**Verification.** New **non-mocked** [test_voice_decode.py](../services/lk/tests/test_voice_decode.py)
+exercises the REAL energy gate (silence < −55 < tone), real segmentation (one tone burst → one
+utterance), the bounded gain, and the Windows-workaround graceful-degrade — replacing §F's fully
+mocked confidence. `make test` green. **Pending live:** real-mic verification on the Windows host
+(needs hardware + an ffmpeg.exe under C:\; a `tests/fixtures/utterance.wav` enables the real-decode smoke).
+**Edges.** `[D-46] --{reopens/closes}--> [D-39]` load-bearing · `--{unblocks}--> [N-60]`
+load-bearing (live voice endurance can now actually fire) · `--{constraint-honored}--> [N-45]`
+significant (worker/observer seam stays swappable for SenseVoice×sherpa-onnx).
+
+---
+
+## D-47 — Comprehensive autonomous journal: per-entry research (2026-06-20) — N-46 (§L.2, now MVP)
+**Implemented** ([kernel/journal.py](../services/lk/kernel/journal.py)). Replaced the throttled,
+web-only, single-120-char-seed `_maybe_web_context` with `_gather_research` — comprehensive,
+multi-seed, multi-source, cost-bounded per-entry retrieval (the soul's "journal MUST be comprehensive"):
+- **Multi-seed** (`_research_seeds`): the explicit `> **Next:**` open thread + trailing body +
+  live tail, deduped and capped (`LK_JOURNAL_MAX_QUERIES`, default 3) — not one truncated seed.
+- **Own durable memory folded in by default** (local-first, cheap): `memory.recall` over every
+  seed → `[MEMORY CONTEXT]`. The episodic spine can now reference past entries/notes on its threads.
+- **Web/doc over the unified engine** (notes+doc+web, N-02/N-05): gated by `LK_JOURNAL_WEB` and
+  min-gap-throttled (`LK_JOURNAL_WEB_MIN_GAP`) → `[RESEARCH CONTEXT]` — the external-cost arm stays
+  opt-in for all-day cost discipline. Master kill switch `LK_JOURNAL_RESEARCH=0`.
+**Verification.** [test_journal.py](../services/lk/tests/test_journal.py) §G: multi-seed extraction,
+memory-default-on, web-gated, retrieve-called-once, throttle-blocks-rapid-re-entry, kill-switch.
+`make test` green. **Deferred (post-MVP, the open trade):** a model call to *choose* the per-entry
+queries (currently heuristic from open threads); routing through the N-47 Perplexity-grade engine.
+**Edges.** `[D-47] --{extends}--> [D-05/WS-J]` load-bearing · `--{consumes}--> [D-24/D-26]`
+(unified retrieval + MemoryIndex) significant · `--{realizes}--> [soul §L.2 / journal as episodic spine]`.
 
 ---
 

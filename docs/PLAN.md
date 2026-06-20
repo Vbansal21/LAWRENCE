@@ -302,6 +302,48 @@ control must pass the **N-67 integrity audit** (no broadcast-without-substance, 
 visibly-disabled-with-reason. **Edges:** `--depends-on--> N-09` · `--absorbs--> N-11` ·
 `--gated-by--> N-67` (integrity) · `--hosts--> N-12/13/14/15` · `--renders--> N-08, FR-008`.
 
+### N-72 (UI-SHARED-SPACE) — Responses become a collaborative MDX shared space `[ ]` — FULL — **user 2026-06-20, IN MVP** — extends N-10
+**Directive (user 2026-06-20).** Reframe the chat surface from *query → answer bubbles* into a
+**rolling stack of "frames," each frame a shared MD/MDX space that the user AND the model(s)
+co-edit/update.** This is the canonical response surface (folds into N-10).
+
+**Frame model:**
+- A **new frame** is instantiated by **each new user query** OR a **proactive instantiation**.
+- **Proactive normally UPDATES the current frame in place** (not a new frame) — it augments the
+  active shared space; only a genuinely new proactive thread starts a fresh frame.
+- The chat is a **rolling stack of frames** (newest active; older frames scroll up, stay rich).
+
+**Per-frame layout (top→bottom):**
+1. **The query** (user text / proactive trigger).
+2. **Retrieved-content thumbnails — BETWEEN the query and the shared frame.** Each retrieved
+   source renders as a **thumbnail = a static snapshot of the retrieved content**, and **the
+   thumbnail's TITLE carries that source's citation footer content** (author/site/date/url).
+   **Citations move OUT of an end-of-response Sources block and ONTO the thumbnails** (citation
+   at point-of-evidence, not appended). Thumbnails sit in a strip above the shared frame.
+3. **The shared MDX space** — collaboratively editable by model(s) + user; the living answer/doc.
+
+**Rich rendering (hard requirement):** the shared space + snapshots must render/showcase **rich
+MD, MDX, mermaid.js diagrams, and other JS components** (live components, not just static text),
+plus **static snapshots** of retrieved pages and **thumbnails** of retrieved content. (Today the
+classic UI hand-rolls a minimal markdown renderer and appends a Sources block — this replaces both.)
+
+**Build notes / open for planning:** sits on the N-09 seam + the bridge SSE contract; needs a real
+MD/MDX renderer + mermaid + a sandboxed component host (security: untrusted retrieved content must
+render sandboxed); a frame data-model in the bridge (frame_id, query_ref, thumbnails[], shared_doc,
+editable regions, proactive-update routing to the active frame); snapshot capture + thumbnailing of
+retrieved sources; the citation→thumbnail-title mapping (reuses the retrieval CitedResult fields).
+Phases TBD; gated by **N-67 integrity** + KISS. **Edges:** `--extends--> N-10` · `--depends-on-->
+N-09` (seam) · `--consumes--> D-24/D-26` (retrieval CitedResults → thumbnails+citations) ·
+`--renders--> N-08` (session/recall) · `--coexists--> N-64` (workflow-composition surface).
+
+### N-73 (SERVE-OPT) — Deferred serving optimizations `[ ]` 🔭 — split out of N-65 (user 2026-06-20: "leave building from scratch, proceed with 10 tk/s, mark refinement for later")
+**Deferred bundle (post-MVP).** MVP serving baseline is **accepted at native ~10 tok/s** (D-45).
+These push toward/past ≥15 but are NOT MVP-blocking now: (a) **from-source `-mcpu=native` Oryon
+build** (needs VS Build Tools / MSVC CRT — currently absent); (b) **measure/tune on AC power**
+(battery throttles hard); (c) **NPU/GPU offload** (Adreno/Hexagon — drops pure-CPU constraint);
+(d) **speculative decoding with Gemma-3n-E2B as the draft model**; (e) `lk serve --autotune`
+(thread sweep, on AC). **Edges:** `--refines--> N-65` · `--unblocks-by--> [VS Build Tools install]`.
+
 ### N-11 (UB) — ~~Track B `palette` variant~~ `[superseded → N-10]` — **user 2026-06-19: no second UI**
 **Superseded.** The separate `palette` variant is dropped: there is one **canonical UI**
 (classic, N-10). Its concepts (grow-to-content command-palette geometry, ⌘K menu, settings
@@ -442,7 +484,21 @@ home (e.g. `docs/INVARIANTS.md` or DONE.md preamble); fix README `crates/system-
 FR-008 pairs with N-16; FR-010 folds into N-11; FR-004 rich telemetry into N-10/11 +
 honest `/metrics`. Fold each into its parent; no standalone build.
 
-### N-32 (LOCAL-PERF) — Local turn latency `[ ]` — medium *(finding from D-21, user "optimise for local")*
+### N-32 (LOCAL-PERF) — Local turn PIPELINE latency `[ ]` — **HARD MVP, top non-UI priority (user 2026-06-20)** *(finding from D-21)*
+> **★ Gate #3 (USABLE-LOCAL) is NOT met by serving alone.** N-65 made *serving* ~10 tok/s, but a full
+> `run_turn` still takes MINUTES (the pipeline, not the server). **Approach (user 2026-06-20):**
+> **asynchronicity · pipelining · parallelism · caching · predictive caching · pre-preparation ·
+> pre-baked results for sub-sections** — i.e. don't run the per-turn stages serially-cold.
+> Concretely: (a) **parallelize** independent per-turn model calls (query/analysis/retrieval/response)
+> instead of sequential; (b) **pipeline** stages so later turns' prep overlaps earlier turns' decode;
+> (c) **cache** stage outputs keyed by input identity (reuse the KV/prefix discipline + memoize
+> retrieval/analysis); (d) **predictive/speculative caching + pre-preparation** — anticipate the likely
+> next sub-tasks (e.g. retrieval seeds, context bundle, journal/proactive prep) and pre-compute during
+> idle; (e) **pre-baked sub-section results** — assemble the response from independently-prepared,
+> cached sub-section units. Pairs with **N-22** (deadline/watchdog) so it never hangs, and with the
+> parallel-facet runtime (N-70, deferred) which this partially anticipates. **In MVP; ties Phase-1
+> chat responsiveness.** *Open:* the per-stage dependency DAG (what's truly parallel vs ordered), cache
+> invalidation keys, and the predictive-prefetch budget (must stay local-first + cost-bounded).
 **Pathway.** Independent start; informs N-05 (loop budget) + N-06 (turn assembly).
 **Finding (D-21).** Raw llama-server completes a tiny local completion in **~0.7s**,
 but a full `run_turn` takes **minutes** on CPU — the cost is in the *pipeline*
@@ -587,15 +643,15 @@ clean** — 7 findings, all addressed in §I.
 
 ## §I — Stage-3 revision log
 
-| Finding | Fix | Where |
-|---|---|---|
-| F1 | N-09/N-26 lean on existing app.js/host scaffolding (prior art, not a D-node; refactor not greenfield) | N-09 body; DONE.md live-stub note |
-| F2 | drew edges D-09→N-16, D-04→N-20, D-19/D-16→N-12, D-18→N-13 | DONE.md D-04/D-09 + index; §G |
-| F3 | N-06↔N-08 re-expressed as a diamond off N-02 (converge once, no build cycle) | N-06, N-08, §G |
-| F4 | stated N-08 does not delete D-08's durable transcript (clears working set only) | N-08 invariant guard; DONE.md D-08 |
-| F5 | marked N-24 terminal (acceptance sink) + N-28 leaf | N-24, N-28 |
-| F6 | N-18→N-02 resolved `?:unresolved`→`conditional` (sequence after N-02 design) | N-18, §G |
-| F7 | noted N-28 true centrality L; depth driven by ambiguity + user priority | N-28 triage note |
+| Finding | Fix                                                                                                   | Where                              |
+| ------- | ----------------------------------------------------------------------------------------------------- | ---------------------------------- |
+| F1      | N-09/N-26 lean on existing app.js/host scaffolding (prior art, not a D-node; refactor not greenfield) | N-09 body; DONE.md live-stub note  |
+| F2      | drew edges D-09→N-16, D-04→N-20, D-19/D-16→N-12, D-18→N-13                                            | DONE.md D-04/D-09 + index; §G      |
+| F3      | N-06↔N-08 re-expressed as a diamond off N-02 (converge once, no build cycle)                          | N-06, N-08, §G                     |
+| F4      | stated N-08 does not delete D-08's durable transcript (clears working set only)                       | N-08 invariant guard; DONE.md D-08 |
+| F5      | marked N-24 terminal (acceptance sink) + N-28 leaf                                                    | N-24, N-28                         |
+| F6      | N-18→N-02 resolved `?:unresolved`→`conditional` (sequence after N-02 design)                          | N-18, §G                           |
+| F7      | noted N-28 true centrality L; depth driven by ambiguity + user priority                               | N-28 triage note                   |
 
 **Carried audit items:**
 - **`[resolved → D-32/D-38]` N-07 root cause** — cooldown clocks previously advanced
@@ -627,14 +683,14 @@ clean** — 7 findings, all addressed in §I.
 
 ### §J.0 — Directive coverage audit (what exists vs. what this build adds)
 
-| Directive clause | State at audit (2026-06-18) | This build |
-|---|---|---|
-| work **autonomously** | tick + proactive wired in both kernels (D-03); `run_proactive` rides **web only**, findings/journal **not** re-indexed → recall goes stale | proactive rides the unified engine; **live incremental indexing** closes perceive→remember→recall→act |
-| **long context** capture | `ContextStore` dynamic-budget L1→L2→L3 tiering solid (D-01) | unchanged; recall now spans it |
-| **atomic logs** | `context-YYYY-MM-DD.log` one-liner-per-event exists (D-01) | unchanged; already indexed by reindex |
-| **context-adaptive journal** | WS-J engine: significance-gated, first-person, rolling-revision (D-05) | new entries **incrementally indexed** into recall |
-| **tiered rolling memory + compaction/compression** | model compaction L1→L2→L3 + dynamic working budget solid (D-01) | unchanged |
-| **web/doc/notes retrieval — perplexity** | `RetrievalPipeline` is **single-shot, web/doc-only, gated, non-iterative**; notes recall is a *separate* block; citations don't span memory | **the centerpiece** — the new `RetrievalEngine` below |
+| Directive clause                                   | State at audit (2026-06-18)                                                                                                                 | This build                                                                                            |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| work **autonomously**                              | tick + proactive wired in both kernels (D-03); `run_proactive` rides **web only**, findings/journal **not** re-indexed → recall goes stale  | proactive rides the unified engine; **live incremental indexing** closes perceive→remember→recall→act |
+| **long context** capture                           | `ContextStore` dynamic-budget L1→L2→L3 tiering solid (D-01)                                                                                 | unchanged; recall now spans it                                                                        |
+| **atomic logs**                                    | `context-YYYY-MM-DD.log` one-liner-per-event exists (D-01)                                                                                  | unchanged; already indexed by reindex                                                                 |
+| **context-adaptive journal**                       | WS-J engine: significance-gated, first-person, rolling-revision (D-05)                                                                      | new entries **incrementally indexed** into recall                                                     |
+| **tiered rolling memory + compaction/compression** | model compaction L1→L2→L3 + dynamic working budget solid (D-01)                                                                             | unchanged                                                                                             |
+| **web/doc/notes retrieval — perplexity**           | `RetrievalPipeline` is **single-shot, web/doc-only, gated, non-iterative**; notes recall is a *separate* block; citations don't span memory | **the centerpiece** — the new `RetrievalEngine` below                                                 |
 
 ### §J.1 — Decisions locked (2026-06-18 AskUserQuestion)
 
@@ -868,6 +924,18 @@ refined bar for acceptance:
 - **N-67** the full UI integrity matrix must be clean (every control real or honestly off).
 - **N-68** the legible diagram set is a required deliverable.
 Both INTEGRITY (#1) and the local-latency floor (#3) are therefore **blocking for MVP**.
+
+**SCOPE ADDITION (user 2026-06-20): N-63 (voice), N-46 (comprehensive journal §L.2), and
+N-72 (UI shared-space) are now in the MVP goal.**
+- **N-65 — MVP-ACCEPTED @ native ~10 tok/s** (user: "proceed with 10 tk/s, mark refinement for
+  later"). Run the prebuilt **natively on Windows ARM64, not in WSL** (native +37% over WSL,
+  measured). The ≥15 push is deferred to **N-73** (native -mcpu build / AC / NPU-GPU / spec-decode E2B).
+- **N-63** remediated + verified (D-46; live-mic verify pending hardware; opt-in Windows-host capture).
+- **N-46** comprehensive journal shipped + verified (D-47; own-memory + web/doc, cost-bounded).
+- **N-72 (NEW, MVP)** — chat responses become a **rolling stack of collaborative MDX "shared
+  space" frames** (proactive updates the active frame; retrieved sources become **thumbnails with
+  the citation as their title, placed between query and frame**; rich MD/MDX/mermaid/JS + static
+  snapshots). The big remaining MVP build. See N-72.
 
 **Still genuinely POST-MVP (not required):** the *full* n8n migration + composition UI
 (N-64) beyond making subsystems node-shaped; advanced KV compaction (H2O/SnapKV-class)
@@ -1657,17 +1725,17 @@ hallucinated. Plus a **best realtime *streaming* transcriber, invoked on-demand 
 trigger/need calls for it), chosen by latency + reliability, local** — model still TBD.
 **End-to-end speech-to-speech and TTS are DEFERRED** (revisit later, out of current scope).
 
-| Layer | Local-first candidates | Status |
-|---|---|---|
-| Main recognizer (continuous, rich) | **SenseVoice** — ASR+SER+AED+diarization, non-AR, GGUF/ONNX | ✅ chosen |
-| Runtime / framework | **sherpa-onnx** — offline STT/TTS/VAD/diar/enhance/source-sep, edge | ✅ chosen |
-| On-demand realtime streaming ASR | Parakeet-TDT · Nemotron-streaming · Moonshine v2 · WhisperLiveKit | ⏳ TBD by latency+reliability |
-| VAD (stage-1) | **TEN-VAD** (lowest latency) · Silero (lightweight) | ⏳ candidate |
-| Diarization / addressee | pyannote 3.1 · NeMo Sortformer (streaming) · SenseVoice diar | ⏳ candidate (realtime diar still 5–15pp worse DER) |
-| Expression / SER | SenseVoice SER · emotion2vec | ↳ in main |
-| Environment / AED | SenseVoice AED · BEATs/AST/PANNs/CLAP | ↳ in main + scene tagger |
-| TTS | Kokoro · Piper · Orpheus · XTTS-v2 · Sesame CSM | ⏸ DEFERRED |
-| Speech-to-speech | Moshi · pipecat · LiveKit · speech-LLM omni | ⏸ DEFERRED |
+| Layer                              | Local-first candidates                                              | Status                                             |
+| ---------------------------------- | ------------------------------------------------------------------- | -------------------------------------------------- |
+| Main recognizer (continuous, rich) | **SenseVoice** — ASR+SER+AED+diarization, non-AR, GGUF/ONNX         | ✅ chosen                                           |
+| Runtime / framework                | **sherpa-onnx** — offline STT/TTS/VAD/diar/enhance/source-sep, edge | ✅ chosen                                           |
+| On-demand realtime streaming ASR   | Parakeet-TDT · Nemotron-streaming · Moonshine v2 · WhisperLiveKit   | ⏳ TBD by latency+reliability                       |
+| VAD (stage-1)                      | **TEN-VAD** (lowest latency) · Silero (lightweight)                 | ⏳ candidate                                        |
+| Diarization / addressee            | pyannote 3.1 · NeMo Sortformer (streaming) · SenseVoice diar        | ⏳ candidate (realtime diar still 5–15pp worse DER) |
+| Expression / SER                   | SenseVoice SER · emotion2vec                                        | ↳ in main                                          |
+| Environment / AED                  | SenseVoice AED · BEATs/AST/PANNs/CLAP                               | ↳ in main + scene tagger                           |
+| TTS                                | Kokoro · Piper · Orpheus · XTTS-v2 · Sesame CSM                     | ⏸ DEFERRED                                         |
+| Speech-to-speech                   | Moshi · pipecat · LiveKit · speech-LLM omni                         | ⏸ DEFERRED                                         |
 
 **MVP-deployment check.** This is a **perception/sensor-layer** change, **independent of the
 cloud-first generation posture** (§K): sensors are already local + model-independent (D-29),
@@ -1690,7 +1758,121 @@ specifics for planning:* which concrete algorithms per stage (e.g. change-point
 detection, Bayesian surprise / predictive info-gain, online changepoint +
 Kalman/particle state-space, HMM topology), and the structured-frame schema.
 
-### §L.2 — Comprehensive autonomous journal `[concept]` (N-46)
+#### N-45 clarification addendum — dynamic parallel cascades (2026-06-20)
+
+> **This addendum clarifies the existing concept without replacing it.** N-45 is a
+> modality-agnostic cascade abstraction instantiated independently for every
+> acquisition domain. Stages are
+> continuously active, asynchronous and pipelined: while one observation is in a
+> later stage, newer observations are already moving through earlier stages; stages
+> may maintain temporal state, issue refinements, and layer additional data onto
+> already-segmented material without stopping acquisition.
+
+**Inputs covered by the abstraction.** Acquisition is broader than microphone and
+screen: audio, video/pixels, action/HID inputs, 3D/CAD/DCC software state, tool- or
+workflow-initiated observations, invoked probes, device/peripheral streams, and future
+modalities each receive their own parallel instance of the same modality-agnostic
+cascade. The abstraction describes *how acquired information is progressively
+understood* without prescribing one fixed sensor, model, or serial worker.
+
+**Expanded stage semantics and further directions to explore.**
+
+1. **Acquisition.** Continuously ingest the modality's native signal/state at the
+   richest justified rate. For screen/visual sensing, pixels are the primary sensed
+   reality. Asynchronous window, accessibility, application, tool and system events
+   are secondary layers that can tag, explain or refine the pixel stream; they do not
+   replace pixel-first sensing.
+2. **Signal hygiene + tagging.** Calibrate/clean the signal, attach source/device/
+   clock/configuration metadata, mark quality and uncertainty, and deduplicate exact
+   or near-identical material without collapsing meaningful temporal continuity.
+3. **Atomic segmentation/classification.** Identify modality-native sections and
+   boundaries, classify/tag them provisionally, and assign each atomic section a
+   stable unique time identity so every later refinement remains relative to the
+   correct segment and neighboring segments.
+4. **Cheap semantic extraction.** Apply the strongest available methods whose
+   implementation is optimized for the modality's edge case and realtime operating
+   budget. "Cheap" means cheap *at runtime for this path*, not simplistic: specialized
+   SOTA detectors, trackers, compact encoders, statistical models and hardware-
+   optimized inference are valid here.
+5. **Short-range temporal semantic refinement + layering.** Refine segments against
+   immediately preceding/following segments, track identities and boundaries, merge
+   supporting metadata, and revise provisional labels while preserving the unique
+   time/segment references. **Stages 1–5, as a continuously pipelined hot path, target
+   realtime 60 FPS or better where the modality supplies data at that rate.**
+5.1. **Longer-range same-modality semantics + information gain.** Compare the already
+   processed output with prior well-processed context from the same modality across
+   longer horizons. Derive information gain using complementary heuristic,
+   statistical-ML, online-RL, state-space and/or meta-heuristic methods (or any other combination, as found apt later; mark for study/research to); consider multiple
+   horizon/state estimates rather than reducing history to raw-frame comparison; the various levels of compressed contexts in project? here that concept will come useful.
+6. **Selective specialist escalation.** When high Information Gain (again, a system for determining these built behind) -> Route slice of context, selected segments, ambiguities and/or
+   high-value regions to heavier specialist systems for additional extraction,
+   correction or refinement, then layer their result back onto the same segment IDs.
+7. **Cross-modal arbitration and deep contextual refinement.** Converge useful
+   processed outputs from independently running modality cascades; add long context,
+   web, documents, previous memory/context recall and other invoked evidence; further
+   refine segmentation, tags, metadata, relations and segment-relative extraction.
+   Cross-modal evidence may also be opportunistically pulled into earlier refinement
+   while cascades continue in parallel; stage 7 is the deep convergence point, not the
+   first moment modalities are allowed to inform one another.
+8. **Emit.** Only after the relevant cascade processing and arbitration is complete,
+   publish the resulting observation/context event to downstream memory, proactive,
+   journal, retrieval or user-turn consumers.
+9. **Logs** After all this has happened, and the main system has worked its way with the content, prepared it's useful context based processing; write the objective Atomic Logs of the event (the log is supposed to be atomic -> grounded in the timestamp relevant event with context only to understand that temporally atomic event in a broader longer context and multi modality)
+
+**Parallelism invariant.** The numbering describes increasing semantic depth and
+available evidence, not stop-the-world execution order. Acquisition never waits for
+semantic extraction; short- and long-horizon workers consume bounded streams on their
+own cadence; specialist and cross-modal branches return refinements keyed to the
+original time/segment identity. Back-pressure may reduce refinement frequency but
+must not stall the acquisition path.
+
+**Representation clarification.** The **structured frame remains the common
+substrate stated above**. Modality-agnostic means the cascade stages and refinement
+semantics apply to any acquisition source; it does not mean every sensor has identical
+raw content. The common frame can carry source-appropriate data together with stable
+time/segment identity, provenance, confidence/quality, tags, relations and refinement
+lineage. Cross-modal models may add aligned representations and relations to those
+frames as parallel cascades exchange useful processed evidence.
+
+**Current model/system capability map — candidates to exploit inside the cascade,
+not prescriptions for its architecture.**
+
+| System / family                  | Cascade utility                                                                                                                                                                                                                                                                                                                                 |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **SAM 2 / 2.1**                  | Streaming-memory image/video segmentation and identity propagation across frames; useful for stages 3–5 short-range visual boundaries, tracked sections and segment-relative continuity.                                                                                                                                                        |
+| **SAM 3**                        | Concept-prompted detection, segmentation and tracking with persistent instance identities; useful for stage-3 section discovery, stage-4 concept tagging, stage-5 temporal mask refinement and stage-6 re-query of ambiguous/high-value concepts. The detector and memory tracker can refresh one another while the pixel cascade remains live. |
+| **SAM 3D / SAM 3D Body**         | Selective reconstruction of object geometry, texture/layout or human body pose from visual input; useful as stage-6 specialist refinement and as processed evidence for 3D-software, camera and embodied/peripheral cascades.                                                                                                                   |
+| **EfficientViT-SAM / MobileSAM** | Edge-oriented promptable segmentation variants for the realtime stages when full SAM-family inference is too expensive; candidate stage-3/4 boundary engines.                                                                                                                                                                                   |
+| **Grounding DINO 1.5 Edge**      | Open-set, language-guided detection optimized for edge inference; candidate stage-4 semantic region tagging or prompt generation for SAM tracking. Its reported 75.2 FPS result is TensorRT/hardware-specific evidence that sophisticated open-set extraction can belong in the hot path.                                                       |
+| **DINOv3 / Perception Encoder**  | Dense, reusable visual features for tracking, change measurement, classification, retrieval and spatial tasks; useful for stage-4 semantics, stage-5 local correspondence and stage-5.1 comparison against processed same-modality history.                                                                                                     |
+| **Florence-2**                   | Prompt-driven captioning, grounding, detection and segmentation through one task interface; useful for selective stage-4 extraction or stage-6 refinement where richer textual/spatial output is needed.                                                                                                                                        |
+| **ImageBind**                    | Aligns image, text, audio, depth, thermal and IMU representations; useful for cross-pathway scans, cross-modal similarity, retrieval and consistency signals during stages 5.1 and 7. It supplies an added aligned layer, not a replacement for modality-native cascade state.                                                                  |
+| **LanguageBind**                 | Language-centered alignment for video, audio, depth, infrared and related modalities; useful when processed modality outputs need semantic comparison or retrieval through a language-addressable space at stage 7.                                                                                                                             |
+| **UniBind**                      | Modality-balanced alignment spanning image, text, audio, point cloud, thermal, video and event data; directly relevant to cross-modal arbitration involving 3D/peripheral/event streams and to learning shared relation scores without collapsing native data.                                                                                  |
+| **VGGT**                         | Feed-forward camera, depth, point-map, point-track and 3D reconstruction from one or many views; useful for stage-4/6 visual-to-3D extraction and consolidation of camera or 3D-software cascades.                                                                                                                                              |
+| **InfiniteVGGT**                 | Causal long-stream 3D geometry with bounded rolling memory; relevant to stage-5.1 long-range same-modality geometry and persistent 3D scene/peripheral tracking.                                                                                                                                                                                |
+
+**Research references for the capability map.**
+- SAM 3: <https://arxiv.org/abs/2511.16719>
+- SAM 2: <https://arxiv.org/abs/2408.00714>
+- SAM 3D: <https://arxiv.org/abs/2511.16624>
+- EfficientViT-SAM: <https://arxiv.org/abs/2402.05008>
+- MobileSAM: <https://arxiv.org/abs/2306.14289>
+- Grounding DINO 1.5 Edge: <https://arxiv.org/abs/2405.10300>
+- DINOv3: <https://arxiv.org/abs/2508.10104>
+- Perception Encoder: <https://arxiv.org/abs/2504.13181>
+- Florence-2: <https://arxiv.org/abs/2311.06242>
+- ImageBind: <https://arxiv.org/abs/2305.05665>
+- LanguageBind: <https://arxiv.org/abs/2310.01852>
+- UniBind: <https://arxiv.org/abs/2403.12532>
+- VGGT: <https://arxiv.org/abs/2503.11651>
+- InfiniteVGGT: <https://arxiv.org/abs/2601.02281>
+
+### §L.2 — Comprehensive autonomous journal `[x]` MVP slice DONE 2026-06-20 → D-47 (N-46) — **PULLED INTO MVP (user 2026-06-20)**
+> **Status: MVP slice shipped (D-47).** Per-entry research now folds in own durable memory
+> (default-on, local) + web/doc over the unified engine (gated+throttled), multi-seed, cost-bounded
+> — replacing the single-seed web-only seam. Remaining post-MVP refinement: a model call to *choose*
+> the queries, and routing through the N-47 Perplexity-grade engine. Original concept text below.
 *Extends D-05 / WS-J. Today web-in-journal is **off by default and intentionally
 minimal** ([journal.py](../services/lk/kernel/journal.py) `_maybe_web_context`,
 throttled, single seed query). The directive: **the journal MUST be comprehensive.***
@@ -2124,7 +2306,8 @@ framework, or secondary protocol until the minimal helper proves reliable.
 
 ### §M.4 — Stage 3 REVISE + FINALIZE
 
-**Current executable frontier:** N-55 (hotkey) **plus the re-opened N-63 (§M.5)**.
+**Current executable frontier:** N-55 (hotkey). ~~N-63~~ DONE 2026-06-20 → D-46. Deployment
+spine now: **N-59/N-60/N-61 → N-62** (N-63 unblocked N-60's voice lane; N-65 levers done → D-45).
 N-52/N-56/N-57/N-58 (→ D-40/D-41/D-42 and the chat-render half of D-39) remain
 complete; **N-51 + N-53 + N-54 are RE-OPENED** by the §M.5 regression audit — D-39's
 voice/rebuild claims do not match the running code. N-45/N-48/N-49 remain broader
@@ -2139,7 +2322,7 @@ server/kernel/ui/system — rebuild should only do rebuild." A code read confirm
 REGRESSED in DONE.md §0; the chat-render/telemetry/grounding halves (N-52/56/57/58 →
 D-40/41/42) are unaffected. Remediation = **N-63** below.*
 
-#### N-63 (VOICE-FIX) — Voice/runtime regression remediation `[ ]` — FULL — re-opens D-39 (N-51/N-53/N-54)
+#### N-63 (VOICE-FIX) — Voice/runtime regression remediation `[x]` DONE 2026-06-20 → D-46 (live-mic verify pending hardware) — FULL — re-opens D-39 (N-51/N-53/N-54)
 **Verified root causes (read this session, not speculation):**
 1. **Rebuild is not compile-only.** [ctl.py](../services/lk/ctl.py) `cmd_rebuild` ends with
    `_desktopctl("restart-popup")`; that stops+relaunches the popup (and the popup boot
@@ -2443,7 +2626,21 @@ choice stays behind the `model.py` role seam (I3); no atomic service defaults pe
 to cloud (D-33 / local-first). **Edges.** `--enables--> N-64` load-bearing · `--shapes-->
 N-65/N-67/N-68` (serving, UI, and diagrams all describe the same node set).
 
-### N-65 (SERVE) — Production-grade local llama.cpp serving `[ ]` — FULL — concretizes N-32, extends D-37
+### N-65 (SERVE) — Production-grade local llama.cpp serving `[x]` MVP-ACCEPTED 2026-06-20 @ native ~10 tok/s (refinement → N-73) — see D-45 — FULL — concretizes N-32, extends D-37
+> **★ DECISION (user 2026-06-20): "leave building from scratch, proceed with 10 tk/s, mark
+> refinement/optimizations for later."** MVP serving baseline = **native Windows ARM64 ~10 tok/s**
+> (run the official prebuilt natively, NOT in WSL; default 9 threads). The ≥15 push (native -mcpu
+> build, AC tuning, NPU/GPU, spec-decode E2B) is split out to **N-73** (deferred). Detail below.
+> **★ MEASURED REALITY (2026-06-20, D-45) — corrected after two over-conclusions:** host =
+> **Snapdragon X Elite (Oryon, 12c), ARM64**. Model = Gemma-3n-E4B (7.52B total but **~4B
+> EFFECTIVE** via PLE/MatFormer — so ≥15 IS plausible; my "too big" call was wrong). VERIFIED:
+> prefix-reuse works; **native Windows ARM64 ≈10 tok/s vs WSL 7.4 (+37%)**, WSL thread-cliff absent
+> natively. THREADS: sweeps were on **battery** (throttling → ±4–5 noise; 8≈9 indistinguishable) →
+> **reverted to 9 (user's deliberate choice)**, capped by cores; `LK_THREADS` overrides. ≥15 NOT yet
+> reproduced but NOT disproven — confounds are **battery + a generic (non-Oryon) prebuilt**. PATH
+> (user 2026-06-20): **build llama.cpp natively for Windows (-mcpu=native Oryon) + run on AC**;
+> blocked on missing **MSVC CRT** (clang present, no VS Build Tools, not admin) → needs Build Tools
+> install. After ≥12 tok/s verified → add **NPU/GPU + speculative decoding w/ Gemma-3n-E2B draft**.
 **Directive (user 2026-06-19, "use brain").** The serving layer uses almost no production
 optimization — and this is about *serving*, not compiling with -O3. Current argv
 ([services/lk/server.py](../services/lk/server.py) ~164–188): `--ctx-size`, `--threads 9`,
@@ -2538,7 +2735,7 @@ D-35/D-39/D-40/D-41` · `--feeds--> N-61` (desktop/UI stress) · `--gated-by--> 
 **Ambiguity.** "Elegant/non-obstructive" thresholds `crystallizes-during` (start with
 functional truth, polish second).
 
-### N-68 (DIAGRAMS) — Dense, legible system diagrams `[~]` — HARD MVP (user 2026-06-19: N-65→68 in MVP)
+### N-68 (DIAGRAMS) — Dense, legible system diagrams `[~]` → **MVP 1.2 (user 2026-06-20: "other things first")** — was HARD-MVP, now deferred to the 1.2 sub-phase
 **STATUS 2026-06-19 — FULL SET DRAWN (28 diagrams), level corrected after user review.**
 Contract (user-clarified, after 3 wrong attempts — see below): **every LAWRENCE subsystem
 whose code runs in the live process gets TWO diagrams.** (1) **granular = systems
@@ -2602,3 +2799,435 @@ N-67 --extends-----> N-10   significant   truthful-UI refactor, audited exhausti
 N-68 --serves------> N-64   significant   the composition/workflow view
 {N-65,N-67} --feed-> N-62   significant   usable-local + UI integrity acceptance lanes
 ```
+
+## §P — SOUL-CONFORMANCE GATE (2026-06-19, user-directed) — **THE MVP GATE**
+
+> **Directive (user 2026-06-19):** "Focus on the singular goal now, MVP — deliverable, first.
+> … But first, in MVP, ensure the system follows its soul vision fully." CI/CD / Docker /
+> installer / Android-tolerance + emulated test cases come **after** MVP. The *soul* =
+> `docs/papers/LAWRENCE_v0_1_ieee.tex`. This section is the authoritative, code-grounded
+> verdict on how far the live process actually honors that paper, and the nodes that close
+> the gap. Method: read the running code (kernel/invoke.py, retrieval/{engine,memory}.py,
+> ctx/{distill,notes,store}.py, policy.py, model.py, agency.py) against the paper's contracts
+> and algorithms — not the docs' self-claims.
+
+### §P.1 — Conformance scorecard (grounded 2026-06-19)
+
+| Soul contract / algorithm (paper)                                     | Live code reality                                                                                                                        | Verdict                                        |
+| --------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- |
+| **TurnContextSnapshot** — typed evidence index (Eq.1 + contracts tbl) | `ContextSnapshot{version,text}` (invoke.py) — frozen rolling-context string + version only                                               | **DEGENERATE**                                 |
+| **Parallel-facet runtime** — `ProcessTurn` (Alg.1, §VII)              | `run_turn` = serial `analysis→retrieve→respond`; no facets, no fast-threshold loop, no merge                                             | **ABSENT (serial)**                            |
+| Fast loop + Slow loop (§VII-C)                                        | fast answer + `dispatch_refine` slow-loop elevation (refine.py)                                                                          | **PARTIAL ✓**                                  |
+| `context_version` stale-discard (Eq.1 purpose)                        | used in `run_proactive` stale-guard + logged per turn                                                                                    | **CONFORMANT ✓**                               |
+| **Retrieval `S_ret`** 6-term (Eq.5)                                   | memory.py: L(bm25/FTS5)+V(cosine)+G(graph)+R(recency)+link-boost(H)−P(delete) + RRF                                                      | **CONFORMANT ✓**                               |
+| **Retrieval bundle `B_t`** typed (Eq.6)                               | `engine.gather`: recent-ctx ∪ notes/doc/web arms, parallel, cited bundle                                                                 | **CONFORMANT ✓**                               |
+| Markdown Zettelkasten + metadata (Eq.2, tbl)                          | ctx/notes.py: md+frontmatter+`[[id]]`+backlinks+edges.jsonl                                                                              | **CONFORMANT ✓**                               |
+| Note taxonomy {context_log, journal_daily, task_note, knowledge_note} | promotion (D-43) now writes `context_log`/`task_note`/`knowledge_note`; journal writes `journal_daily`                                   | **CONFORMANT ✓**                               |
+| **Distillation `P_dist`** promotion (Eq.3, Alg.2)                     | `ctx/promote.py` `pdist()` scorer → promotes worth-keeping turns to durable notes (D-43)                                                 | **CONFORMANT ✓**                               |
+| **Auto-linking `S_link`** (Eq.4)                                      | `ctx/promote.py` `slink()` (lexcos+jaccard+recency+thread) auto-links on promotion (D-43)                                                | **CONFORMANT ✓**                               |
+| Journal synthesis `J_d` (Eq.)                                         | kernel/journal.py (WS-J rolling first-person)                                                                                            | **CONFORMANT ✓**                               |
+| Proactive loop fires unprompted (§VII)                                | `run_proactive` wired from 4 drivers (vision/audio/tick/spool) → throttled convergence → card+notify; **verified + instrumented** (D-44) | **CONFORMANT ✓**                               |
+| Provider gateway / LLMProviderAdapter (tbl)                           | model.py role seam (I3)                                                                                                                  | **CONFORMANT ✓**                               |
+| Policy gating (§XII-C)                                                | policy.py: `allow→Decision` + `audit` + `redact_text` + `prepare_messages`                                                               | **CONFORMANT ✓**                               |
+| ToolActionProposal (tbl)                                              | agency.py propose→token→decide→execute + RESPONSE.actions                                                                                | **CONFORMANT ✓**                               |
+| Failure: degrade branch-by-branch (§XVII)                             | try/except fallbacks throughout (recall/retrieve/refine/extract)                                                                         | **CONFORMANT ✓**                               |
+| Supervisory control PID/Petri/MDP (§XVI)                              | none                                                                                                                                     | **POST-MVP** (paper: explicitly control-plane) |
+
+**Tally (updated 2026-06-19 after D-43/D-44):** 15 conformant · 1 partial (fast/slow) · 1 degenerate (snapshot) · 1 absent (parallel-facet) · 1 deferred. **Durable-memory formation is now closed** (D-43: P_dist promotion + S_link auto-linking + soul note taxonomy) and **the proactive loop is verified+instrumented** (D-44). The only remaining unfollowed core is the **turn runtime** — serial pipeline + degenerate `{version,text}` snapshot (N-69 snapshot, N-70 parallel-facet) — **deliberately deferred to the next MVP iteration** per user (§P.3).
+
+### §P.2 — Gap-closure nodes
+
+- **N-69 (SNAP) — `TurnContextSnapshot` enrichment** `[ ]` — FULL. Promote `ContextSnapshot{version,text}` to the soul's typed frozen index: + screen_ref, audio_ref, thread_ref, app_ref, time_ref, reminder_ref, latest_chat_refs, policy_state (context_version already there). Foundational, additive, low-risk. **Subsumes N-06**'s vision-demotion + per-chat split. → MVP.
+- **N-70 (FACET) — parallel-facet turn runtime** `[ ]` — FULL. Dispatch independent evidence producers concurrently over the frozen snapshot; fast-threshold immediate emit; deferred merge same turn_id. Soul's centerpiece **and** the local-latency win (subsumes/serves N-32, N-65 regime). **The high-risk rebuild on a working serial turn — see §P.3 FORK.**
+- **N-71 (DISTILL) — `P_dist` promotion + DistillAndLink + `S_link`** `[x]` — FULL — **DONE 2026-06-19 → D-43**. Heuristic, **model-call-free** scorer over signals already present (novelty vs recent, extractor significance, user-emphasis "remember"/pin, thread/tag overlap, actionability from tasks/actions) → promote turns/findings to durable `context_log`/`task_note`/`knowledge_note`; on promotion run DistillAndLink (entities/tags → candidate notes → `S_link` λ-score → keep>τ → write linked zettel). Closes 3 gaps at once; populates retrieval's (conformant but edge-starved) graph arm. Additive, testable offline. → MVP.
+- **N-07 (PRO) reframed** `[x]` — **DONE 2026-06-19 → D-44**. Verified wired end-to-end (4 drivers → throttled `run_proactive` → card+notify; "may never fire" was uncertainty, not a break) + instrumented (`proactive_stats()` counters + `/status` line). Firing is throttled **by design** (600s + droppable + tier≥2).
+- **N-08 (SESS)** `[ ]` — chat session lifecycle (unchanged). → MVP.
+
+### §P.3 — THE FORK (needs user call)
+Does MVP "follow the soul fully" require **N-70 (rebuild the turn into the true parallel-facet runtime)**, or is the present **serial turn + slow-loop refinement + try/except branch-degradation + parallel retrieval arms** an acceptable MVP *realization* of the parallel intent — with N-70 deferred post-MVP and MVP focusing on the additive, low-risk conformance wins (N-69 snapshot, N-71 distillation/linking, N-07 proactive verify)? This trades soul-purity vs deliverability/risk and is the user's decision.
+
+### §P edges
+```
+N-69 --foundation--> N-70   load-bearing  the typed snapshot is what facets share
+N-69 --subsumes----> N-06   significant   snapshot typing folds vision-demotion + per-chat split
+N-71 --feeds-------> N-02   significant   auto-links populate the (edge-starved) graph arm G
+N-70 --realizes----> soul   load-bearing  the parallel-facet intent (§VII)
+N-70 --serves------> N-65   significant   parallel producers are the local-latency win
+{N-69,N-71,N-07} --feed--> N-62   significant   soul-conformance acceptance lane
+```
+
+---
+
+## §Q — CONSOLIDATED UI/CHAT PLAN (all scattered ideas in one place) — **user 2026-06-20**
+> **Why this exists (user 2026-06-20):** "There are many spread-out plans/ideas for UI chat
+> upgrades/refinements. Retrieve … consolidate all, then we'll split it into phases, and what's
+> for now and what's for later." This section GATHERS every UI/chat idea scattered across §C, §D,
+> §L.4/§L.5/§L.6, §G, the FR list, and the memory files — deduplicated, grouped, each tagged with
+> its source node. **The now/later phase split below is a PROPOSAL to refine together** (the user
+> will decide the cut). Canonical UI = the single classic surface (N-10); seam = N-09 (done).
+
+### §Q.1 — The full inventory (grouped; source nodes in brackets)
+
+**G1 · Foundation / shell / architecture**
+- [N-09 ✅ D-23] UI seam: variant arch, `web/lib/bridge.js` (sole transport), `bootstrap.js`,
+  `variants/classic/app.js`, `/health.uiVariant`. Swappable UI; hosts future composition surface.
+- [N-10] Canonical classic UI, refine HEAVILY: drop `localDraft` + all hollow/fabricated state;
+  truthful toggles driven by `/health`+SSE; vendored markdown renderer; config off the main bar.
+- [N-11 → folded into N-10] command-palette ergonomics (⌘K), grow-to-content geometry, settings as
+  a separate window, ⌘L cross-chat link flow, backlink chips, turn-id elevation, native vibrancy/blur.
+- [N-27] Tauri shell rebuild so live **Stop/Esc** fire `bridge_delete` (cancel). Mechanical.
+- [N-26] Host-native UI (FR-011) — strategic, on the seam (`apps/desktop/host/windows/`).
+- [N-67] **Integrity audit — GATES all UI work:** every exposed control real / honestly disabled;
+  no broadcast-without-substance (§K.0.1 #1). Integrity matrix per control.
+
+**G2 · Chat / session model + memory (BASE shipped; UI half pending)**
+- [N-08] Session lifecycle: dynamic session boundaries (idle-gap / day-rollover / explicit), clear
+  the *working set* (L1/L2) on new cycle (durable transcript + WS-J summary persist), rolling
+  model-conducted chat journal, recall / review / restore / load-old / link. BASE (ChatStore +
+  NoteStore edges) shipped; the **recall/review UI half** is pending.
+- [N-08/ui-redesign mem] Hybrid memory model: one global mind (journal + notes + L3) + per-chat
+  L1/L2; cross-chat links = backlinked GRAPH over NoteStore; backlink chips per message; click navigates.
+
+**G3 · Response surface = collaborative MDX "shared space"  [N-72, the NEW centerpiece]**
+- Chat becomes a **rolling stack of frames**; a new frame per **new user query** OR **proactive
+  instantiation**; **proactive normally UPDATES the active frame** (only a new thread starts a frame).
+- Per-frame layout: **(1) query → (2) retrieved-content thumbnails BETWEEN query and frame** (each =
+  a static snapshot; **thumbnail TITLE = that source's citation footer content**) **→ (3) the shared
+  MDX space** co-edited by model(s) + user.
+- The shared space is a **living MD/MDX document**, not a one-shot bubble.
+
+**G4 · Citations — table contract, passage-anchored, associative  [N-48 / §L.4]**
+- A turn builds a **table of candidate references** (from what the model chose + retrieval provided +
+  user insisted). **Model SELECTS rows; the system FORMATS the citations** → can't mis-cite.
+- Each row: `id ↔ url/content`; **chunk displacement** (→ scroll-to-exact-chunk in-window);
+  `reasonWhy`; `whatWillInvalidateThisCitation` (explicit defeater); `whatElseCouldBeRelated`
+  (**1-/2-click associative graph** over NoteStore edges).
+- Citations live **at point-of-evidence** (on the G3 thumbnails), **not** an end-of-response Sources block.
+
+**G5 · Rich rendering + runnable artifacts (sandboxed)  [N-49 / §L.5, N-16]**
+- Rich render: **Mermaid**, **KaTeX/MathJax math**, rich MD/MDX, **other live JS components**,
+  graphs / geometric drawings / illustrations; **static snapshots** of retrieved pages + thumbnails.
+- **Runnable, SANDBOXED artifacts** (strict-CSP iframe — the largest security surface): run code,
+  small web-apps, **WASM**.
+- **In-window browsing / custom search engine** (WolframAlpha + SearXNG feel): cited response +
+  browsable links / docs (scrolled to the exact chunk) / papers / patents / socials / forums —
+  never bounce to an external browser; grounded in short↔intermediate↔long-term context.
+- **Generated artifacts:** Marp.js PPTs with spanning flowchart/diagram (draw.io / Excalidraw-class),
+  **model verifies legibility**; tabular SQL/NoSQL data generation; MDX generation.
+- [N-16] Artifact / deep-study engine (WS-A): `make(spec)->path`, md-first under `memory/vault/`,
+  real citations + provenance footer, provider-blind (I3).
+
+**G6 · Folded UI controls  [N-12/13/14/15, N-30]**
+- [N-12] Ingest button ("Save to KB" → status; FR-005 UI half).
+- [N-13] Push-to-talk voice (POST /voice exists; PTT button + streaming transcript; ties N-63).
+- [N-14] Reminders panel/badge (badge from backend counts).
+- [N-15] Capability markers in popup (FR-010).
+- [N-30] Cards — fold into parents: telemetry (FR-004 → N-10 + honest `/metrics`), **evidence cards
+  (FR-008 → typed `CitedResult` cards, pairs N-16/G4)**, asset/panel (FR-010 → N-15).
+
+**G7 · Composition surface  [N-64, post-MVP]**
+- n8n workflow-composition UI; the N-09 seam hosts it later. Out of MVP.
+
+**G8 · Build methodology  [N-50 / §L.6]**
+- Phase 1 **Abstraction DAG** — "which feature is a special case of which" → collapse onto shared
+  primitives (do THIS first when we split). Phase 2 implementation-layer assessment. Phase 3 build.
+
+### §Q.2 — PROPOSED now/later split (SEED — to finalize together)
+**NOW (MVP) — the responsive, honest, shared-space core:**
+- N-67 integrity audit (gate) · N-10 hygiene (drop localDraft, truthful toggles, vendored md, config
+  off bar) · **N-72 shared-space frames** (query → thumbnails-with-citation → shared MDX) ·
+  **rich render: MD/MDX + Mermaid + KaTeX** (G5 *render*, not yet *runnable*) · static snapshots +
+  thumbnails · **N-48 citation-table core** (select-not-format + thumbnail titles + scroll-to-chunk) ·
+  N-08 recall/review UI half · N-27 live cancel · folded controls N-12/13/14/15.
+**LATER (post-MVP):**
+- G5 *runnable/sandboxed* artifacts (code exec, WASM, web-apps), Marp/draw.io generation, in-window
+  custom-search-engine breadth · N-16 deep-study engine · N-48 associative 1-/2-click graph expansion ·
+  N-64 composition UI · N-26 host-native UI.
+**FIRST STEP when we build:** N-50 Phase-1 Abstraction DAG over G1–G6 to find the shared primitives
+(frame model · renderer · citation table · snapshot/thumbnail · sandbox host) before any code.
+
+### §Q.3 — Detailed breakdown (each item: what it is · the primitive it needs · what it touches · deps)
+
+**G1 Foundation**
+- **N-09 seam ✅** — `web/lib/bridge.js` sole transport, `bootstrap.js` variant loader, `/health.uiVariant`. *Primitive:* the transport+variant boundary (DONE). *Deps:* none.
+- **N-10 canonical classic** — remove `localDraft`/hollow state; toggles truthful from `/health`+SSE; **vendored markdown**; config off main bar. *Touches:* `variants/classic/app.js`, `ui_bridge.py /health`. *Deps:* N-09. *Primitive introduced:* truthful-state binding (UI reflects backend, never fabricates).
+- **N-11 → folded** — ⌘K palette, grow-to-content, settings window, ⌘L links, backlink chips, turn-id elevation, vibrancy. *No standalone build* — adopt into N-10.
+- **N-27 live cancel** — rebuild Tauri so Stop/Esc fire `bridge_delete`. *Primitive:* turn-cancel signal. *Deps:* Rust rebuild.
+- **N-26 host-native UI** — native windows on the seam. Strategic/later.
+- **N-67 integrity audit** — per-control matrix {real/partial/hollow/over-claimed}→fix. *Gate on all UI work,* not a feature.
+
+**G2 Chat/session + memory**
+- **N-08 sessions** — boundary policy (idle/day/explicit); clear *working set* on new cycle (transcript+WS-J persist); rolling chat journal; recall/review/restore/load/link. *Primitive:* the **session/working-set lifecycle** + recall surface. *State:* BASE done (ChatStore `messages.jsonl`, NoteStore edges); UI half pending. *Deps:* N-02 (recall quality, done), WS-J (done).
+- **Hybrid memory + links** — global mind (journal+notes+L3) + per-chat L1/L2; cross-chat links = NoteStore graph; backlink chips. *Primitive:* the **note/graph substrate** (NoteStore, done).
+
+**G3 Shared-space frames [N-72]**
+- **Frame** = {query_ref, thumbnails[], shared_doc(MDX), editable_regions, rev}. New frame per query/proactive-instantiation; **proactive UPDATES active frame** normally. Rolling stack. *Primitives:* the **frame data-model**, **proactive→active-frame router**, **co-edit/merge discipline**. *Touches:* bridge protocol (frames, edits, SSE), `ChatStore`. *Deps:* renderer (G5), reference-record (G4), snapshot (G5), N-08 session.
+
+**G4 Citation-table [N-48/§L.4]**
+- Per-turn **reference table**; model SELECTS rows, system FORMATS → can't mis-cite. Row = {id↔url/content, **chunk displacement**, reasonWhy, whatWillInvalidateThisCitation, whatElseCouldBeRelated(1-/2-click NoteStore graph)}. *Primitive:* the **reference record** + select-not-format decoding contract + associative expansion. *Deps:* `CitedResult` (done D-26); **chunk displacement needs §L.3 chunk-level index (N-47, post-MVP)**; associative map needs NoteStore (done).
+
+**G5 Rich render + artifacts [N-49/§L.5, N-16]**
+- *Render:* Mermaid, KaTeX/MathJax, MD/MDX, live JS components, static snapshots+thumbnails. *Runnable (sandboxed):* code/web-apps/WASM in strict-CSP iframe. *Browse:* in-window cited search engine (links/docs/papers/patents/socials), scroll-to-chunk. *Generate:* Marp PPTs + draw.io/Excalidraw diagrams (model verifies legibility), SQL/NoSQL tables, MDX. *N-16:* `make(spec)->path` md under `memory/vault/` + provenance. *Primitives:* the **MDX+component renderer**, the **sandbox host**, the **snapshot/thumbnail capturer**, the **artifact generator/store**.
+
+**G6 Folded controls [N-12/13/14/15, N-30]**
+- N-12 ingest→status · N-13 PTT (POST /voice, ties N-63) · N-14 reminders badge · N-15 capability markers · N-30 cards (telemetry FR-004, **evidence FR-008 = a rendering of the reference record**, asset FR-010). All fold into parents.
+
+**G7 Composition [N-64]** — n8n workflow surface on the seam. Post-MVP.
+**G8 Methodology [N-50]** — Phase-1 Abstraction DAG (this §Q.3/§Q.4) → Phase-2 layer assessment → Phase-3 build.
+
+### §Q.4 — Intersections / conflicts / overlaps (the Phase-1 finding)
+
+**Shared primitives (intersections — build ONCE, reused widely):**
+- **P1 · MDX+component renderer** (Mermaid/KaTeX/MD/MDX/JS) — used by G3 shared doc, G3 thumbnails, G4 reasonWhy, G2 recall/journal display, G5 artifacts. *The single most reused primitive.*
+- **P2 · Reference record** (id/url/chunk/reasonWhy/defeater/related) — the one object behind **G3 thumbnail-title**, **G4 citation-row**, **G6 FR-008 evidence card**. Three views, one record.
+- **P3 · Sandbox host** (strict-CSP iframe) — needed by G5 runnable artifacts AND by G3 displaying untrusted retrieved content/snapshots. *Display-sandbox is needed as early as G3, not only for "runnable later."*
+- **P4 · Snapshot/thumbnail capturer** — G3 thumbnails ⊂ G5 static page snapshots; same capture path.
+- **P5 · Frame data-model + bridge protocol** — G3 frames, G2 sessions (a session = a stack of frames), proactive routing, co-edit. Unifies G2↔G3.
+- **P6 · NoteStore graph** — G2 backlink chips AND G4 associative 1-/2-click map share the same edges (done).
+- **P7 · Co-edit / rolling-revision discipline** — G3 "model+user co-edit the shared doc" reuses the **WS-J journal rolling-revision** pattern (model revises a living MD doc, single-writer + atomic). Reuse, don't reinvent.
+
+**Conflicts (resolve before building):**
+- **C1 · Renderer scope** — N-10 says "vendored *markdown*"; G5 needs full MDX+Mermaid+KaTeX+components. Building minimal-md first then replacing = wasted work. **Resolve:** define P1's scope once; N-10 adopts P1, not a throwaway md renderer.
+- **C2 · Sandbox timing** — proposed split put sandbox "later (runnable)", but G3/G5 rendering of untrusted *retrieved* content NOW requires the *display* sandbox. **Resolve:** P3 display-sandbox is NOW; only code/WASM *execution* is later (same primitive, staged capability).
+- **C3 · Frame vs existing message model** — N-72 frame ⊋ ChatStore `messages.jsonl` message (frame carries thumbnails+shared_doc+edits+rev). **Resolve:** frames EXTEND messages additively (I5: add, never rename); a message becomes a frame's seed.
+- **C4 · Concurrency on the active frame** — model stream + user edits + "proactive updates the active frame" all write one shared_doc. **Resolve:** single-writer + rolling-revision (P7); proactive merges as a revision, never clobbers a user edit in flight; define edit-region ownership.
+- **C5 · Three citation surfaces** — thumbnail (G3) vs end-of-response Sources (current) vs evidence card (G6). **Resolve:** one P2 record; the end Sources block is REPLACED by point-of-evidence thumbnails; the card is the same record in a different slot.
+- **C6 · scroll-to-chunk dependency** — G4/G5 scroll-to-exact-chunk needs **chunk-level addressing (§L.3/N-47, post-MVP)**; today `vectors.py` is doc-level brute-force. **Resolve:** NOW = doc-level citation + open-in-window; **chunk-displacement/scroll-to-chunk moves to LATER** with N-47. (Corrects the seed split, which had scroll-to-chunk in NOW.)
+- **C7 · Proactive create-vs-update rule** — "new frame per proactive instantiation" vs "proactive usually updates current frame" need an explicit predicate. **Resolve:** proactive UPDATES the active frame unless it opens a genuinely new thread (define the thread-change signal, ties N-07).
+
+**Overlaps (collapse / subsume):**
+- **O1** N-10 vendored-markdown ⊂ P1 renderer (do P1 once).
+- **O2** G3 thumbnail = G4 row = G6 FR-008 card = **P2** (one record, three renderings).
+- **O3** G3 thumbnail-snapshot ⊂ G5 static-snapshot = **P4**.
+- **O4** N-30 cards have no standalone build (FR-008→P2/G4, FR-004→N-10, FR-010→N-15).
+- **O5** N-11 fully ⊂ N-10 (superseded).
+- **O6** N-16 (generate+store artifacts) vs G5 (render/showcase artifacts) — N-16 = backend engine, G5 = display; related, keep distinct but share P1.
+- **O7** G5 "in-window custom search engine" = G3 thumbnails + P2 + retrieval (D-26) + scroll-to-chunk (C6), scaled to full browsing — it's an *expansion of G3*, not a separate stack.
+
+### §Q.5 — Revised dependency-aware phasing (supersedes §Q.2 seed)
+**Build order forced by the DAG:** N-67 gate · **P1 renderer** + **P3 display-sandbox** + **P2 reference record** are the foundation (everything renders through them) → then **P5 frame model** (+P7 co-edit reuse) → then G3 shared-space assembles P1–P5 → G4 citation core (doc-level) → N-08 recall UI · G6 controls · N-27 cancel.
+**NOW (MVP):** N-67 · N-10 hygiene-on-P1 · **P1 (MD/MDX+Mermaid+KaTeX) · P2 reference record · P3 display-sandbox · P4 snapshot/thumbnail · P5 frame model + P7 co-edit** · **N-72 shared-space** (query→citation-titled thumbnails→co-edited MDX, proactive-updates-active-frame) · G4 **doc-level** citation (select-not-format, thumbnail titles) · N-08 recall UI · G6 folded controls · N-27 cancel.
+**LATER (post-MVP):** P3 *execution* sandbox (code/WASM/web-apps) · Marp/draw.io generation · **C6 scroll-to-chunk + G4 chunk displacement (needs N-47/§L.3)** · G4 associative 1-/2-click graph · G5 full in-window search-engine breadth · N-16 deep-study · N-64 composition · N-26 host-native.
+
+### §Q.6 — MVP Phase-1 REFRAMED: chat-flow / lifecycle / ops / search-modes (user 2026-06-20)
+> **User reframing:** the primitive-phasing read convoluted; the REAL Phase-1 MVP is **refining the
+> CHAT UI FLOW + chat lifecycle + response operations + enforced search-modes** — NOT the full
+> shared-space/artifact machinery. Phase-1 primitives chosen: **P1, P2, P4, P6.**
+
+**P-cut (Phase-1): P1, P2, P4, P6.** Deferred: P3 sandbox, P5-full frame model, P7-full co-edit.
+- **C1 (user): renderer is TWO-PHASE.** Phase-1 P1 = regular responses with sections/partitions/
+  formatting + **mermaid.js** + **charts/graphs/plots** (Chart.js/Vega-Lite/D3-class). Phase-2 P1 =
+  the full artifact-frame render (runnable/sandboxed). *(Corrects C1: no throwaway minimal-md.)*
+- **C2 RE-RESOLVED (corrects my "sandbox now"):** Phase-1 **P4 = STATIC IMAGE snapshots** and the
+  renderer shows only our own model output + declarative diagrams → **no P3 sandbox needed in
+  Phase-1.** Sandbox returns later with runnable artifacts + live/interactive retrieved content.
+  *Sub-decision:* model-authored charts as **declarative specs (Vega-Lite/Chart.js JSON)** stay
+  sandbox-free; raw model-authored **D3/JS** is arbitrary code → would pull P3 in now. Recommend declarative.
+- **Flow features pull in LITE forms of the deferred primitives (not the full ones):**
+  - **P5-lite** = addressable messages + **sub-section anchors** + chat lifecycle (NOT a co-edited
+    frame). Needed by branch-off, reply-to-section, link-at-arbitrary-points.
+  - **P7-lite** = **edit→diff**: an edited/regenerated response is captured and **presented to the
+    model as a diff in the context** (ties N-06 assembly) — NOT concurrent CRDT co-editing.
+
+**Phase-1 work, bucketed (the user's flow list):**
+- **A · Thread-flow fixes (reported bugs):** kill the constant **scroll-back** on query / voice-query
+  trigger / transcription; stop the main thread **bloating** (virtualize/paginate + N-08 working-set
+  clear). → **N-10**.
+- **B · Chat lifecycle/history:** init / new-chat / switch / view / restore / backup / archive. →
+  **N-08** (BASE done — ChatStore CRUD/switch/export; build the UI half + boundary/clear).
+- **C · Response operations:** edit-response (as diff), regenerate, **branch-off**, format-change,
+  copy/paste **formatted** chats, **reply to specific sections**. → **N-75 (NEW · CHAT-OPS)** on P5-lite+P7-lite.
+- **D · Linking/reference graph:** link-at-arbitrary-points (model-understandable), reference other
+  responses/chats, backlinks. → **P6 NoteStore** (done) + sub-anchors (P5-lite).
+- **E · Enforced search-modes (beyond regular search):** **deep** · **socials** (forums/threads/
+  communities/discussions/articles) · **research/patent/publication** · **financials** · **video/
+  content** · **tutorials/codebases/technicals** · … → **N-74 (NEW · SEARCH-MODES)** over the unified
+  engine (extends N-02/N-03/D-26 categories with typed, user/model-enforceable modes; each mode = a
+  source-set + query-shaping + a render lens). Pairs with P2 reference records + P4 thumbnails.
+
+**Net:** the **shared-space/artifact vision (N-72 full, G5 runnable, N-48 chunk/associative) moves to
+Phase-2+**; Phase-1 = a solid, non-bloating, navigable chat with real lifecycle, edit/branch/link
+ops, and typed search-modes. **Open to confirm:** (1) new nodes N-74 (search-modes) + N-75 (chat-ops)?
+(2) P5-lite/P7-lite as the minimal forms? (3) P4 = static images (sandbox stays deferred)? (4) charts
+declarative (Vega-Lite/Chart.js) vs raw D3?
+
+### §Q.7 — Phase-1/2 decisions locked (user 2026-06-20, round 2)
+**New nodes created:** **N-74 (SEARCH-MODES)**, **N-75 (CHAT-OPS)**, **N-76 (TRAJECTORY)** — see below.
+
+**Moved INTO Phase-1 (MVP):**
+- **Chunk + associative citations** (reverses C6). Pulls in **N-47-lite = a chunk-level LOCATOR**
+  (offset/displacement within each retrieved source) — enough for scroll-to-exact-chunk + snapshot
+  positioning. The full ANN/FAISS scaling (N-47 proper) stays Phase-2; the *associative 1-/2-click*
+  map rides P6 NoteStore (done). So Phase-1 citation = select-not-format **+ chunk locator + associative**.
+- **P4 = static PRE-RENDERED snapshots of the retrieved content** (web pages **pre-rendered/compiled
+  to static**, + docs), **scrolled to the relevant chunk**. Headless render → static image/sanitized
+  static (no live DOM) ⇒ still **no P3 sandbox** in Phase-1. This is P4's real definition, not a bare thumbnail.
+- **P5-lite + P7-lite** — implement **abstract/atomic** (clean, swappable interfaces) so they upgrade
+  to full P5 frame-model / P7 co-edit later without rework. P5-lite = addressable messages + sub-section
+  anchors + chat lifecycle; P7-lite = edit→diff presented to the model in context.
+- **Charts/plots:** **non-D3 (Vega-Lite / Chart.js / mermaid) in Phase-1; D3.js in Phase-2** (raw JS → sandbox).
+- **Streaming + non-streaming UX.** Streaming ALREADY works end-to-end (model `_post_stream` → bridge
+  SSE `delta` → classic `onDelta` evolving bubble + cursor; `streamState` Queued/Thinking/Cancelling).
+  Phase-1 fix = the **non-streaming config path**: today it shows ONE "Thinking" bubble + a background
+  job — replace with a **progress bar / chunked reveal / better feedback** (UX refinement, bucket A).
+- **Cancellation + regeneration.** Cancel: UI shows "Cancelling" but the real backend stop needs
+  **N-27** (Rust `bridge_delete` rebuild so Stop/Esc actually abort the turn). Regenerate: **N-75**. Both Phase-1.
+
+**Phase-2 (deferred, recorded now):**
+- **Semantic search of chats** (over the unified engine + embeddings).
+- **N-76 (TRAJECTORY) — post-response trajectory awareness.** After a response generates, semantically
+  pull *that response's* related responses/logs/journals + infer the **query-trajectory**, feed back to
+  the model with an **enforced-JSON short confirmation** (keep / alter) so it can anticipate where the
+  thread is headed and adjust before finalizing. Phase-2 (builds on semantic-chat-search + P2/P6).
+- **Full co-edit concurrency model (C4 resolution, Phase-2):** **single write-lock — model XOR user at a
+  time**; while the model writes, the editor is **non-editable**, BUT the user may drop **comments /
+  markers / highlights / questions / exclamations / revision-requests mid-stream**, which inject an
+  **on-the-fly refinement pass into the stream**. (P7 full.)
+- Runnable/sandboxed artifacts (P3 exec), D3.js, Marp/draw.io gen, full N-47 ANN scaling, N-72 full
+  shared-space, N-64 composition, N-26 host-native.
+
+### §Q.8 — New nodes
+**N-74 (SEARCH-MODES)** `[ ]` Phase-1 — Enforced, typed search modes over the unified engine (N-02/
+N-03/D-26): **deep · socials (forums/threads/communities/discussions/articles) · research/patent/
+publication · financials · video/content · tutorials/codebases/technicals · …** plus regular. Each mode
+= {source-set + query-shaping + render lens}; user- AND model-enforceable. Pairs with P2 records + P4
+snapshots. *Open:* per-mode source adapters; how the model requests a mode vs the user pinning one.
+
+**N-75 (CHAT-OPS)** `[ ]` Phase-1 — Response/thread operations on **P5-lite + P7-lite**: edit-response
+(captured as **diff**, shown to the model in context), regenerate, **branch-off**, format-change,
+copy/paste **formatted**, **reply-to-specific-section**, link-at-arbitrary-points (model-understandable)
++ reference other responses/chats (P6). Atomic/abstract so it upgrades to full frames/co-edit later.
+
+**N-76 (TRAJECTORY)** `[ ]` Phase-2 — post-response semantic trajectory-awareness + enforced-JSON
+keep/alter confirmation (see §Q.7). Depends on semantic-chat-search + P2/P6.
+
+### §Q.9 — PHASE-1 CONSOLIDATED SPEC (authoritative; is / isn't per item) — user 2026-06-20
+> Supersedes the scattered splits in §Q.2/§Q.5/§Q.6/§Q.7 for *what Phase-1 contains*. Each item:
+> **IS** = what it delivers · **ISN'T** = the explicit boundary (prevents scope creep). Phase-2 lives in §Q.10.
+
+**Foundations (build first):**
+- **P1 · Renderer.** **IS:** renders model responses — sections/partitions/formatting, GFM markdown,
+  MDX structure, **mermaid.js**, and **non-D3 declarative charts/plots** (Vega-Lite / Chart.js); also
+  renders P4 static snapshots. **ISN'T:** no runnable/executable artifacts, **no raw D3/JS**, no WASM /
+  web-apps, no live interactive components, nothing needing a sandbox (→ Phase-2).
+- **P2 · Reference record.** **IS:** one canonical citation object per source — `{id, url/source, title,
+  snippet, chunk_locator, reasonWhy, whatInvalidates(defeater), related(graph refs)}` — rendered THREE
+  ways (thumbnail title · inline citation · evidence card); model SELECTS rows, system FORMATS. Extends
+  the existing `CitedResult` (D-26). **ISN'T:** not a new retrieval engine, not the ANN/chunk index (N-47).
+- **P4 · Static snapshots.** **IS:** static **pre-rendered/compiled** captures of the actual retrieved
+  content (web pages rendered to static image / sanitized-static, + docs), **scrolled to the relevant
+  chunk**; shown as the thumbnail strip **between query and response**. **ISN'T:** not live/interactive
+  embeds, not an in-window live browser, not script-executing (pre-render → freeze ⇒ no sandbox).
+- **P6 · Graph (done).** **IS:** NoteStore edges linking messages/chats/notes/citations (backlinks,
+  cross-refs, associative citation map). **ISN'T:** not a new store.
+- **P5-lite · Addressability.** **IS:** stable ids for messages **+ sub-section anchors** + thread
+  structure, as an **atomic/abstract** layer that branch/reply/link target. **ISN'T:** not the full
+  co-edited frame model, not shared docs, not concurrent editing (→ Phase-2 N-72-full).
+- **P7-lite · Edit→diff.** **IS:** capture an edited/regenerated response and present it to the model
+  **as a diff in context**. **ISN'T:** not concurrent co-editing, not CRDT/OT, not the write-lock +
+  mid-stream-annotation model (→ Phase-2).
+- **N-47-lite · Chunk locator.** **IS:** a chunk offset/locator within each retrieved source (enough for
+  scroll-to-chunk + snapshot positioning). **If too much effort → defer to MVP 1.1, but leave the code
+  seam now.** **ISN'T:** not ANN/FAISS/HNSW, not semantic hashing, not the full §L.3/N-47 scaling.
+
+**Phase-1 features (on the foundations):**
+- **A · Flow fixes [N-10].** **IS:** kill the constant scroll-back on query/voice/transcription; fix
+  thread **bloat** (virtualize/paginate + N-08 working-set clear); **non-streaming progress UX** (progress
+  bar / chunked reveal — streaming already works); truthful toggles from `/health`+SSE; drop `localDraft`.
+  **ISN'T:** not a UI rewrite, not the shared-space.
+- **N-08 · Lifecycle (UI half).** **IS:** init / new / switch / view / restore / backup / archive over
+  ChatStore (BASE done); boundary policy + clear working-set on new cycle. **ISN'T:** never deletes
+  durable transcripts; not semantic chat search (Phase-2).
+- **N-75 · Chat-ops.** **IS:** edit-as-diff · regenerate · branch-off · format-change · copy/paste
+  **formatted** · reply-to-section · link-at-arbitrary-points · reference other responses/chats (P6).
+  **ISN'T:** not shared-space co-editing, not runnable content.
+- **N-74 · Search-modes.** **IS:** typed enforceable modes over the unified engine — deep · socials
+  (forums/threads/communities/articles) · research/patent/publication · financials · video/content ·
+  tutorials/codebases/technicals · regular; each = source-set + query-shaping + render lens. **ISN'T:**
+  not a new per-mode crawler (reuse web/doc arms + source filters), not semantic chat search.
+- **Citations (P2 applied).** **IS:** select-not-format + chunk-locator + associative 1-/2-click (P6) +
+  thumbnail titles. **ISN'T:** no end-of-response Sources block (replaced by point-of-evidence thumbnails).
+- **N-27 · Cancellation.** **IS:** Rust `bridge_delete` rebuild so Stop/Esc abort the live turn.
+  Regeneration rides N-75. **ISN'T:** not partial-undo; just turn abort.
+- **N-67 · Integrity gate.** **IS:** every Phase-1 control real or visibly-disabled-with-reason. **ISN'T:**
+  not optional — it gates Phase-1 acceptance.
+
+### §Q.10 — PHASE-2 OFFLOAD (deferred; do NOT build in Phase-1) — to be re-specified before Phase-2
+> User: "we'll specify Phase-2 later — just consolidate; offload Phase-2 content; focus Phase-1."
+- **N-72-full** collaborative shared-space + **full co-edit concurrency**: single write-lock (model XOR
+  user), editor non-editable while model writes, BUT user may add comments/markers/highlights/questions/
+  revision-requests mid-stream → an on-the-fly refinement pass into the stream (P7-full).
+- **Semantic search of chats**; **N-76 TRAJECTORY** (post-response semantic look-ahead + enforced-JSON keep/alter).
+- **P3 sandbox** (runnable code / WASM / web-apps) · **D3.js** · Marp/draw.io generation · in-window live
+  custom-search-engine breadth · **N-16** deep-study engine · **full N-47** ANN/chunk scaling ·
+  **N-64** composition UI · **N-26** host-native UI · N-49/§L.5 full artifact vision.
+
+---
+
+## §R — MVP COMPLETENESS AUDIT (what's in MVP BEYOND the §Q UI work) — user 2026-06-20 "we're missing something"
+> Read of §K.0.1 four gates + every open node. The UI plan (§Q) is one slice; these are the rest of MVP.
+
+**★ THE LIKELY "MISSING" PIECE — N-32 (LOCAL-PERF, turn PIPELINE latency).** §K.0.1 gate #3
+(USABLE-LOCAL) is NOT satisfied by serving alone. N-65 made *serving* ~10 tok/s, but **a full `run_turn`
+still takes MINUTES** (D-21 finding) because the *pipeline* makes many sequential model calls + a
+retrieval loop per turn. A 10 tok/s server behind a minutes-long pipeline is still unusable. **N-32 must
+land for MVP** — budget/parallelize the per-turn calls, cap the retrieval loop, add the deadline/watchdog
+(N-22). Ties directly to the chat-flow Phase-1 (a turn must feel responsive). **HIGH priority, non-UI.**
+
+**The formal MVP gates (§K.0.1) still open:**
+- **#1 INTEGRITY → N-67** UI integrity audit — blocking; also gates §Q Phase-1.
+- **#2 ATOMIC/NODAL → N-66** — drive subsystems to atomic single-objective services behind stable
+  contracts (HTTP+MCP), n8n-shaped. Hard MVP.
+- **#3 USABLE-LOCAL → N-65 (done@10) + N-32 (OPEN, above) + N-22 watchdog.**
+- **#4 DEPLOYMENT → N-59 (core stress) · N-60 (sensor/voice endurance) · N-61 (desktop/host) → N-62
+  (acceptance sink).** All open. N-63 (voice) done unblocks N-60's voice lane.
+- **N-68 diagrams** — RESOLVED (user 2026-06-20): **→ MVP 1.2** (other things first); not in the
+  current MVP cut.
+
+**Smaller open MVP-adjacent items (triage needed):**
+- **N-22** turn deadline/watchdog (pairs N-32) · **N-21** background degrade/offload (enables proactive) ·
+  **N-17** capability routing L4–L7 (esp. **L6 tools/MCP/skills** — needed for n8n-node shape + agency) ·
+  **N-55** global hotkey reimplementation (open frontier) · **N-06/N-69** typed turn snapshot (recall half
+  done; assembly half = deferred N-69) · **N-33** sensor-decouple `[~]` (FULL — confirm closed) ·
+  **N-18/N-19/N-20/N-23** small refinement streams.
+- **Carry-overs:** N-63 live-mic verify (pending hardware) · the `test_retrieval_engine` full-suite
+  ordering flake (housekeeping).
+
+**Proposed MVP completion order (non-UI), to confirm:** N-32 pipeline latency (+N-22 watchdog) →
+N-67 integrity audit → N-66 atomic/nodal → N-59/60/61 → N-62 acceptance; N-68 + N-17/21/55 triaged in.
+
+### §Q.11 — PHASE-2 is / isn't spec (user 2026-06-20; details §Q.10; to re-confirm before Phase-2)
+> Bounds each deferred item so Phase-2 scope is unambiguous when we open it. **IS** = delivers · **ISN'T** = boundary.
+
+- **N-72-full · Collaborative shared-space + co-edit.** **IS:** the rolling-frame shared MD/MDX doc
+  co-edited by model(s)+user under a **single write-lock (model XOR user)** — editor non-editable while
+  the model writes, but the user may inject **comments / markers / highlights / questions / revision-
+  requests mid-stream**, triggering an **on-the-fly refinement pass into the stream**; proactive updates
+  the active frame. Builds on Phase-1 P5-lite/P7-lite. **ISN'T:** no simultaneous multi-writer/multi-cursor
+  editing; not a general-purpose doc editor (it's the response surface); not unbounded auto-revision.
+- **Semantic chat search.** **IS:** embedding/vector search over chats/messages/responses via the existing
+  MemoryIndex vector arm + unified engine, surfaced in the chat UI. **ISN'T:** not a new index/store; not
+  the Phase-1 regular/keyword search; not the search-modes (N-74).
+- **N-76 · Trajectory awareness.** **IS:** ONE post-response pass — semantically pull that response's
+  related responses/logs/journals, infer the **query-trajectory**, feed back with an **enforced-JSON
+  short keep/alter confirmation** so the model can adjust before finalizing. **ISN'T:** not pre-response;
+  not a full regeneration loop; not unbounded (single confirmation, cost-capped).
+- **P3 · Sandbox + runnable artifacts.** **IS:** strict-CSP iframe host to **run** model/retrieved code,
+  **WASM**, small web-apps, live interactive components, raw **D3/JS** charts. **ISN'T:** no host/system
+  access; not unsandboxed; not the Phase-1 static render.
+- **D3.js charts.** **IS:** raw-JS custom visualizations (needs P3). **ISN'T:** not the Phase-1 declarative
+  charts (Vega-Lite/Chart.js/mermaid).
+- **Generated artifacts (Marp / draw.io).** **IS:** model-generated Marp.js decks + draw.io/Excalidraw-class
+  diagrams with **legibility self-verification**; SQL/NoSQL table gen; MDX gen. **ISN'T:** not Phase-1; needs
+  renderer + sandbox.
+- **In-window live custom search engine.** **IS:** fully browsable in-window results (links/docs/papers/
+  patents/socials), live navigation, **scroll-to-chunk in the actual live doc**, never bounce to an external
+  browser. **ISN'T:** not the Phase-1 static snapshots + typed search-modes (N-74) — this is their live/
+  interactive expansion.
+- **N-16 · Deep-study engine.** **IS:** `make(spec)->path` artifact/deep-study generation, md-first under
+  `memory/vault/`, real citations + provenance, provider-blind. **ISN'T:** not the inline response renderer
+  (it is a generation+storage engine the UI then shows).
+- **Full N-47 · ANN/chunk scaling.** **IS:** FAISS/HNSW/usearch ANN + semantic hashing for scalable
+  approximate-NN + the full chunk-level index. **ISN'T:** not the Phase-1 brute-force + N-47-lite locator.
+- **N-64 composition UI** (n8n workflow surface) · **N-26 host-native UI** — **IS:** post-MVP surfaces on
+  the N-09 seam. **ISN'T:** not the Phase-1/2 core chat.

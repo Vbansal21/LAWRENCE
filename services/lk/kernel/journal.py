@@ -60,49 +60,110 @@ def _revise_enabled() -> bool:
     return os.environ.get("LK_JOURNAL_REVISE", "1").strip().lower() not in ("0", "false", "no", "off")
 
 
+def _research_enabled() -> bool:
+    """N-46: the journal researches its own open threads. On by default (the journal
+    MUST be comprehensive); LK_JOURNAL_RESEARCH=0 disables all per-entry retrieval."""
+    return os.environ.get("LK_JOURNAL_RESEARCH", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
 def _web_enabled() -> bool:
+    """The external (web/doc) research arm. Off by default — local-first + a cost
+    ceiling for all-day autonomy. Own-memory recall stays on regardless (it is local
+    and cheap). Set LK_JOURNAL_WEB=1 to let entries pull fresh web/doc evidence too."""
     return os.environ.get("LK_JOURNAL_WEB", "0").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _web_min_gap() -> float:
-    """Floor (seconds) between journal web retrievals — a cost ceiling for the
-    all-day autonomous loop (the per-entry retrieval is throttled like proactive)."""
+    """Floor (seconds) between journal web/doc retrievals — a cost ceiling for the
+    all-day autonomous loop (the per-entry external research is throttled like proactive)."""
     try:
         return float(os.environ.get("LK_JOURNAL_WEB_MIN_GAP", "900"))
     except (TypeError, ValueError):
         return 900.0
 
 
-_web_last = [0.0]   # monotonic time of the last journal web retrieval
-
-
-# ── web seam (decision: per-entry, model-decided, THROTTLED) ───────────────────
-
-def _maybe_web_context(window: list[admin.JournalEntry], tail: str, retrieval: Any) -> str:
-    """Optionally fold a little fresh web context into the draft. Off by default;
-    when on, it is rate-limited (a cost ceiling for all-day autonomy). v1 keeps the
-    seam minimal — a future version lets the draft request its own queries."""
-    if retrieval is None or not _web_enabled():
-        return ""
-    now = time.monotonic()
-    if now - _web_last[0] < _web_min_gap():
-        return ""
-    open_threads = (window[-1].body if window else "")[-400:]
-    seed = (open_threads or tail[-400:]).strip()
-    if not seed:
-        return ""
+def _max_queries() -> int:
+    """Cap on per-entry research seeds — bounds the comprehensiveness/cost trade."""
     try:
-        from ..retrieval import format_snippets
-        results = retrieval.retrieve([seed[:120]])
-    except Exception:
+        return max(1, min(5, int(os.environ.get("LK_JOURNAL_MAX_QUERIES", "3"))))
+    except (TypeError, ValueError):
+        return 3
+
+
+_web_last = [0.0]   # monotonic time of the last journal web/doc retrieval
+
+
+# ── research seam (N-46: comprehensive, multi-seed, cost-bounded) ──────────────
+
+def _research_seeds(window: list[admin.JournalEntry], tail: str) -> list[str]:
+    """Distinct short query seeds for the open threads going into this entry: the
+    last entry's `> **Next:**` line (the explicit open thread), its trailing body,
+    and the live rolling tail. Multi-seed is what makes research comprehensive vs.
+    the old single 120-char seed."""
+    seeds: list[str] = []
+
+    def _add(s: str) -> None:
+        s = " ".join((s or "").split()).strip()
+        if len(s) >= 12 and all(s.lower() != x.lower() for x in seeds):
+            seeds.append(s[:160])
+
+    if window:
+        last = window[-1].body or ""
+        for line in last.splitlines():
+            if "**Next:**" in line:
+                _add(line.split("**Next:**", 1)[1].strip(" *>"))
+        _add(last[-200:])
+    _add((tail or "")[-200:])
+    return seeds[:_max_queries()]
+
+
+def _gather_research(window: list[admin.JournalEntry], tail: str,
+                     retrieval: Any, memory: Any) -> str:
+    """Fold comprehensive, cost-bounded context into the draft (N-46): the journal's
+    own durable memory (local, default-on) plus — when enabled and not rate-limited —
+    fresh web/doc evidence over the unified engine (notes+doc+web). Replaces the old
+    single-seed, web-only seam. Cost ceilings: a seed cap and a min-gap throttle on
+    the external arm. Never raises (degrade to no context)."""
+    if not _research_enabled():
         return ""
-    _web_last[0] = now
-    if not results:
+    seeds = _research_seeds(window, tail)
+    if not seeds:
         return ""
-    try:
-        return "[WEB CONTEXT]\n" + format_snippets(results)
-    except Exception:
-        return ""
+    blocks: list[str] = []
+
+    # 1) own durable memory — cheap, local-first, always folded in. The journal is the
+    #    episodic spine, so an entry can reference past entries/notes about its threads.
+    if memory is not None:
+        try:
+            from ..retrieval import format_recall
+            merged: list[Any] = []
+            seen: set[str] = set()
+            for s in seeds:
+                for r in memory.recall(s, k=4):
+                    nid = getattr(r, "node_id", "") or str(id(r))
+                    if nid in seen:
+                        continue
+                    seen.add(nid)
+                    merged.append(r)
+            if merged:
+                blocks.append("[MEMORY CONTEXT]\n" + format_recall(merged[:8]))
+        except Exception:
+            pass
+
+    # 2) web/doc research over the unified engine — gated + throttled (cost ceiling).
+    if retrieval is not None and _web_enabled():
+        now = time.monotonic()
+        if now - _web_last[0] >= _web_min_gap():
+            try:
+                from ..retrieval import format_snippets
+                results = retrieval.retrieve(seeds)
+                if results:
+                    _web_last[0] = now
+                    blocks.append("[RESEARCH CONTEXT]\n" + format_snippets(results))
+            except Exception:
+                pass
+
+    return "\n\n".join(b for b in blocks if b.strip())
 
 
 # ── prompt input builders ──────────────────────────────────────────────────────
@@ -240,9 +301,9 @@ def run_journal(
         return ""   # nothing to journal about yet
 
     window  = pre.entries[-_window_k():]
-    web_ctx = _maybe_web_context(window, tail, retrieval)
+    research = _gather_research(window, tail, retrieval, memory)
 
-    draft = _draft_entry(window, tail, web_ctx)
+    draft = _draft_entry(window, tail, research)
     if not draft:
         return ""   # model down → skip this beat (the time-floor retries next one)
 

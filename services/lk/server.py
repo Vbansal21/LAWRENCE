@@ -9,7 +9,8 @@ flag, so swapping models needs no edits here. Fixed, model-independent flags:
   - mlock      : on     (lock weights in RAM — no paging under memory pressure)
   - parallel   : 1      (single conversation slot)
   - n_gpu_layers: 0 by default (CPU), set via LLAMACPP_GPU_LAYERS env var
-  - threads    : 9      (leaves headroom for system + editor during inference)
+  - threads    : bandwidth-aware default (see _default_threads — NOT all cores;
+                 decode is memory-bandwidth bound so over-threading SLOWS it)
 
 Profile-driven flags: --mmproj (only if present), --flash-attn, --cache-type-k/v,
 --jinja, --ctx-size.
@@ -61,6 +62,44 @@ _current_profile: ModelProfile | None = None   # profile the running server was 
 
 _emb_proc: subprocess.Popen[bytes] | None = None
 _emb_lock = threading.Lock()                   # serialise lazy start of the embed server
+
+
+def _count_physical_cores() -> int:
+    """Best-effort physical-core count. Falls back to the logical count when topology
+    is unavailable (e.g. WSL, where /proc/cpuinfo omits core ids)."""
+    try:
+        pairs: set[tuple[str, str]] = set()
+        phys: str | None = None
+        with open("/proc/cpuinfo") as fh:
+            for line in fh:
+                if line.startswith("physical id"):
+                    phys = line.split(":", 1)[1].strip()
+                elif line.startswith("core id") and phys is not None:
+                    pairs.add((phys, line.split(":", 1)[1].strip()))
+        if pairs:
+            return len(pairs)
+    except OSError:
+        pass
+    return os.cpu_count() or 1
+
+
+# Default thread count = 9 (user-selected, deliberate). I twice changed this on bad
+# evidence — first to "all cores", then to a cap of 8 from a thread sweep — but those
+# sweeps ran on BATTERY, where Snapdragon throttling makes decode tok/s wildly noisy
+# (±4–5 tok/s): 8 (9.42) and 9 (8.06) came out statistically indistinguishable, so there
+# was no basis to override 9. Power state (AC vs battery) dominates far more than ±1 thread
+# in this range. Capped by core count so small machines don't oversubscribe; LK_THREADS
+# overrides. A clean per-host pick needs AC power (future `lk serve --autotune`, plugged in).
+_THREAD_DEFAULT = int(os.environ.get("LK_THREAD_DEFAULT", "9"))
+
+
+def _default_threads() -> int:
+    """Thread count for CPU inference. LK_THREADS overrides; otherwise the user-selected
+    default (9), capped by the available core count."""
+    env = os.environ.get("LK_THREADS", "").strip()
+    if env.isdigit() and int(env) >= 1:
+        return int(env)
+    return max(2, min(_count_physical_cores(), _THREAD_DEFAULT))
 
 
 def server_url() -> str:
@@ -138,7 +177,7 @@ def start(
     profile: ModelProfile,
     *,
     gpu_layers: int | None = None,
-    threads: int | None = 9,       # leaves headroom for system + VSCode during inference
+    threads: int | None = None,    # None → bandwidth-aware default (_default_threads); LK_THREADS overrides
     wait_secs: int = 120,
 ) -> None:
     """Start llama-server in background from a ModelProfile. Blocks until healthy.
@@ -154,8 +193,8 @@ def start(
 
     if gpu_layers is None:
         gpu_layers = int(os.environ.get("LLAMACPP_GPU_LAYERS", "0"))
-    if threads is None:           # caller passed None explicitly → use our default
-        threads = 9
+    if threads is None:           # bandwidth-aware default (NOT all cores — see _default_threads)
+        threads = _default_threads()
 
     log_path = REPO_ROOT / ".runtime" / "lk-server.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +214,18 @@ def start(
         "--parallel", "1",            # single-slot: one conversation at a time
         "--slot-save-path", str(SLOT_DIR),
     ]
+    # ── N-65: keep the KV hot across turns (warm-KV decode regime) ───────────────
+    # cache-reuse lets a shifted prompt reuse the longest common KV prefix via
+    # KV-shifting instead of recomputing it — the dominant lever for the
+    # warm/hot-KV target. Pairs with cache_prompt:true on every completion
+    # (model.py) and the slot save/restore above. Context-shift stays on (default)
+    # so the rolling middle trims server-side rather than re-evaluating the prefix.
+    reuse = os.environ.get("LK_CACHE_REUSE", "256").strip()
+    if reuse.isdigit() and int(reuse) > 0:
+        cmd += ["--cache-reuse", reuse]
+    keep = os.environ.get("LK_KEEP", "").strip()      # pin first-N prompt tokens (opt-in)
+    if keep.lstrip("-").isdigit():
+        cmd += ["--keep", keep]
     # ── model-dependent flags (only when the model/build supports them) ──────────
     if profile.mmproj is not None:
         cmd += ["--mmproj", str(profile.mmproj)]   # multimodal projector
@@ -220,7 +271,7 @@ def restart(
     profile: ModelProfile,
     *,
     gpu_layers: int | None = None,
-    threads: int | None = 9,
+    threads: int | None = None,
     wait_secs: int = 120,
 ) -> None:
     """Stop the running server (if any) then start with the new profile.

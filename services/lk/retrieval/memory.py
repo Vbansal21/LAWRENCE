@@ -147,6 +147,13 @@ class MemoryIndex:
         edge signals. Lets the kernel build the index before the NoteStore exists."""
         self._notes = notes
 
+    @property
+    def notes(self) -> Any:
+        """The attached NoteStore (graph arm + durable-note formation), or None.
+        Read-only handle so the kernel can promote turns to durable notes (N-71)
+        without threading a second object through every call site."""
+        return self._notes
+
     # ── schema / load ───────────────────────────────────────────────────────────
 
     def _init_schema(self) -> bool:

@@ -147,6 +147,18 @@ os.environ["LK_PROACTIVE_STALE_DELTA"] = "not-an-int"
 check("bad stale-delta env falls back to default 3", INV._proactive_stale_delta() == 3)
 os.environ.pop("LK_PROACTIVE_STALE_DELTA", None)
 
+# ── N-07 observability: proactive_stats() reflects every outcome above ─────────
+# 7 run_proactive() calls ran above: 3 surfaced, 2 deduped, 1 stale-dropped, 1
+# busy-skipped. The counters make "is the autonomous loop firing?" answerable.
+print("\nN-07 proactive observability counters")
+from lk.kernel.invoke import proactive_stats
+st = proactive_stats()
+check("stats: calls counted (every invocation)",   st["calls"]    >= 7, str(st))
+check("stats: surfaced counted (cards shown)",      st["surfaced"] >= 3, str(st))
+check("stats: dup counted (deduped repeats)",       st["dup"]      >= 2, str(st))
+check("stats: stale counted (dropped late)",        st["stale"]    >= 1, str(st))
+check("stats: skipped counted (busy slot)",         st["skipped"]  >= 1, str(st))
+
 if FAILS:
     print(f"\n  {len(FAILS)} FAILURE(S): {FAILS}")
     sys.exit(1)

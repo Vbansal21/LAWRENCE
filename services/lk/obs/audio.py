@@ -13,6 +13,7 @@ from __future__ import annotations
 import array
 import math
 import os
+import queue
 import shutil
 import subprocess
 import threading
@@ -31,11 +32,13 @@ from ..ctx import distill as D
 WINDOW_SECONDS       = 4.0
 POLL_INTERVAL        = 4.0
 SAMPLE_RATE          = 16_000
-# WSLg's RDP virtual mic captures at a low level; -42 dB rejected real speech.
-# -55 lets quiet speech through to whisper (which has its own VAD), tunable via
-# LK_AUDIO_SILENCE_DB. Gain normalization (below) then boosts it for whisper.
+# WSLg's RDP virtual mic captures at a low level; -42 dB rejected real speech and
+# -45 left the loop silent (N-63). -55 lets quiet speech through to whisper (which
+# has its own VAD). This is the SINGLE source of truth for the speech-energy floor:
+# the streaming capture VAD (`vad_db` below) defaults to it. Tunable via
+# LK_AUDIO_SILENCE_DB; LK_AUDIO_VAD_DB still overrides the live capture value.
 SILENCE_DB           = float(os.environ.get("LK_AUDIO_SILENCE_DB", "-55"))
-NORMALIZE_PEAK_DB    = -3.0   # boost quiet captures to this peak before transcribe
+NORMALIZE_PEAK_DB    = -3.0   # opt-in (LK_AUDIO_GAIN) peak target for quiet mics
 MAX_WAV_KEEP         = 5
 MAX_RECENT_KEEP      = 12   # recent transcripts kept for dedup gate
 # whisper hallucinates fluent text on silence/noise; reject segments it is unsure of.
@@ -97,9 +100,97 @@ def _ffmpeg(out: Path, secs: float) -> bool:
     return r.returncode == 0 and out.exists()
 
 
+# ── Windows-host capture (N-63 workaround for the degraded WSLg virtual mic) ────
+# Under WSL the RDP virtual mic is quiet/unreliable. When enabled, capture from the
+# REAL Windows audio device by driving a Windows-side ffmpeg.exe over WSL interop,
+# reading raw PCM from its stdout — bypassing PulseAudio/WSLg entirely. Opt-in
+# (LK_AUDIO_WIN_CAPTURE=1) and self-disabling when the tooling isn't present, so the
+# default WSLg path is untouched and it degrades gracefully (I4). Drop an ffmpeg.exe
+# under C:\ (or set LK_FFMPEG_WIN) and pick the mic with LK_AUDIO_WIN_DEVICE.
+
+_win_device_cache: str | None = None
+
+
+def _win_capture_enabled() -> bool:
+    return os.environ.get("LK_AUDIO_WIN_CAPTURE", "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _win_ffmpeg_exe() -> str | None:
+    explicit = os.environ.get("LK_FFMPEG_WIN", "").strip()
+    if explicit and Path(explicit).exists():
+        return explicit
+    found = shutil.which("ffmpeg.exe")     # Windows PATH exposed via WSL interop
+    if found:
+        return found
+    for cand in ("/mnt/c/ffmpeg/bin/ffmpeg.exe", "/mnt/c/ffmpeg.exe",
+                 "/mnt/c/Windows/System32/ffmpeg.exe"):
+        if Path(cand).exists():
+            return cand
+    return None
+
+
+def _win_audio_device(ffmpeg: str) -> str | None:
+    """The dshow device name to record: LK_AUDIO_WIN_DEVICE, else the first audio
+    device ffmpeg.exe reports. Cached (the probe is slow)."""
+    global _win_device_cache
+    if _win_device_cache is not None:
+        return _win_device_cache or None
+    dev = os.environ.get("LK_AUDIO_WIN_DEVICE", "").strip()
+    if not dev:
+        try:
+            import re
+            r = subprocess.run(
+                [ffmpeg, "-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"],
+                capture_output=True, text=True, timeout=15,
+            )
+            for line in (r.stderr or "").splitlines():
+                if "(audio)" in line.lower():
+                    m = re.search(r'"([^"]+)"', line)
+                    if m:
+                        dev = m.group(1)
+                        break
+        except Exception:
+            dev = ""
+    _win_device_cache = dev
+    return dev or None
+
+
+def _win_pcm_stream_cmd() -> list[str] | None:
+    """argv for a long-lived Windows-host recorder emitting s16le mono PCM on stdout,
+    or None when the workaround is disabled/unavailable (→ fall back to WSLg)."""
+    if not _win_capture_enabled():
+        return None
+    ff = _win_ffmpeg_exe()
+    if not ff:
+        return None
+    dev = _win_audio_device(ff)
+    if not dev:
+        return None
+    return [ff, "-hide_banner", "-loglevel", "error", "-f", "dshow",
+            "-i", f"audio={dev}", "-ac", "1", "-ar", str(SAMPLE_RATE), "-f", "s16le", "-"]
+
+
+def _win_window(out: Path, secs: float) -> bool:
+    cmd = _win_pcm_stream_cmd()
+    if cmd is None:
+        return False
+    n_bytes = int(SAMPLE_RATE * 2 * secs)
+    try:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        data = proc.stdout.read(n_bytes) if proc.stdout else b""
+        proc.terminate()
+        proc.wait(timeout=3)
+    except Exception:
+        return False
+    if len(data) < n_bytes // 2:
+        return False
+    _write_wav(out, data)
+    return out.exists()
+
+
 def record_window(out: Path, secs: float) -> bool:
     out.parent.mkdir(parents=True, exist_ok=True)
-    return _parec(out, secs) or _arecord(out, secs) or _ffmpeg(out, secs)
+    return _win_window(out, secs) or _parec(out, secs) or _arecord(out, secs) or _ffmpeg(out, secs)
 
 
 def record_now(out: Path, secs: float) -> Path:
@@ -220,13 +311,18 @@ def _normalize_gain(wav: Path, target_peak_db: float = NORMALIZE_PEAK_DB) -> Non
 
 
 def transcribe(wav: Path) -> str:
-    # Deliberately NOT gain-normalised here: pumping a near-silent window up to
-    # -3 dBFS (~20x) amplified the ambient noise floor into something whisper
-    # confabulates fluent speech from (false transcripts on silence). VAD + the
-    # per-segment confidence guards in _faster_whisper are the real speech test.
-    # (_normalize_gain is kept for an explicit, calibrated opt-in if a genuinely
-    # quiet mic ever needs a *mild* boost on already-VAD-confirmed speech.)
+    # Gain normalization is NOT applied here by default: pumping a near-silent
+    # window up to -3 dBFS (~20x) amplified the ambient noise floor into something
+    # whisper confabulates fluent speech from (false transcripts on silence). The
+    # opt-in boost (LK_AUDIO_GAIN=1) is applied by the streaming path in
+    # _transcribe_buf, where the audio has already passed the per-frame VAD energy
+    # gate (so it is confirmed speech, not silence). VAD + the per-segment
+    # confidence guards in _faster_whisper remain the real speech test.
     return _faster_whisper(wav) or _whisper_cli(wav) or ""
+
+
+def _gain_enabled() -> bool:
+    return os.environ.get("LK_AUDIO_GAIN", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # ── streaming capture (utterance segmentation, N-53) ───────────────────────────
@@ -254,7 +350,11 @@ def _write_wav(out: Path, pcm: bytes) -> None:
 
 def _pcm_stream_cmd() -> list[str] | None:
     """argv for a long-lived recorder that emits raw s16le mono PCM on stdout.
-    Same recorder preference as the windowed path (parec works on WSLg)."""
+    Windows-host capture first when enabled (N-63 workaround), else the WSLg
+    recorders in preference order (parec works on WSLg)."""
+    win = _win_pcm_stream_cmd()
+    if win is not None:
+        return win
     if shutil.which("parec"):
         if "PULSE_SERVER" not in os.environ and Path("/mnt/wslg/PulseServer").exists():
             os.environ["PULSE_SERVER"] = "unix:/mnt/wslg/PulseServer"
@@ -306,8 +406,16 @@ class AudioObserver(threading.Thread):
         self._recent_transcripts: list[str] = []   # for dedup gate
         self.active       = False
         self.recording_ok = True   # False when mic/recorder unavailable
+        # N-63: decode runs on its own thread so whisper never blocks the capture
+        # loop (a blocked loop stops draining proc.stdout → pipe overflow → dropped
+        # audio + cut-off/repeated speech). The capture loop enqueues PCM jobs; this
+        # worker decodes them. Bounded so a decode backlog can't grow unbounded.
+        self._jobs: "queue.Queue[tuple[str, str, bytes] | None]" = queue.Queue(maxsize=8)
+        self._worker: threading.Thread | None = None
         # capture tunables (read per (re)start so `lk config` changes take effect).
-        self.vad_db        = float(os.environ.get("LK_AUDIO_VAD_DB", "-45"))
+        # VAD floor defaults to the single source of truth (SILENCE_DB = -55);
+        # LK_AUDIO_VAD_DB overrides it for the live capture value.
+        self.vad_db        = float(os.environ.get("LK_AUDIO_VAD_DB", str(SILENCE_DB)))
         self.frame_ms      = max(50, int(os.environ.get("LK_AUDIO_FRAME_MS", "300")))
         self.preroll_ms    = max(0, int(os.environ.get("LK_AUDIO_PREROLL_MS", "600")))
         self.hangover_ms   = max(self.frame_ms, int(os.environ.get("LK_AUDIO_HANGOVER_MS", "800")))
@@ -318,9 +426,18 @@ class AudioObserver(threading.Thread):
     def stop(self) -> None:
         self._stop_evt.set()
         self.active = False
+        try:
+            self._jobs.put_nowait(None)   # wake the decode worker so it can exit
+        except queue.Full:
+            pass
 
     def run(self) -> None:
         self.active = True
+        # start the off-thread decoder once; capture loops below only enqueue PCM.
+        if self._worker is None:
+            self._worker = threading.Thread(target=self._decode_worker,
+                                            name="audio-decode", daemon=True)
+            self._worker.start()
         while not self._stop_evt.is_set():
             cmd = _pcm_stream_cmd()
             if cmd is None:
@@ -365,7 +482,11 @@ class AudioObserver(threading.Thread):
         while not self._stop_evt.is_set():
             chunk = proc.stdout.read(frame_bytes) if proc.stdout else b""
             if not chunk or len(chunk) < frame_bytes:
-                break   # recorder ended / short read — outer loop reopens
+                # recorder ended / short read — finalize any open utterance first so
+                # its tail isn't lost (N-63), then let the outer loop reopen.
+                if in_speech and buf:
+                    self._finish_utterance(uid, bytes(buf))
+                break
             is_speech = _rms_db_bytes(chunk) > self.vad_db
 
             if not in_speech:
@@ -389,9 +510,7 @@ class AudioObserver(threading.Thread):
             if (self._on_segment and is_speech
                     and spoken_ms - last_partial_ms >= self.partial_interval_ms):
                 last_partial_ms = spoken_ms
-                text = self._transcribe_buf(bytes(buf))
-                if text:
-                    self._emit_segment(uid, text, final=False)
+                self._submit("partial", uid, bytes(buf))
 
             # close on trailing-silence hangover (→ no tail clip) or the hard cap
             if silence_ms >= self.hangover_ms or spoken_ms >= self.max_utterance_s * 1000:
@@ -406,6 +525,8 @@ class AudioObserver(threading.Thread):
             _write_wav(wav, pcm)
         except Exception:
             return ""
+        if _gain_enabled():        # opt-in boost on VAD-confirmed (already-speech) audio
+            _normalize_gain(wav)
         return transcribe(wav)
 
     def _emit_segment(self, uid: str, text: str, final: bool) -> None:
@@ -415,7 +536,56 @@ class AudioObserver(threading.Thread):
             except Exception:
                 pass
 
+    # ── off-thread decode (N-63) ────────────────────────────────────────────────
+
+    def _submit(self, kind: str, uid: str, pcm: bytes) -> None:
+        """Hand a decode job to the worker so the capture loop never blocks. When the
+        worker isn't running (e.g. a unit test driving _capture_loop directly), decode
+        inline so behavior is unchanged for callers that don't go through run()."""
+        if self._worker is not None and self._worker.is_alive():
+            try:
+                self._jobs.put_nowait((kind, uid, pcm))
+            except queue.Full:
+                # capture must never stall on a decode backlog — drop the oldest job.
+                try:
+                    self._jobs.get_nowait()
+                    self._jobs.put_nowait((kind, uid, pcm))
+                except (queue.Empty, queue.Full):
+                    pass
+            return
+        # inline fallback
+        if kind == "partial":
+            text = self._transcribe_buf(pcm)
+            if text:
+                self._emit_segment(uid, text, final=False)
+        else:
+            self._finalize_decoded(uid, pcm)
+
+    def _decode_worker(self) -> None:
+        while not self._stop_evt.is_set():
+            try:
+                job = self._jobs.get(timeout=0.5)
+            except queue.Empty:
+                continue
+            if job is None:
+                break
+            kind, uid, pcm = job
+            try:
+                if kind == "partial":
+                    if not self._jobs.empty():
+                        continue    # a newer job is waiting — skip this stale partial
+                    text = self._transcribe_buf(pcm)
+                    if text:
+                        self._emit_segment(uid, text, final=False)
+                else:
+                    self._finalize_decoded(uid, pcm)
+            except Exception:
+                pass
+
     def _finish_utterance(self, uid: str, pcm: bytes) -> None:
+        self._submit("final", uid, pcm)
+
+    def _finalize_decoded(self, uid: str, pcm: bytes) -> None:
         ts   = datetime.now(timezone.utc).isoformat()
         text = self._transcribe_buf(pcm)
         # whisper's silence/no_speech guards already dropped pure-noise utterances;

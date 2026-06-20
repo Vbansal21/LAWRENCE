@@ -19,6 +19,7 @@ import itertools
 import json
 import os
 import re
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -542,6 +543,28 @@ def run_turn(
         latency_ms=latency_ms,
     )
 
+    # ── §P/N-71: durable-memory formation (P_dist promotion + S_link auto-link) ─
+    # Promote a genuinely worth-keeping turn into a linked Zettelkasten note — the
+    # soul's distillation/linking half (Eq.3/Eq.4, Alg.2). Model-free, conservative,
+    # best-effort: most small-talk turns promote nothing. Runs AFTER the answer is
+    # surfaced and never blocks or breaks the turn.
+    if memory is not None and getattr(memory, "notes", None) is not None:
+        try:
+            from ..ctx.promote import promote_turn
+            promote_turn(
+                memory.notes, ts=ts_now, user_text=user_text,
+                answer=str(response.get("answer_text", "")),
+                note_full=str(response.get("note_full", "")),
+                note_compact=note_compact,
+                tags=list(response.get("context_tags", [])),
+                confidence=float(response.get("confidence", 0.0) or 0.0),
+                has_tasks=bool(response.get("tasks")),
+                has_actions=bool(response.get("actions")),
+                has_remember=bool(response.get("remember")),
+            )
+        except Exception:
+            pass
+
     # ── WS-R/R1: slow loop ────────────────────────────────────────────────────
     # The fast answer is now surfaced. Behind slow_loop:on, dispatch a bounded
     # critique-refine in a daemon thread that may elevate a materially better
@@ -561,6 +584,31 @@ def run_turn(
 
 
 # ── proactive retrieval (no user question) ────────────────────────────────────
+
+# §P/N-07 proactive observability: the loop is wired from four drivers (vision /
+# audio / cognitive-tick / spool) onto this ONE throttled convergence. It is
+# droppable + interval-gated by design, so silence is EXPECTED — these counters
+# make "is it actually firing?" answerable at runtime instead of guessed.
+# Thread-safe: proactive runs in daemon threads.
+_PROACTIVE_LOCK = threading.Lock()
+_PROACTIVE_STATS: dict[str, int] = {
+    "calls": 0, "warmed": 0, "surfaced": 0, "stale": 0, "dup": 0,
+    "skipped": 0, "error": 0,
+}
+
+
+def _pstat(key: str) -> None:
+    with _PROACTIVE_LOCK:
+        _PROACTIVE_STATS[key] = _PROACTIVE_STATS.get(key, 0) + 1
+
+
+def proactive_stats() -> dict[str, int]:
+    """Snapshot of proactive-loop outcomes since process start (N-07 observability).
+    calls=invocations · warmed=had evidence · surfaced=shown to user · stale/dup=
+    dropped by the §9 guards · skipped=no context / no retrieval / busy slot · error."""
+    with _PROACTIVE_LOCK:
+        return dict(_PROACTIVE_STATS)
+
 
 def run_proactive(
     ctx:       ContextStore,
@@ -587,10 +635,12 @@ def run_proactive(
     # + retrieving + briefing. If the user (or sensors) move the context on too far
     # while we work, the conclusion we are about to surface is about an old state —
     # we drop it at the end instead of surfacing it late.
+    _pstat("calls")
     snapshot = freeze_context(ctx)
     start_ver = snapshot.version
     tail = snapshot.text
     if tail == "(no context yet)":
+        _pstat("skipped")
         return False
 
     if engine is not None:
@@ -602,6 +652,7 @@ def run_proactive(
             g = engine.gather("", short_ctx=tail, proactive=True,
                               priority=PRI_PROACTIVE, live_fn=live_fn)
         except Exception:
+            _pstat("error")
             return False
         results = g.evidence
     else:
@@ -615,19 +666,26 @@ def run_proactive(
             )
             parsed = _extract_json(raw.get("text", ""))
         except Exception:
+            _pstat("error")
             return False
         if not parsed or not parsed.get("needs_retrieval"):
+            _pstat("skipped")
             return False
         queries = [str(q) for q in parsed.get("queries", []) if q][:3]
         if not queries:
+            _pstat("skipped")
             return False
         results = retrieval.retrieve(queries)
 
+    if results:
+        _pstat("warmed")
     if live_fn and results:
         live_fn(f"[proactive] {len(results)} sources warmed")
 
     # ── surface a finding unprompted (the "present nicely" step) ─────────────────
     if present_fn is None or not results:
+        if not results:
+            _pstat("skipped")
         return bool(results)
     snippet_block = format_snippets(results)
     body = f"{tail}\n\n{snippet_block}"
@@ -641,6 +699,7 @@ def run_proactive(
     except Exception:
         return True
     if not brief or not brief.get("surface"):
+        _pstat("skipped")
         return True
     headline = str(brief.get("headline", "")).strip()[:120]
     insight  = str(brief.get("insight", "")).strip()
@@ -651,11 +710,13 @@ def run_proactive(
     # past the tolerance while we were working, this conclusion is about an old
     # state — drop it silently rather than surface a late, possibly-irrelevant card.
     if ctx.version() - start_ver > _proactive_stale_delta():
+        _pstat("stale")
         return True
 
     # §9 dedup: don't repeat a finding we recently surfaced. Compares headline +
     # insight by meaning (normalised + SequenceMatcher), not exact text.
     if _is_duplicate_finding(headline, insight, ctx.recent_findings()):
+        _pstat("dup")
         return True
 
     finding = {
@@ -665,6 +726,7 @@ def run_proactive(
                       for r in results],
     }
     present_fn(finding)
+    _pstat("surfaced")
 
     # Record so the agent remembers it surfaced this (and the user can see it later).
     ts = datetime.now(timezone.utc).isoformat()
