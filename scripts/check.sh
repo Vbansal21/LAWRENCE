@@ -48,6 +48,8 @@ step "retrieval-engine suite" python3 services/lk/tests/test_retrieval_engine.py
 step "retrieval quality"    python3 services/lk/tests/test_retrieval_quality.py
 step "schedule suite"       python3 services/lk/tests/test_schedule.py
 step "converters suite"     python3 services/lk/tests/test_converters.py
+step "service-registry suite" python3 services/lk/tests/test_services.py
+step "turn-cache suite"     python3 services/lk/tests/test_turncache.py
 step "notify/bloat suite"   python3 services/lk/tests/test_notify.py
 step "recent-findings suite" python3 services/lk/tests/test_recent_findings.py
 step "launcher suite"       python3 services/lk/tests/test_launcher.py

@@ -442,8 +442,11 @@ shed/offload of starved background roles under turn-load. **Soft-dep edge → N-
 alongside the N-07 audit. Re-entry: ready. Ambiguity: offload policy `crystallizes-
 during` (reuse per-role routing matrix).
 
-### N-22 (A4) — Turn deadline / watchdog `[ ]` — one line
+### N-22 (A4) — Turn deadline / watchdog `[x]` — DONE 2026-06-20 → D-55
 Extend D-09 deadline coverage to remaining long ops; reuse `TurnCancelled`.
+**Done.** `TurnConfig.turn_deadline_s` (default None = off) composes a turn-WIDE deadline into the existing
+`should_stop` watchdog at turn start → covers retrieval + response + expansion with one ceiling, raising
+`TurnCancelled` (writes nothing on abort). Test in `test_cancel.py`. Pairs N-32 (D-54).
 
 ### N-23 (R3) — Schedule in-memory fold `[ ]` — one line
 Dict `{id:state}` O(1)/op vs re-fold; durability unchanged (D-12 log is truth). Cheap.
@@ -513,7 +516,15 @@ home (e.g. `docs/INVARIANTS.md` or DONE.md preamble); fix README `crates/system-
 FR-008 pairs with N-16; FR-010 folds into N-11; FR-004 rich telemetry into N-10/11 +
 honest `/metrics`. Fold each into its parent; no standalone build.
 
-### N-32 (LOCAL-PERF) — Local turn PIPELINE latency `[ ]` — **HARD MVP, top non-UI priority (user 2026-06-20)** *(finding from D-21)*
+### N-32 (LOCAL-PERF) — Local turn PIPELINE latency `[~]` — **HARD MVP, top non-UI priority (user 2026-06-20)** *(finding from D-21)*
+> **PASS-1 DONE 2026-06-20 → D-54.** Menu items **(c) cache stage outputs by input identity** + **(d/e)
+> pre-preparation seam** + the **per-stage instrumentation** the plan flagged as the open prerequisite:
+> [kernel/turncache.py](../services/lk/kernel/turncache.py) (bounded LRU+TTL content-addressed cache +
+> `stage_timer`), wired so `run_turn` retrieval is memoized by (query, frozen-context, deep) — identical
+> re-runs (rapid repeats / proactive re-probe / expansion) reuse the bundle; a miss is unchanged. Bridge
+> status gains a `turn` block (`stagesMs` + cache hit/miss) → the per-stage cost is now measurable.
+> **Remaining (`[~]`, needs live profiling):** true cross-turn **parallelism/pipelining** + **predictive
+> prefetch during idle** — the `turn.stagesMs` counters exist to drive that next. Pairs N-22 (D-55, landed).
 > **★ Gate #3 (USABLE-LOCAL) is NOT met by serving alone.** N-65 made *serving* ~10 tok/s, but a full
 > `run_turn` still takes MINUTES (the pipeline, not the server). **Approach (user 2026-06-20):**
 > **asynchronicity · pipelining · parallelism · caching · predictive caching · pre-preparation ·
@@ -2634,7 +2645,16 @@ goal (§K.0.1) and the post-MVP n8n substrate (N-64 / §L.7). IDs N-65…N-68.*
 [N-68 DIAGRAMS] centrality:M ambiguity:M — dense legible system diagrams (mermaid→SVG)
 ```
 
-### N-66 (ATOMIC) — Drive subsystems to atomic, single-objective, nodal services `[ ]` — FULL
+### N-66 (ATOMIC) — Drive subsystems to atomic, single-objective, nodal services `[~]` — FULL
+> **PASS-1 DONE 2026-06-20 → D-53.** The "Method: output a service inventory" is now **executable +
+> gate-guarded code**: [services/lk/services.py](../services/lk/services.py) declares the 14 subsystems
+> (S1–S14, mirroring docs/diagrams/README.md) as nodes — one objective, owned modules, public contract,
+> typed couplings, invariant each — and [test_services.py](../services/lk/tests/test_services.py) enforces a
+> **disjoint + TOTAL partition** every build (every engine module owned by exactly one node; drift fails the
+> gate), one objective per node, contract-symbol resolution, exactly one I1 memory writer (S5), model-seam
+> couplings → S7. Inventory artifact: [docs/SERVICE_INVENTORY.md](../docs/SERVICE_INVENTORY.md). **Remaining
+> (`[~]`):** per-subsystem *internal* extraction — break the few remaining direct cross-store writes behind
+> each node's contract, iteratively + gate-guarded; the boundary + drift-gate landed first.
 **Directive (user 2026-06-19).** Refine the implementation so each subsystem, while
 achieving **one and only one** objective, is also a **well-defined node-level object** for
 the future n8n system (N-64). This is both a near-term *refactoring principle* applied to
@@ -3243,23 +3263,26 @@ reserved seam. Distinct from §3a *informed regeneration* (which is single-sourc
 **★ THE LIKELY "MISSING" PIECE — N-32 (LOCAL-PERF, turn PIPELINE latency).** §K.0.1 gate #3
 (USABLE-LOCAL) is NOT satisfied by serving alone. N-65 made *serving* ~10 tok/s, but **a full `run_turn`
 still takes MINUTES** (D-21 finding) because the *pipeline* makes many sequential model calls + a
-retrieval loop per turn. A 10 tok/s server behind a minutes-long pipeline is still unusable. **N-32 must
-land for MVP** — budget/parallelize the per-turn calls, cap the retrieval loop, add the deadline/watchdog
-(N-22). Ties directly to the chat-flow Phase-1 (a turn must feel responsive). **HIGH priority, non-UI.**
+retrieval loop per turn. **PASS-1 DONE 2026-06-20 → D-54:** stage cache + retrieval memoization + per-stage
+timing (`turn.stagesMs`/cache counters) + N-22 turn-wide watchdog (D-55). **Remaining (`[~]`):** cross-turn
+**parallelism/pipelining** + **predictive prefetch** — needs a live `dot`-profile off the new stage counters.
+Ties directly to chat-flow Phase-1 (a turn must feel responsive). **HIGH priority, non-UI.**
 
 **The formal MVP gates (§K.0.1) still open:**
 - **#1 INTEGRITY → N-67** UI integrity audit — **pass-1 DONE (D-51: control-surface sweep; proactive
   over-claim fixed)**; remainder = qualitative pass + D-35/39/40/41 re-grade. Blocking; also gates §Q Phase-1.
-- **#2 ATOMIC/NODAL → N-66** — drive subsystems to atomic single-objective services behind stable
-  contracts (HTTP+MCP), n8n-shaped. Hard MVP.
-- **#3 USABLE-LOCAL → N-65 (done@10) + N-32 (OPEN, above) + N-22 watchdog.**
+- **#2 ATOMIC/NODAL → N-66** — **pass-1 DONE (D-53)**: the 14-subsystem partition is now gate-guarded code
+  (`services.py` + `test_services.py`, disjoint+total ownership, one objective/contract/invariant each) +
+  `docs/SERVICE_INVENTORY.md`. **Remaining (`[~]`):** per-subsystem internal extraction (break residual
+  direct cross-store writes behind each node's contract), iterative + gate-guarded.
+- **#3 USABLE-LOCAL → N-65 (done@10) + N-32 (`[~]` pass-1 D-54) + N-22 (done D-55).**
 - **#4 DEPLOYMENT → N-59 (core stress) · N-60 (sensor/voice endurance) · N-61 (desktop/host) → N-62
   (acceptance sink).** All open. N-63 (voice) done unblocks N-60's voice lane.
 - **N-68 diagrams** — RESOLVED (user 2026-06-20): **→ MVP 1.2** (other things first); not in the
   current MVP cut.
 
 **Smaller open MVP-adjacent items (triage needed):**
-- **N-22** turn deadline/watchdog (pairs N-32) · **N-21** background degrade/offload (enables proactive) ·
+- ~~**N-22** turn deadline/watchdog~~ **DONE → D-55** (turn-wide ceiling composed into should_stop). · **N-21** background degrade/offload (enables proactive) ·
   **N-17** capability routing L4–L7 (esp. **L6 tools/MCP/skills** — needed for n8n-node shape + agency) ·
   **N-55** global hotkey reimplementation (open frontier) · **N-06/N-69** typed turn snapshot (recall half
   done; assembly half = deferred N-69) · **N-33** sensor-decouple `[~]` (FULL — confirm closed) ·
@@ -3280,9 +3303,24 @@ land for MVP** — budget/parallelize the per-turn calls, cap the retrieval loop
 - **Carry-overs:** N-63 live-mic verify (pending hardware) · the `test_retrieval_engine` full-suite
   ordering flake (housekeeping).
 
-**Proposed MVP completion order (non-UI), to confirm:** N-32 pipeline latency (+N-22 watchdog) →
-N-67 integrity audit (pass-2) → N-66 atomic/nodal → N-59/60/61 → N-62 acceptance; **N-78/N-79 host-hygiene +
-debug-logging fold into N-61/N-67**; N-07 proactive refinement rides N-21+N-79; N-68 + N-17/55 triaged in.
+**Proposed MVP completion order (non-UI), to confirm:** ~~N-32 pipeline latency (+N-22 watchdog)~~ **pass-1
+done (D-54/D-55)** → ~~N-66 atomic/nodal~~ **pass-1 done (D-53)** → **next: N-32 pass-2 (live profile →
+parallelism/prefetch) + N-66 pass-2 (internal extraction)** → N-67 integrity audit (pass-2) → N-59/60/61 →
+N-62 acceptance; **N-78/N-79 host-hygiene + debug-logging fold into N-61/N-67**; N-07 proactive refinement
+rides N-21+N-79; N-68 + N-17/55 triaged in.
+**Status note (2026-06-20, this session):** §K.0.1 gate #2 (ATOMIC) + the N-32/N-22 latency-substrate of
+gate #3 now have landed, gate-guarded, offline-verified pass-1 implementations (D-53/D-54/D-55, `make check`
+44 suites green). The remaining MVP-blocking work is **live-verification-bound** (#3 real tok/s + turn-time
+profile, #4 deployment stress, #1 N-67 qualitative pass) — i.e. needs the Tauri/Rust/WSLg rebuild + on-host
+runs that the sandbox can't perform; see the live-verify checklist below.
+
+**LIVE-VERIFY CHECKLIST (sandbox can't run these — needs rebuild + on-host execution):**
+- [ ] N-32: capture `turn.stagesMs` over real turns on the deployment host; confirm where the minutes go;
+      profile-drive the pass-2 parallelism/prefetch. Confirm cache hit-rate on regenerate/proactive.
+- [ ] N-65: reproduce ≥the accepted ~10 tok/s warm/hot-KV decode @ 32K natively (N-73 for ≥15).
+- [ ] N-67 pass-2: qualitative control-by-control pass in the live UI; re-grade D-35/39/40/41.
+- [ ] N-59/60/61 → N-62: deployment-stress lanes (held until user confirms scope per §N).
+- [ ] N-75/N-72/UI Phase-1: live webview checks after `cargo build --release` + WSLg relaunch.
 
 ### §Q.11 — PHASE-2 is / isn't spec (user 2026-06-20; details §Q.10; to re-confirm before Phase-2)
 > Bounds each deferred item so Phase-2 scope is unambiguous when we open it. **IS** = delivers · **ISN'T** = boundary.

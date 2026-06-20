@@ -1400,6 +1400,81 @@ N-07]` significant · `--{seeds}--> [N-79 debug-logging]` load-bearing.
 
 ---
 
+## D-53 — Atomic service registry: the subsystem partition as gate-guarded code (2026-06-20) — N-66 (ATOMIC), pass-1
+**What.** N-66's "Method: output a service inventory" made **executable and enforced**, not a doc. New
+[services/lk/services.py](../services/lk/services.py) declares the **14 subsystems (S1–S14)** — mirroring
+[docs/diagrams/README.md](../docs/diagrams/README.md) — each as a node with: **one objective** (single
+sentence), the **modules it owns**, its **public contract** (`module:symbol`), typed **couplings** to other
+nodes (nature from the diagram legend vocabulary), and the **invariant it preserves** (I1/I3/LOCAL-FIRST/…).
+This is the near-term half of N-66: *atomize now behind the in-process calls* so the boundary is explicit,
+disjoint, and stays that way; N-64 lifts each node to n8n later without re-deriving seams.
+**Why it's real, not decorative.** [test_services.py](../services/lk/tests/test_services.py) (wired into
+`make check`) enforces the partition every build:
+- **disjoint + TOTAL cover** — every engine `.py` under `services/lk` (47 modules) is owned by **exactly one**
+  node; a new/moved module that claims no owner **fails the build** (drift guard). Small reasoned `EXEMPT` set
+  (the registry itself, `lock.py`/`debuglog.py` shared infra, `launcher/`, tests, `__init__`).
+- **one objective per node** (single sentence — atomicity), **contract symbols resolve** in the owning module
+  (catches a renamed entrypoint), **exactly one memory writer** (S5) which **must** declare I1, **model-seam**
+  couplings must target S7, **single-writer** couplings must target the writer.
+**Artifact.** [docs/SERVICE_INVENTORY.md](../docs/SERVICE_INVENTORY.md) is generated from the registry
+(`python3 -m lk.services`); never hand-edited.
+**Typed test contract.** INPUT = the declared registry + the live module tree. OUTPUT = pass iff 14 nodes,
+one objective each, disjoint+total ownership, contracts resolve, exactly one I1 writer. FAIL = drift (unowned
+/double-owned module), renamed contract symbol, compound objective.
+**Open (N-66 remainder).** Per-subsystem *internal* extraction (breaking the few remaining direct cross-store
+writes behind each node's contract) is iterative and gate-guarded; the partition + drift gate land first.
+**`make check` green (44 suites).**
+**Edges.** `[D-53] --{enables}--> [N-64 n8n substrate]` load-bearing · `--{shapes}--> [N-65/N-67/N-68]`
+significant · `--{operationalizes}--> [§K.0.1 #2 ATOMIC]` load-bearing · `--{mirrors}--> [N-68 diagrams]`.
+
+---
+
+## D-54 — Turn-stage cache + per-stage timing: the N-32 pipeline substrate (2026-06-20) — N-32 (LOCAL-PERF), pass-1
+**What.** N-32 menu items **(c) cache stage outputs by input identity** and **(d/e) the pre-preparation seam**,
+plus the per-stage **instrumentation** the plan flagged as the open prerequisite. New
+[kernel/turncache.py](../services/lk/kernel/turncache.py): a **bounded LRU + TTL, thread-safe, content-addressed**
+cache with `memoize(stage, parts, producer)` and a `stage_timer(stage)` context manager — pure stdlib (I4),
+counters via the D-52 `[debug]` logger.
+**Wired into `run_turn`** ([kernel/invoke.py](../services/lk/kernel/invoke.py)): retrieval (both the engine
+`gather` path and the legacy `retrieve` path) is memoized by **(query, frozen-context text, deep)**, and the
+response/retrieve stages are timed. A cache **miss runs exactly as today** (behavior-preserving); an identical
+(query+context) within the TTL **reuses the bundle** instead of re-running the engine. It does **not** make the
+model faster (that is N-65 serving) — it removes *repeated* work (rapid identical queries, proactive re-probe,
+expansion reuse).
+**Observability.** The bridge status payload gains a **`turn`** block (`_turn_metrics`):
+`stagesMs` (cumulative ms per stage) + `cache` (hit/miss/evict/expire) + `cacheConfig` — so "where does a turn
+spend time" and "did the cache help" are inspectable without a profiler. Env: `LK_TURNCACHE` (off-switch),
+`LK_TURNCACHE_TTL` (300s), `LK_TURNCACHE_MAX` (128).
+**Typed test contract** — [test_turncache.py](../services/lk/tests/test_turncache.py) (wired into `make check`):
+*memoize* — runs producer **once** per (key, TTL window); **hit** = same stage+parts within TTL under the cap;
+**miss** = first call · expired · distinct parts · LRU-evicted · disabled · producer raised (failures never
+cached, degrade). *run_turn level* — two byte-identical-context turns with the same query → engine `gather`
+called **once** (the reuse win); a distinct query re-gathers.
+**Open (N-32 remainder, needs live profiling).** True stage **parallelism / pipelining** across turns and
+**predictive prefetch during idle** are the next iteration — they need a live `dot`-profile of the real
+per-stage DAG (the `turn.stagesMs` counters now make that measurable). Marked `[~]`.
+**`make check` green (44 suites).**
+**Edges.** `[D-54] --{concretizes}--> [N-32]` load-bearing · `--{pairs}--> [D-55 N-22 watchdog]` significant ·
+`--{built-on}--> [D-52 debuglog]` load-bearing · `--{anticipates}--> [N-70 parallel-facet runtime]` significant
+· `--{serves}--> [§K.0.1 #3 USABLE-LOCAL]`.
+
+---
+
+## D-55 — Turn-wide deadline / watchdog across the multi-stage pipeline (2026-06-20) — N-22 (A4)
+**What.** D-09 bounds each *model call* with a wall-clock deadline; N-22 extends that to the **whole turn**.
+New `TurnConfig.turn_deadline_s` (default **None = off**, no behavior change) composes a single turn-wide
+deadline into the existing `should_stop` watchdog at turn start — so every stage that already honors
+`should_stop` (retrieval + response + expansion) is now covered by one ceiling, raising `TurnCancelled`
+without touching each call site.
+**Typed test contract** — extended [test_cancel.py](../services/lk/tests/test_cancel.py): a past deadline
+**aborts the turn via `TurnCancelled`** even when the caller's `should_stop` never fires; the aborted turn
+**writes nothing** to rolling memory; with the default (no deadline) a turn **still completes**.
+**`make check` green (44 suites).**
+**Edges.** `[D-55] --{extends}--> [D-09 deadlines]` load-bearing · `--{pairs}--> [D-54 N-32]` significant ·
+`--{serves}--> [§K.0.1 #3 USABLE-LOCAL]` (never hang the turn).
+
+---
+
 ## Live-stub index (every D-node's outflow, for audit) `[revised: F2 — added D-04→N-20, D-09→N-16]`
 D-01→N-02,N-18 · D-02→N-06 · D-03→N-07 · D-04→N-07,N-11,N-20 · D-05→N-02,N-08 ·
 D-06→N-07,N-21 · D-07→N-28 · D-08→N-08,N-02,N-11 · D-09→N-27,N-05,N-22,N-16 ·

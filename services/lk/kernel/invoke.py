@@ -39,7 +39,7 @@ from ..retrieval import (
     format_citations, format_recall,
 )
 from ..ui       import UIConnector
-from .          import prompts, schemas
+from .          import prompts, schemas, turncache
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 # Journal files live under memory/journal/ — assembled by lk.admin (MDX writer).
@@ -262,6 +262,10 @@ class TurnConfig:
     max_tokens:        int         = 2048
     temperature:       float       = 0.2
     timeout:           int         = 300
+    # N-22: optional turn-WIDE wall-clock ceiling across all stages (retrieval +
+    # response + expansion). None = off (per-call `timeout` still bounds each op);
+    # set it and the composed watchdog aborts the whole turn via TurnCancelled.
+    turn_deadline_s:   float | None = None
     skip_analysis:     bool        = False
     no_retrieval:      bool        = False
     deep_search:       bool        = False   # UI deepSearch flag → wider/deeper retrieval
@@ -313,6 +317,20 @@ def run_turn(
     turn_id  = f"t-{next(_turn_ctr):04d}"
     ts_start = time.monotonic()
     ts_now   = datetime.now(timezone.utc).isoformat()
+
+    # N-22: compose a turn-wide watchdog into should_stop. Every stage already
+    # honors should_stop (D-09); ORing a single turn deadline in here extends that
+    # coverage to the WHOLE pipeline without touching each call site. Off by
+    # default (turn_deadline_s=None) so existing behavior is unchanged.
+    if cfg.turn_deadline_s and cfg.turn_deadline_s > 0:
+        _caller_stop = should_stop
+        _turn_deadline = ts_start + cfg.turn_deadline_s
+
+        def should_stop() -> bool:   # noqa: F811 - intentional watchdog wrap
+            if _caller_stop and _caller_stop():
+                return True
+            return time.monotonic() > _turn_deadline
+
     snapshot = freeze_context(ctx)
     ctx_tail = snapshot.text
 
@@ -335,10 +353,17 @@ def run_turn(
         # cited category in ONE consistent bundle, not a side block. Best-effort.
         ui.push_status("retrieving")
         try:
-            g = engine.gather(
-                user_text, short_ctx=ctx_tail, deep=cfg.deep_search,
-                timeout=cfg.timeout, should_stop=should_stop, live_fn=live_fn,
-            )
+            # N-32: memoize the gather by (query, context identity, deep). A
+            # regenerate / proactive re-probe of the same query+context reuses the
+            # bundle instead of re-running the whole engine. Miss == today's path.
+            with turncache.stage_timer("retrieve"):
+                g = turncache.memoize(
+                    "gather", (user_text, ctx_tail, cfg.deep_search),
+                    lambda: engine.gather(
+                        user_text, short_ctx=ctx_tail, deep=cfg.deep_search,
+                        timeout=cfg.timeout, should_stop=should_stop, live_fn=live_fn,
+                    ),
+                )
             cited_results = g.evidence
             analysis = {"situation": g.context_understanding, "capture_hires": g.capture_hires}
             retrieval_queries = [q for qs in g.queries.values() for q in qs]
@@ -382,7 +407,11 @@ def run_turn(
 
         if not cfg.no_retrieval and retrieval_queries:
             ui.push_status("retrieving", f"{len(retrieval_queries)} queries")
-            cited_results = retrieval.retrieve(retrieval_queries)
+            with turncache.stage_timer("retrieve"):
+                cited_results = turncache.memoize(
+                    "retrieve", (tuple(retrieval_queries),),
+                    lambda: retrieval.retrieve(retrieval_queries),
+                )
             if live_fn and cited_results:
                 qs = ", ".join(f'"{q}"' for q in retrieval_queries[:2])
                 live_fn(f"[retrieval] {len(cited_results)} sources for {qs}")
@@ -423,15 +452,16 @@ def run_turn(
     if should_stop and should_stop():           # cancelled before the first token
         raise TurnCancelled()
     try:
-        raw_resp = call_model(
-            _build_messages(prompts.RESPONSE, "\n\n".join(parts), images, audios),
-            max_tokens=cfg.max_tokens, temperature=cfg.temperature, timeout=cfg.timeout,
-            schema=schemas.RESPONSE, role="response",
-            stream_fn=answer_stream.feed if answer_stream else None,
-            should_stop=should_stop,
-            allow_remote_media=cfg.allow_remote_media,
-            **_sampling,
-        )
+        with turncache.stage_timer("response"):
+            raw_resp = call_model(
+                _build_messages(prompts.RESPONSE, "\n\n".join(parts), images, audios),
+                max_tokens=cfg.max_tokens, temperature=cfg.temperature, timeout=cfg.timeout,
+                schema=schemas.RESPONSE, role="response",
+                stream_fn=answer_stream.feed if answer_stream else None,
+                should_stop=should_stop,
+                allow_remote_media=cfg.allow_remote_media,
+                **_sampling,
+            )
         resp_text = raw_resp.get("text", "")
         response  = _extract_json(resp_text)
         if response is None:

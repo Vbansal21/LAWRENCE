@@ -87,6 +87,8 @@ test: test-fast      ## full offline regression suite (no model/server needed)
 	@python3 services/lk/tests/test_retrieval_quality.py
 	@python3 services/lk/tests/test_schedule.py
 	@python3 services/lk/tests/test_converters.py
+	@python3 services/lk/tests/test_services.py
+	@python3 services/lk/tests/test_turncache.py
 	@python3 services/lk/tests/test_notify.py
 	@python3 services/lk/tests/test_recent_findings.py
 	@python3 services/lk/tests/test_launcher.py

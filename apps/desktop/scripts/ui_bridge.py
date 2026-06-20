@@ -36,6 +36,8 @@ from lk.kernel import (  # noqa: E402
 )
 from lk.lock import acquire_writer_lock  # noqa: E402
 from lk.notify import notify as _notify  # noqa: E402
+from lk import debuglog as _debuglog  # noqa: E402
+from lk.kernel import turncache as _turncache  # noqa: E402
 from lk.retrieval.ingest import ingest as _ingest  # noqa: E402
 from lk.obs import AudioObserver, VisionObserver, capture_now, record_now  # noqa: E402
 from lk.obs.audio import transcribe as _transcribe  # noqa: E402
@@ -363,6 +365,10 @@ class DesktopBridge:
             # web-search provider counters + cooldowns (bot-block visibility)
             "retrieval": _web_search_stats(),
             "fallbackParses": _model.fallback_parses(),
+            # N-32: per-stage turn timing + turn-cache hit/miss (truthful counters
+            # from the shared [debug] logger — makes "where does a turn spend time"
+            # and "did the cache help" inspectable without a profiler).
+            "turn": _turn_metrics(),
             # SSE event stream port — None when the port was already in use at startup
             "eventsPort": self.ui.port,
             "eventsUrl": f"http://127.0.0.1:{self.ui.port}/events" if self.ui.port else None,
@@ -1874,6 +1880,20 @@ def _system_metrics() -> dict[str, Any]:
         accelerator = os.environ["LK_ACCELERATOR"]
 
     return {"load1": load, "memoryPercent": memory_percent, "accelerator": accelerator}
+
+
+def _turn_metrics() -> dict[str, Any]:
+    """N-32 observability: cumulative per-stage turn time + turn-cache counters.
+
+    Cheap read of the always-on [debug] counters (no model probe, no DB scan).
+    ``stagesMs`` are cumulative milliseconds per stage (retrieve/response/…);
+    ``cache`` are hit/miss/evict/expire tallies — together they answer
+    "where does a turn spend time" and "is the cache helping".
+    """
+    snap = _debuglog.snapshot()
+    stages = {k.split(".", 1)[1]: v for k, v in snap.items() if k.startswith("turn_ms.")}
+    cache = {k.split(".", 1)[1]: v for k, v in snap.items() if k.startswith("turncache.")}
+    return {"stagesMs": stages, "cache": cache, "cacheConfig": _turncache.stats()}
 
 
 def _mdx_attachment(kind: str, name: str, source: str, content: str) -> str:

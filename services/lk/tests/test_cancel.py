@@ -170,6 +170,27 @@ try:
                          ui=ui, stream_fn=lambda p: None, should_stop=lambda: False)
     check("later turn returns the answer", "final answer" in ans, ans)
     check("later turn writes to rolling memory", ctx._l1_size > size_before)
+
+    # N-22: a turn-wide deadline aborts the whole pipeline via TurnCancelled even
+    # when the caller's should_stop never fires. The deadline (already past) trips
+    # at the first stage boundary; nothing is written for the aborted turn.
+    size_pre_dl = ctx._l1_size
+    cfg_dl = TurnConfig(no_retrieval=True, skip_analysis=True, timeout=30,
+                        turn_deadline_s=0.0001)
+    time.sleep(0.001)
+    dl_raised = False
+    try:
+        run_turn("q4-deadline?", ctx=ctx, retrieval=pipe, cfg=cfg_dl, images=[],
+                 audios=[], ui=ui, stream_fn=lambda p: None, should_stop=lambda: False)
+    except M.TurnCancelled:
+        dl_raised = True
+    check("N-22 turn-wide deadline aborts via TurnCancelled", dl_raised)
+    check("N-22 deadline-aborted turn writes nothing", ctx._l1_size == size_pre_dl)
+
+    # default (turn_deadline_s=None) is unchanged: a turn still completes
+    ans5, _ = run_turn("q5?", ctx=ctx, retrieval=pipe, cfg=cfg, images=[], audios=[],
+                       ui=ui, stream_fn=lambda p: None, should_stop=lambda: False)
+    check("N-22 default (no deadline) still completes", "final answer" in ans5)
 finally:
     INV.call_model = _real_call
     db.close(); shutil.rmtree(tmp, ignore_errors=True)
