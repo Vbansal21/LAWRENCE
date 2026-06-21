@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, unquote, urlparse
+from urllib.parse import quote, unquote, urlparse, parse_qs
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "services"))
@@ -801,16 +801,170 @@ class DesktopBridge:
             self.active_chat_id = self.chats.ensure_default()
         return self.active_chat_id
 
-    def chats_index(self) -> dict[str, Any]:
+    def chats_index(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        # N-81 B1: ``items`` excludes trashed; the trash bin is surfaced separately.
+        # N-81 B4: lazily retire timed-out temporary chats on each refresh (they fall
+        # into the trash bin, which this same payload carries).
+        # N-81 B9c: optional ?folder=&tag=&sort= filters; tags/folders facets travel along.
+        self.chats.sweep_expired()
+        def _first(key: str, default: str = "") -> str:
+            v = (params or {}).get(key, default)
+            return v[0] if isinstance(v, list) else (v or default)
+        folder = _first("folder") or None
+        tag    = _first("tag") or None
+        sort   = _first("sort", "recency")
         return {"ok": True, "active": self.active_chat_id,
-                "items": self.chats.list_chats(include_archived=True)}
+                "items": self.chats.list_chats(include_archived=True, folder=folder,
+                                               tag=tag, sort=sort),
+                "trash": self.chats.list_trash(),
+                "tags": self.chats.all_tags(), "folders": self.chats.all_folders(),
+                "sort": sort, "folder": folder, "tag": tag}
+
+    def chat_search(self, params: dict[str, Any]) -> dict[str, Any]:
+        """N-81 B2: search messages across chats. ``scope`` = "all" | "current" | a
+        chatId (the use-time scope restriction); ``regex`` opts into regex matching."""
+        def _first(key: str, default: str = "") -> str:
+            v = params.get(key, default)
+            return v[0] if isinstance(v, list) else (v or default)
+        q = _first("q") or _first("query")
+        scope = _first("scope", "all")
+        regex = _first("regex").lower() in ("1", "true", "yes", "on")
+        chat_id = None
+        if scope == "current":
+            chat_id = self.active_chat_id or None
+        elif scope and scope != "all":
+            chat_id = scope
+        hits = self.chats.search(q, regex=regex, chat_id=chat_id)
+        return {"ok": True, "query": q, "scope": scope, "regex": regex,
+                "count": len(hits), "hits": hits}
+
+    def chat_semantic_search(self, params: dict[str, Any]) -> dict[str, Any]:
+        """N-81 B7: relevance-ranked (FTS5/BM25) search across chats. Same ``scope``
+        semantics as chat_search (all | current | a chatId). Distinct from chat_search's
+        exact substring/regex; degrades to lexical if SQLite lacks FTS5."""
+        def _first(key: str, default: str = "") -> str:
+            v = params.get(key, default)
+            return v[0] if isinstance(v, list) else (v or default)
+        q = _first("q") or _first("query")
+        scope = _first("scope", "all")
+        chat_id = None
+        if scope == "current":
+            chat_id = self.active_chat_id or None
+        elif scope and scope != "all":
+            chat_id = scope
+        hits = self.chats.semantic_search(q, chat_id=chat_id)
+        ranked = bool(hits and hits[0].get("ranked", True))
+        return {"ok": True, "query": q, "scope": scope, "semantic": True,
+                "ranked": ranked, "count": len(hits), "hits": hits}
+
+    # ── N-81 B8: pins/favorites + message bookmarks ───────────────────────────────
+    def chat_pin(self, chat_id: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Pin/favorite a chat (floats it to the top). ``{pinned:false}`` un-pins."""
+        pinned = bool((request or {}).get("pinned", True))
+        meta = self.chats.pin_chat(chat_id, pinned)
+        if meta is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        self.ui.push_context_event("chat", f"{'pinned' if pinned else 'unpinned'} chat {chat_id}")
+        return {"ok": True, "chatId": chat_id, "pinned": bool(meta.get("pinned"))}
+
+    # ── N-81 B9c: organization (tags + folders/collections + bulk) ─────────────────
+    def chat_tags(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Set/modify a chat's tags. ``{tags:[...]}`` replaces the set; ``{add:"x"}`` /
+        ``{remove:"y"}`` adjust one. Returns the updated tag list."""
+        req = request or {}
+        if "tags" in req:
+            meta = self.chats.set_tags(chat_id, req.get("tags") or [])
+        elif req.get("add"):
+            meta = self.chats.add_tag(chat_id, str(req.get("add")))
+        elif req.get("remove"):
+            meta = self.chats.remove_tag(chat_id, str(req.get("remove")))
+        else:
+            raise BridgeError(400, "tags needs {tags:[...]} or {add:..} or {remove:..}")
+        if meta is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, "chatId": chat_id, "tags": meta.get("tags") or []}
+
+    def chat_folder(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """File a chat into a folder/collection. ``{folder:""}`` / null unfiles it."""
+        folder = (request or {}).get("folder")
+        meta = self.chats.set_folder(chat_id, None if folder in (None, "") else str(folder))
+        if meta is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        return {"ok": True, "chatId": chat_id, "folder": meta.get("folder") or ""}
+
+    def chat_bulk(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Apply one org op across many chats: ``{ids:[...], op, value?}``. ``op`` ∈
+        trash|restore|archive|unarchive|pin|unpin|tag|untag|folder."""
+        req = request or {}
+        ids = req.get("ids") or []
+        op  = str(req.get("op") or "").strip()
+        if not isinstance(ids, list) or not ids:
+            raise BridgeError(400, "bulk needs {ids:[...], op}")
+        if op not in ("trash", "restore", "archive", "unarchive", "pin", "unpin",
+                      "tag", "untag", "folder"):
+            raise BridgeError(400, f"bad bulk op: {op}")
+        try:
+            res = self.chats.bulk([str(i) for i in ids], op, value=req.get("value"))
+        except ValueError as exc:
+            raise BridgeError(400, str(exc))
+        self.ui.push_context_event("chat", f"bulk {op}: {len(res['ok'])} chat(s)")
+        return {"ok": True, **res}
+
+    def chat_bookmarks(self, params: dict[str, Any] | None = None) -> dict[str, Any]:
+        """List message bookmarks (optionally ``?chat=<id>`` to scope to one chat)."""
+        def _first(key: str) -> str:
+            v = (params or {}).get(key, "")
+            return v[0] if isinstance(v, list) else (v or "")
+        chat_id = _first("chat") or _first("chatId") or None
+        rows = self.chats.list_bookmarks(chat_id=chat_id)
+        return {"ok": True, "count": len(rows), "bookmarks": rows}
+
+    def chat_add_bookmark(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Bookmark a message: {chatId, messageId, note?}. Returns the bookmark, or 404
+        if the message id does not exist (no dangling bookmarks)."""
+        req = request or {}
+        chat_id = str(req.get("chatId") or req.get("chat") or "").strip()
+        message_id = str(req.get("messageId") or req.get("msgId") or "").strip()
+        note = str(req.get("note") or "")
+        if not chat_id or not message_id:
+            raise BridgeError(400, "bookmark needs {chatId, messageId, note?}")
+        bm = self.chats.add_bookmark(chat_id, message_id, note=note)
+        if bm is None:
+            raise BridgeError(404, f"unknown message: {chat_id}/{message_id}")
+        return {"ok": True, "bookmark": bm}
+
+    def chat_remove_bookmark(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Drop a message bookmark: {chatId, messageId}."""
+        req = request or {}
+        chat_id = str(req.get("chatId") or req.get("chat") or "").strip()
+        message_id = str(req.get("messageId") or req.get("msgId") or "").strip()
+        if not chat_id or not message_id:
+            raise BridgeError(400, "remove-bookmark needs {chatId, messageId}")
+        removed = self.chats.remove_bookmark(chat_id, message_id)
+        return {"ok": True, "removed": removed, "chatId": chat_id, "messageId": message_id}
 
     def chat_create(self, request: dict[str, Any]) -> dict[str, Any]:
-        meta = self.chats.create_chat(str(request.get("title") or ""))
+        # N-81 B4: an optional ttl (minutes) makes this a temporary chat.
+        ttl = request.get("ttlMinutes", request.get("ttl_minutes"))
+        ttl = float(ttl) if ttl not in (None, "") else None
+        meta = self.chats.create_chat(str(request.get("title") or ""), ttl_minutes=ttl)
         self.active_chat_id = meta["id"]
         self.chats.set_active(meta["id"])
-        self.ui.push_context_event("chat", f"new chat: {meta['title'] or meta['id']}")
+        label = "temporary chat" if meta.get("ephemeral") else "new chat"
+        self.ui.push_context_event("chat", f"{label}: {meta['title'] or meta['id']}")
         return {"ok": True, "active": self.active_chat_id, "chat": meta}
+
+    def chat_set_ttl(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-81 B4: set / extend / clear a chat's temporary-timer (the adjustable timer).
+        ``minutes`` > 0 (re-)arms it; null / <= 0 makes the chat permanent again."""
+        raw = request.get("minutes", request.get("ttlMinutes"))
+        minutes = float(raw) if raw not in (None, "") else None
+        meta = self.chats.set_ttl(chat_id, minutes)
+        if meta is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        state = "temporary" if meta.get("ephemeral") else "permanent"
+        self.ui.push_context_event("chat", f"timer {state}: {meta.get('title') or chat_id}")
+        return {"ok": True, "chat": meta}
 
     def chat_get(self, chat_id: str) -> dict[str, Any]:
         chat = self.chats.get_chat(chat_id)
@@ -833,8 +987,30 @@ class DesktopBridge:
             raise BridgeError(404, f"unknown chat: {chat_id}")
         return {"ok": True, "chat": self.chats.chat_meta(chat_id)}
 
+    def _recall_suppress(self, chat_id: str, *, deleted: bool) -> None:
+        """N-81 B9b (weighted relevance, the *delete=−P* half): toggle the MemoryIndex
+        delete-penalty for a chat and every message it holds. A suppressed node drops
+        out of recall (reversibly — restore clears it), so a trashed/deleted chat stops
+        surfacing in retrieval. Collect ids BEFORE a hard delete (messages then vanish).
+        Best-effort: never blocks the chat op (I4 graceful degrade)."""
+        mem = getattr(self, "memory", None)
+        if mem is None or not hasattr(mem, "mark_deleted"):
+            return
+        fn = mem.mark_deleted if deleted else mem.clear_deleted
+        try:
+            ids = [chat_id, *[m.get("id") for m in self.chats.messages(chat_id)]]
+        except Exception:
+            ids = [chat_id]
+        for nid in ids:
+            if nid:
+                try:
+                    fn(nid)
+                except Exception:
+                    pass
+
     def chat_delete(self, chat_id: str, request: dict[str, Any] | None = None) -> dict[str, Any]:
         hard = bool((request or {}).get("hard"))
+        self._recall_suppress(chat_id, deleted=True)   # B9b: −P before a hard delete drops the ids
         if not self.chats.delete_chat(chat_id, hard=hard):
             raise BridgeError(404, f"unknown chat: {chat_id}")
         self._chat_ctx.pop(chat_id, None)
@@ -852,7 +1028,72 @@ class DesktopBridge:
     def chat_restore(self, chat_id: str) -> dict[str, Any]:
         if not self.chats.restore_chat(chat_id):
             raise BridgeError(404, f"unknown chat: {chat_id}")
+        self._recall_suppress(chat_id, deleted=False)   # B9b: un-trash → lift the −P penalty
         return {"ok": True, "chat": self.chats.chat_meta(chat_id)}
+
+    # ── N-81 catalog #4: full backup / restore + merge-conflict resolution ────────
+    def chat_backup(self) -> dict[str, Any]:
+        """A complete, lossless snapshot of every chat (full event log + head + meta) —
+        round-trips through chat_restore_bundle. Distinct from chat_export (one chat's
+        active-path MDX)."""
+        bundle = self.chats.backup_all()
+        return {"ok": True, "bundle": bundle, "count": bundle.get("count", 0)}
+
+    def chat_restore_bundle(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Import a backup bundle. ``onConflict`` = skip | rename | merge (how to handle a
+        chat id that already exists). Returns the per-chat report."""
+        bundle = (request or {}).get("bundle", request)
+        on_conflict = str((request or {}).get("onConflict")
+                          or (request or {}).get("on_conflict") or "skip").strip()
+        if not isinstance(bundle, dict) or not isinstance(bundle.get("chats"), list):
+            raise BridgeError(400, "restore needs {'bundle': {chats:[...]}, 'onConflict'?}")
+        try:
+            report = self.chats.restore_bundle(bundle, on_conflict=on_conflict)
+        except ValueError as exc:
+            raise BridgeError(400, str(exc))
+        n = (len(report["imported"]) + len(report["renamed"])
+             + len(report["merged"]) + len(report["skipped"]))
+        self.ui.push_context_event("chat", f"restored backup ({n} chats, conflict={on_conflict})")
+        # Make sure the UI lands on a valid active chat after a bulk import.
+        if self.active_chat_id is None or self.chats.chat_meta(self.active_chat_id) is None:
+            self.active_chat_id = self.chats.ensure_default()
+        return {"ok": True, "onConflict": on_conflict, "active": self.active_chat_id, **report}
+
+    # ── N-81 B1: trash bin (soft-delete → restore → purge) ────────────────────────
+    def chat_trash(self, chat_id: str) -> dict[str, Any]:
+        """Soft-delete a chat into the trash bin (reversible via chat_restore)."""
+        if not self.chats.trash_chat(chat_id):
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        self._recall_suppress(chat_id, deleted=True)   # B9b: trashed → −P (drop from recall)
+        self._chat_ctx.pop(chat_id, None)
+        if self.active_chat_id == chat_id:
+            self.active_chat_id = self.chats.ensure_default()
+        self.ui.push_context_event("chat", f"trashed chat {chat_id}")
+        return {"ok": True, "active": self.active_chat_id, "trashed": chat_id}
+
+    def chat_purge(self, chat_id: str) -> dict[str, Any]:
+        """Permanently delete one chat from the trash (hard delete; irreversible)."""
+        self._recall_suppress(chat_id, deleted=True)   # B9b: −P before the messages vanish
+        if not self.chats.purge_chat(chat_id):
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        self._chat_ctx.pop(chat_id, None)
+        if self.active_chat_id == chat_id:
+            self.active_chat_id = self.chats.ensure_default()
+        self.ui.push_context_event("chat", f"purged chat {chat_id}")
+        return {"ok": True, "active": self.active_chat_id, "purged": chat_id}
+
+    def chat_empty_trash(self, request: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Empty the trash — optionally only entries trashed older than {olderThanDays}."""
+        older = (request or {}).get("olderThanDays")
+        try:                                            # B9b: −P each trashed chat before it vanishes
+            for row in self.chats.list_trash():
+                self._recall_suppress(str(row.get("id") or ""), deleted=True)
+        except Exception:
+            pass
+        count = self.chats.purge_trashed(
+            older_than_days=float(older) if older is not None else None)
+        self.ui.push_context_event("chat", f"emptied trash ({count} purged)")
+        return {"ok": True, "purged": count}
 
     # ── cross-chat graph links (WS-U Track 2) ───────────────────────────────────
     def _link_node(self, spec: Any) -> str:
@@ -1181,8 +1422,13 @@ class DesktopBridge:
             answer = _process_answer(answer)
             answer = _append_once(answer, forced_suffix)
             # Durable per-chat transcript (addressable message ids for Track 2 links).
-            user_mid, asst_mid = self._persist_turn(
-                chat_id, user_message, answer, source, regen)
+            # N-81 B5: a summarization turn captures the answer WITHOUT writing anything
+            # to the chat (the caller routes the output to its own sinks).
+            if request.get("_noPersist"):
+                user_mid = asst_mid = ""
+            else:
+                user_mid, asst_mid = self._persist_turn(
+                    chat_id, user_message, answer, source, regen)
             controls = dict(controls or {})
             applied = self._apply_model_controls(controls)
             if applied:
@@ -1296,10 +1542,10 @@ class DesktopBridge:
         # unknown op → plain regenerate
         return (f"Regenerate your previous response.{sec}", False)
 
-    def regenerate(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
-        """N-75 §3a. Regenerate an assistant response as a browsable variant (or an
-        in-place section edit). Reconstructs the originating user query, appends an
-        op-specific directive, runs the turn, and persists via ``_persist_turn``."""
+    def _build_regen_turn(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Shape the regenerate request into a turn request (shared by the sync and
+        async paths). Reconstructs the originating user query + op-specific directive
+        and tags `_regen` so `_persist_turn` appends a variant (not a phantom turn)."""
         message_id = str(request.get("message_id") or request.get("messageId") or "")
         if not message_id:
             raise BridgeError(400, "regenerate needs {message_id}")
@@ -1322,20 +1568,42 @@ class DesktopBridge:
             original=str(orig.get("text") or ""),
         )
         text = f"{base_query}\n\n{directive}" if directive else base_query
-        turn_req = {
+        return {
             "turn": {"text": text, "config": request.get("config") or {}},
             "source": "regenerate", "chatId": chat_id,
-            "_regen": {"message_id": message_id, "kind": op,
-                       "as_edit": as_edit},
+            "_regen": {"message_id": message_id, "kind": op, "as_edit": as_edit},
         }
-        result = self.turn(turn_req)
-        result["op"] = op
+
+    def _enrich_regen_result(self, chat_id: str, regen: dict[str, Any],
+                             result: dict[str, Any]) -> dict[str, Any]:
+        """Add the op echo + (for in-place edits) the stored diff/editOf to a turn
+        result. Applied by BOTH the sync `regenerate()` and the async job runner so
+        the UI sees the same shape whichever path produced the variant."""
+        result = dict(result or {})
+        op = str(regen.get("kind") or "")
+        if op:
+            result["op"] = op
         new_mid = result.get("assistantMsgId") or ""
-        if as_edit and new_mid:                    # surface the stored diff for the inline view
+        if regen.get("as_edit") and new_mid:       # surface the stored diff for the inline view
             rec = self.chats.get_by_id(chat_id, new_mid) or {}
             result["diff"] = rec.get("diff", "")
-            result["editOf"] = message_id
+            result["editOf"] = str(regen.get("message_id") or "")
         return result
+
+    def regenerate(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-75 §3a (synchronous core; used by tests + as a fallback). Reconstructs
+        the query, runs the turn inline, persists the variant, and enriches the result."""
+        turn_req = self._build_regen_turn(chat_id, request)
+        result = self.turn(turn_req)
+        return self._enrich_regen_result(chat_id, turn_req["_regen"], result)
+
+    def regenerate_async(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-80 #4. The HTTP path: enqueue the regeneration as a normal turn JOB so the
+        UI never blocks on a CPU-minutes regen — it polls /jobs/{id} (cancellable via
+        DELETE /jobs/{id}) and the job result carries the same enriched shape. The
+        `_regen` tag rides through `_run_turn_job` → `self.turn` → `_persist_turn`."""
+        turn_req = self._build_regen_turn(chat_id, request)   # validates (400/404) before enqueue
+        return self.enqueue_turn(turn_req)
 
     def message_edit(self, chat_id: str, message_id: str, request: dict[str, Any]) -> dict[str, Any]:
         """N-75. User-authored edit of any message (query or response) → an `edit`
@@ -1401,6 +1669,148 @@ class DesktopBridge:
             pass
         self.ui.push_context_event("chat", f"note (no-response) saved to logs + journal")
         return {"ok": True, "chatId": chat_id, "messageId": mid, "responded": False}
+
+    # ── N-81 B5: summarize → context ──────────────────────────────────────────────
+    _SUMMARY_PROMPT = (
+        "Summarize the conversation below into a compact, self-contained context block."
+        " Preserve key decisions, facts, concrete identifiers, and any open questions."
+        " Use tight prose or bullets. Do not narrate that you are writing a summary.\n\n"
+        "--- CONVERSATION ---\n{body}\n--- END CONVERSATION ---"
+    )
+
+    def _build_summary_turn(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """Shape a summarization request into a turn request. Runs over the chat's active
+        path text, with retrieval off (summarize the given text, not fresh sources), and
+        tagged ``_noPersist`` so the turn captures the answer without touching any chat."""
+        if self.chats.chat_meta(chat_id) is None:
+            raise BridgeError(404, f"unknown chat: {chat_id}")
+        msgs = self.chats.path_messages(chat_id)
+        if not msgs:
+            raise BridgeError(400, "nothing to summarize: chat is empty")
+        lines = []
+        for m in msgs:
+            who = "User" if m.get("role") == "user" else "Assistant"
+            body = (m.get("text") or "").strip()
+            if body:
+                lines.append(f"{who}: {body}")
+        prompt = self._SUMMARY_PROMPT.format(body="\n\n".join(lines))
+        guidance = str(request.get("guidance") or "").strip()
+        if guidance:
+            prompt += f"\n\nAdditional focus: {guidance}"
+        cfg = dict(request.get("config") or {})
+        cfg.setdefault("retrieval", False)
+        return {"turn": {"text": prompt, "config": cfg},
+                "source": "summarize", "chatId": chat_id, "_noPersist": True}
+
+    def summarize_chat(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-81 B5: summarize a chat into a compact context block, then route it.
+
+        #12 sink = BOTH — (a) a durable NoteStore note (kind='summary') auto-linked back
+        to the source chat via a B3 edge, AND (b) an inline summary message appended to
+        the source chat. #13 (optional) ``target={chatId, msgId}`` — also insert the
+        block at that anchor in a (possibly different) chat (cross-chat). The model turn
+        runs WITHOUT polluting the active chat (``_noPersist`` + active-pointer restore)."""
+        turn_req = self._build_summary_turn(chat_id, request)
+        prev_active = self.active_chat_id
+        try:
+            result = self.turn(turn_req)
+        finally:                                  # summarizing must not flip the active chat
+            if self.active_chat_id != prev_active and self.chats.chat_meta(prev_active):
+                self.active_chat_id = prev_active
+                self.chats.set_active(prev_active)
+        summary = str(result.get("answer") or "").strip()
+        if not summary:
+            raise BridgeError(502, "summarizer returned no text")
+        title = (self.chats.chat_meta(chat_id) or {}).get("title") or chat_id
+        out: dict[str, Any] = {"ok": True, "chatId": chat_id, "summary": summary}
+
+        # #12a — durable note, auto-linked to the source chat (B3 edge).
+        note_id = ""
+        try:
+            note_id = self.notes.write_note(
+                "summary", summary, source=f"summarize:{chat_id}",
+                tags=["summary", "chat-summary"])
+            if note_id:
+                self.notes.add_edge(note_id, chat_id, kind="summary")
+                out["noteId"] = note_id
+        except Exception as exc:
+            self.events.append(f"[summarize] note write failed: {exc}")
+
+        meta = {"summary": True}
+        if note_id:
+            meta["noteId"] = note_id
+
+        # #12b — inline summary message appended to the source chat.
+        block = f"**Summary of “{title}”**\n\n{summary}"
+        try:
+            src_mid = self.chats.append_message(
+                chat_id, "assistant", block, kind="summary", meta=dict(meta))
+            out["messageId"] = src_mid
+            if src_mid and note_id:
+                self.notes.add_edge(note_id, src_mid, kind="summary")
+            try:
+                if src_mid:
+                    self.memory.upsert(src_mid, "chat", summary, title="chat[summary]")
+            except Exception:
+                pass
+        except Exception as exc:
+            self.events.append(f"[summarize] inline write failed: {exc}")
+
+        # #13 — optional cross-chat insert at a chosen anchor message.
+        target = request.get("target") or {}
+        tgt_chat = str(target.get("chatId") or "").strip()
+        tgt_msg = str(target.get("msgId") or target.get("messageId") or "").strip()
+        if tgt_chat and tgt_msg:
+            if self.chats.chat_meta(tgt_chat) is None:
+                raise BridgeError(404, f"unknown target chat: {tgt_chat}")
+            if self.chats.get_by_id(tgt_chat, tgt_msg) is None:
+                raise BridgeError(404, f"unknown anchor message: {tgt_msg}")
+            ins_meta = {**meta, "fromChat": chat_id}
+            ins = self.chats.insert_after(
+                tgt_chat, tgt_msg, "assistant",
+                f"**Summary of “{title}”** (inserted)\n\n{summary}",
+                kind="summary", meta=ins_meta)
+            out["insertedAt"] = {"chatId": tgt_chat, "anchor": tgt_msg, "messageId": ins}
+            if ins and note_id:
+                self.notes.add_edge(note_id, ins, kind="summary")
+        self.ui.push_context_event("chat", f"summarized chat: {title}")
+        return out
+
+    def chat_promote(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-81 B9a (recall integration #6): promote one chat message into a durable
+        NoteStore note (kind='excerpt') — snapshotting it as first-class episodic
+        memory — and link the note back to the source message. NO model turn.
+
+        The back-edge is written with ``kind='link'`` (not 'summary') so the source
+        message also earns the +G *weighted-relevance* boost in recall (the "link=+"
+        half of #6): promoting a point is an explicit signal that it matters."""
+        spec = request.get("messageId") or request.get("msgId") or request.get("seq")
+        mid = self._link_node({"chatId": chat_id, "msgId": spec})
+        if not mid or ":" not in mid:
+            raise BridgeError(400, "promote needs a messageId (or seq)")
+        msg = self.chats.get_by_id(chat_id, mid)
+        if msg is None:
+            raise BridgeError(404, f"unknown message: {mid}")
+        body = str(msg.get("text") or "").strip()
+        if not body:
+            raise BridgeError(422, "cannot promote an empty message")
+        annotation = str(request.get("note") or "").strip()
+        tags = [str(t) for t in (request.get("tags") or []) if str(t).strip()][:12]
+        text = f"{annotation}\n\n{body}" if annotation else body
+        try:
+            note_id = self.notes.write_note(
+                "excerpt", text, source=f"promote:{mid}",
+                tags=list(dict.fromkeys([*tags, "promoted", "chat-excerpt"])))
+        except Exception as exc:                  # pragma: no cover - I4 degrade
+            raise BridgeError(502, f"note write failed: {exc}") from exc
+        if not note_id:
+            raise BridgeError(502, "note write returned no id")
+        # back-edge counts as a user link → +G weighted relevance for the message.
+        self.notes.add_edge(note_id, mid, kind="link")
+        title = (self.chats.chat_meta(chat_id) or {}).get("title") or chat_id
+        self.ui.push_context_event("chat", f"promoted message → note: {title}")
+        return {"ok": True, "chatId": chat_id, "messageId": mid,
+                "noteId": note_id, "role": msg.get("role"), "tags": tags}
 
     def _forced_web_results(self, text: str, config: dict[str, Any], deep: bool) -> list[Any]:
         web_intent = config.get("webIntent") or {}
@@ -1577,6 +1987,12 @@ class DesktopBridge:
             request["should_stop"] = cancel.is_set
         try:
             result = self.turn(request)
+            # N-80 #4: a regeneration job carries `_regen` — enrich its result with the
+            # op echo + diff/editOf so the polled job result matches the sync shape.
+            regen = request.get("_regen")
+            if regen:
+                result = self._enrich_regen_result(
+                    self._resolve_chat(request), regen, result)
             self._update_job(
                 job_id,
                 state="done",
@@ -2228,6 +2644,10 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/health":
             self._send(200, self.bridge.health())
+        elif path == "/search":                       # N-81 B2: search messages across chats
+            self._send(200, self.bridge.chat_search(parse_qs(urlparse(self.path).query)))
+        elif path == "/semantic":                      # N-81 B7: ranked (FTS5/BM25) search
+            self._send(200, self.bridge.chat_semantic_search(parse_qs(urlparse(self.path).query)))
         elif path == "/metrics":
             self._send(200, self.bridge.metrics())
         elif path == "/tasks":
@@ -2256,11 +2676,19 @@ class Handler(BaseHTTPRequestHandler):
             except BridgeError as exc:
                 self._send(exc.status, {"error": exc.message})
         elif path == "/chats":
-            self._send(200, self.bridge.chats_index())
+            self._send(200, self.bridge.chats_index(parse_qs(urlparse(self.path).query)))
         elif path.startswith("/chats/"):
             parts = path.strip("/").split("/")          # chats / {id} [/ export]
             try:
-                if len(parts) == 2:
+                if len(parts) == 2 and parts[1] == "backup":   # N-81 #4: full backup
+                    self._send(200, self.bridge.chat_backup())
+                elif len(parts) == 2 and parts[1] == "tags":        # N-81 B9c: tag facets
+                    self._send(200, {"ok": True, "tags": self.bridge.chats.all_tags()})
+                elif len(parts) == 2 and parts[1] == "folders":     # N-81 B9c: folder facets
+                    self._send(200, {"ok": True, "folders": self.bridge.chats.all_folders()})
+                elif len(parts) == 2 and parts[1] == "bookmarks":   # N-81 B8
+                    self._send(200, self.bridge.chat_bookmarks(parse_qs(urlparse(self.path).query)))
+                elif len(parts) == 2:
                     self._send(200, self.bridge.chat_get(unquote(parts[1])))
                 elif len(parts) == 3 and parts[2] == "export":
                     self._send(200, self.bridge.chat_export(unquote(parts[1])))
@@ -2308,6 +2736,16 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(200, self.bridge.ingest_document(body))
             elif self.path == "/chats":
                 self._send(200, self.bridge.chat_create(body))
+            elif self.path == "/chats/trash/empty":            # N-81 B1: empty the trash bin
+                self._send(200, self.bridge.chat_empty_trash(body))
+            elif self.path == "/chats/restore":                # N-81 #4: restore a backup bundle
+                self._send(200, self.bridge.chat_restore_bundle(body))
+            elif self.path == "/chats/bookmarks":              # N-81 B8: add a message bookmark
+                self._send(200, self.bridge.chat_add_bookmark(body))
+            elif self.path == "/chats/bookmarks/remove":       # N-81 B8: drop a message bookmark
+                self._send(200, self.bridge.chat_remove_bookmark(body))
+            elif self.path == "/chats/bulk":                   # N-81 B9c: bulk org ops
+                self._send(200, self.bridge.chat_bulk(body))
             elif self.path == "/links":
                 self._send(200, self.bridge.create_link(body))
             elif self.path.startswith("/chats/"):
@@ -2317,14 +2755,31 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, self.bridge.chat_switch(cid))
                 elif len(parts) == 3 and parts[2] == "restore":
                     self._send(200, self.bridge.chat_restore(cid))
+                elif len(parts) == 3 and parts[2] == "trash":     # N-81 B1: soft-delete
+                    self._send(200, self.bridge.chat_trash(cid))
+                elif len(parts) == 3 and parts[2] == "purge":     # N-81 B1: hard-delete
+                    self._send(200, self.bridge.chat_purge(cid))
                 elif len(parts) == 3 and parts[2] == "regenerate":
-                    self._send(200, self.bridge.regenerate(cid, body))
+                    # N-80 #4: async job (non-blocking + cancellable); UI polls /jobs/{id}.
+                    self._send(200, self.bridge.regenerate_async(cid, body))
                 elif len(parts) == 3 and parts[2] == "branch":
                     self._send(200, self.bridge.chat_branch(cid, body))
                 elif len(parts) == 3 and parts[2] == "head":
                     self._send(200, self.bridge.variant_head(cid, body))
                 elif len(parts) == 3 and parts[2] == "note":
                     self._send(200, self.bridge.chat_note(cid, body))
+                elif len(parts) == 3 and parts[2] == "ttl":        # N-81 B4: temporary-chat timer
+                    self._send(200, self.bridge.chat_set_ttl(cid, body))
+                elif len(parts) == 3 and parts[2] == "summarize":  # N-81 B5: summarize → context
+                    self._send(200, self.bridge.summarize_chat(cid, body))
+                elif len(parts) == 3 and parts[2] == "pin":        # N-81 B8: pin/favorite a chat
+                    self._send(200, self.bridge.chat_pin(cid, body))
+                elif len(parts) == 3 and parts[2] == "promote":    # N-81 B9a: message → durable note
+                    self._send(200, self.bridge.chat_promote(cid, body))
+                elif len(parts) == 3 and parts[2] == "tags":       # N-81 B9c: chat tags
+                    self._send(200, self.bridge.chat_tags(cid, body))
+                elif len(parts) == 3 and parts[2] == "folder":     # N-81 B9c: chat folder
+                    self._send(200, self.bridge.chat_folder(cid, body))
                 elif len(parts) == 5 and parts[2] == "messages" and parts[4] == "edit":
                     self._send(200, self.bridge.message_edit(cid, unquote(parts[3]), body))
                 else:

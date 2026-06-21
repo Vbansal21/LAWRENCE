@@ -44,4 +44,10 @@ memory/vault/*.*
 memory/notes/*.*
 memory/chats/*.*
 memory/chats/**/*.*
+# runtime state files have NO extension, so the *.* globs above miss them — ignore
+# them explicitly. (A tracked `active` with gitignored index/chat-dirs left a fresh
+# CI checkout in an inconsistent state → offline-gate failures. N-81/CI hygiene.)
+memory/chats/active
+memory/active
+memory/**/active
 !memory/vault/.gitkeep

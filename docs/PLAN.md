@@ -3397,53 +3397,91 @@ can't perform; see the live-verify checklist below.
 > unless asked. Each fix carries an offline gate (stress_ui / test_chat_ops_bridge / test_launcher / node --check).
 
 **ROOT CAUSES (systemic — fix first; they explain most "broken buttons"):**
-- **0A — `data-tauri-drag-region` swallows button clicks** (top bar create/new + every panel header ✕ +
-  Clear/new/Save/Archive + minimap ✕). WebKitGTK/WSLg quirk: the drag handler eats clicks on buttons *inside*
-  drag regions. **Fix (drag stays):** ONE global `mousedown`-capture listener that `stopPropagation()` when the
-  target is interactive (`button,a,input,select,textarea,[role=button],[contenteditable]`). Supersedes the
-  per-minimap drag-strip hack from D-60. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (add the
-  global handler), [index.html](../apps/desktop/web/index.html) (audit drag-region placement), [styles.css](../apps/desktop/web/styles.css) (`.drag-zone`/`.drag-handle`).
+- **0A — panel header buttons (✕ / Clear-new / Save / Archive) "blocked by drag". DONE (in tree, 2026-06-21).**
+  **Real root cause (not the guessed generic quirk):** read the Tauri **2.11.2** `drag.js` — its `isDragRegion`
+  already lets clickable elements (BUTTON/A/INPUT…) **short-circuit** drag, so a button inside a drag region is
+  NOT eaten. The actual culprit: in a sidecar/panel window the MAIN `.drag-zone` div (from index.html) was
+  restyled to `left:0;right:0;height:40px;z-index:3` and **physically floated over the top 40px of the panel —
+  on top of the panel-head's ✕ + action buttons** → every click hit the drag overlay → window-drag, click eaten.
+  **Fix (drag stays, version-correct, no JS interceptor):** (1) [styles.css](../apps/desktop/web/styles.css) `.panel-window .drag-zone { display:none }`
+  (the panel-head is the drag surface in panel mode); (2) [index.html](../apps/desktop/web/index.html) panel headers →
+  `data-tauri-drag-region="deep"` so the whole header drags while clickable children short-circuit; (3)
+  [app.js](../apps/desktop/web/variants/classic/app.js) drop the per-minimap `removeAttribute` hack from D-60 (now redundant), keep Esc-to-close.
+  Gate: [stress_ui.py](../services/lk/tests/stress_ui.py) "0A:" checks. *(The originally-planned global mousedown-capture interceptor was
+  unnecessary and would have risked breaking legitimate drags — superseded by this structural fix.)*
 - **0B — Tauri stale-frontend embed = "I rebuild but nothing changes." DONE (in tree, D-60):** [build.rs](../apps/desktop/src-tauri/build.rs)
   fingerprints `../web` → `env!("LK_WEB_FINGERPRINT")` in [main.rs](../apps/desktop/src-tauri/src/main.rs) forces re-embed. Needs the user's next rebuild.
-- **0C — Sidecar panels still bloat the MAIN window DOM.** The six `<section>`s (settings/advanced/tasks/
-  reminders/history/minimap) sit hidden in `index.html`; they now open as sidecar windows but the main window
-  still carries all the markup + event wiring (user-spotted via inspect-element). **Fix:** new
-  `apps/desktop/web/panel.html` host containing ONLY the panel sections; repoint `open_panel` to
-  `panel.html?panel=X`; **delete the six sections from `index.html`**. *Files:* NEW `web/panel.html`,
-  [index.html](../apps/desktop/web/index.html), [main.rs](../apps/desktop/src-tauri/src/main.rs) (`open_panel` URL + `panel_spec`),
-  [app.js](../apps/desktop/web/variants/classic/app.js) (`initPanelMode`/`PANEL_MODE`), [styles.css](../apps/desktop/web/styles.css), [stress_ui.py](../services/lk/tests/stress_ui.py).
+- **0C — Sidecar panels bloat the MAIN window DOM. DONE-PARTIAL (in tree, 2026-06-21).** New
+  [panel.html](../apps/desktop/web/panel.html) = the sidecar **panel host** (structural mirror of index.html so the shared app.js loads
+  unchanged in either window); `open_panel` → `panel.html?panel=X` ([main.rs](../apps/desktop/src-tauri/src/main.rs)). **The four pure-UI panels
+  (tasks/reminders/history/minimap) are DELETED from [index.html](../apps/desktop/web/index.html)** — they were already null-safe in
+  [app.js](../apps/desktop/web/variants/classic/app.js) (render fns guard `if(el)`; 3 in-window fallbacks now bail if the panel is absent). Gate:
+  [stress_ui.py](../services/lk/tests/stress_ui.py) "0C:" checks + HTML well-formedness.
+  **⚠ DISCOVERED COUPLING (settings+advanced can't leave yet):** `configSnapshot()` reads ~40 live control
+  values out of the **#settings + #advanced-panel** DOM **every turn**, and module-load listeners hard-ref them
+  (#temperature, #content-zoom, #timeout-enabled…). So those two sections **must stay in index.html** until the
+  config source-of-truth moves off the DOM. → **folded into step 6 (Appearance, item 13): the config-state
+  refactor that reads config from lk.json/state instead of the DOM will ALSO free settings+advanced from
+  index.html → then panel.html becomes the sole home of all 6 panels (fully DRY).** Until then settings+advanced
+  are duplicated in index.html + panel.html (cross-ref comments in both; keep in sync).
 
 **N-75 LIVE CORRECTNESS (built feature, real bugs):**
-- **1 — Branch map:** must be a **separate non-blocking window** AND a **graph node→edge** view (NOT the current
-  indented text tree): node = a message section, **directed** edges = order, **hover-only** = short summary +
-  longer **scrollable** detail; default per-node label = summary. *Files:* `web/panel.html` (minimap host),
-  [app.js](../apps/desktop/web/variants/classic/app.js) (`renderMinimap`→graph layout, `openMinimap`), [styles.css](../apps/desktop/web/styles.css) (nodes/edges/tooltip),
-  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`chat_tree` node fields: summary/role/section), [ctx/chats.py](../services/lk/ctx/chats.py) (`tree()`),
-  [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py), [test_chats_dag.py](../services/lk/tests/test_chats_dag.py).
-- **2 — Regenerate UX (the "worst UX"):** replace the big always-droppable op list with a **single Regenerate
-  button + optional "custom" dropdown** → opens a **small separate popup window** (options + custom-text box)
-  OR an **in-chat ephemeral prompt** reusing the text bar with **no residue** (return to prev state). Backend
-  op-descriptor `{op,guidance?,preset?,n?,section?}` unchanged. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`REGEN_OPS`,
-  `regenerateMessage`, `promptInline`), [index.html](../apps/desktop/web/index.html), [styles.css](../apps/desktop/web/styles.css); optional `web/panel.html` (regen-custom window) + [main.rs](../apps/desktop/src-tauri/src/main.rs) `panel_spec`.
-- **3 — Variant nav ‹n/m› broken:** only renders when NOT on 1/n; vanishes switching back to main; doesn't
-  update on regen (only after clicking the map); shows "2/2 with no way back". **Fix:** always render when
-  siblings>1 (incl. the primary), refresh the switcher + sibling counts immediately after regen. *Files:*
-  [app.js](../apps/desktop/web/variants/classic/app.js) (`renderVariantNav`, `switchVariant`, `regenerateMessage`, `loadChatIntoFeed`, tree refresh).
-- **4 — Regen ops are UI-BLOCKING (freeze):** route regenerate through the **async job path** (like
-  `/turn/async` + poll), not a blocking call. *Files:* [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`regenerate`→async job),
-  [app.js](../apps/desktop/web/variants/classic/app.js) (job poll/await), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py).
-- **5 — "(empty response)" on a regenerated variant:** bug in regen/variant persistence/render. *Files:*
-  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`regenerate`/`_persist_turn`), [ctx/chats.py](../services/lk/ctx/chats.py) (`add_variant`/`path_messages`), [app.js](../apps/desktop/web/variants/classic/app.js).
-- **6 — UI stuck on "streaming" after generation finished:** reset the stream-state pill / job-done on SSE
-  completion. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (stream-state + SSE done handler), [lib/bridge.js](../apps/desktop/web/lib/bridge.js) (payload.type), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (job-complete SSE).
+- **1 — Branch map. DONE (D-64).** Now a **node→edge GRAPH** (CSS org-chart connectors), in its **separate
+  sidecar window** (D-60): each node = a compact box defaulting to a one-line **summary** (role-colored, active
+  path highlighted), parent→child **directed** edges drawn by CSS, sibling variants branch side-by-side; **hover**
+  a node → a **scrollable detail** tip (stays open while the pointer is inside; clicking/scrolling the tip does
+  NOT switch). Click a node → head-select (reload). The old indented-text tree (`margin-left: depth*14`) is gone.
+  [ctx/chats.py](../services/lk/ctx/chats.py) `tree()` nodes gained `summary` (`_node_summary`) + `detail` (snippet/kind/parent retained).
+  Pure DOM/CSS, no D3. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`renderMinimap`), [styles.css](../apps/desktop/web/styles.css) (`.map-graph`/`.map-node`/`.map-tip`),
+  [ctx/chats.py](../services/lk/ctx/chats.py), [stress_ui.py](../services/lk/tests/stress_ui.py), [test_chats_dag.py](../services/lk/tests/test_chats_dag.py). (panel.html already hosts `#minimap-body`.)
+- **2 — Regenerate UX (the "worst UX"). DONE (D-63).** Replaced the always-open 12-item per-message dropdown
+  with a **single "Regenerate"** button (one-click neutral re-roll, op `regen`, no prompt) + a **"Custom ▾"**
+  trigger that opens an **ephemeral op picker** above the composer (`openRegenPicker`) — a transient row of all
+  §3a ops that removes itself with **no residue** (Escape/Cancel = dismiss; selection preserved via
+  `lastSelection`). `regenerateMessage(message, spec)` now takes a spec object; backend op-descriptor unchanged.
+  Dead `.op-menu`/`.op-dropdown`/`.op-item` CSS removed. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js), [styles.css](../apps/desktop/web/styles.css),
+  [stress_ui.py](../services/lk/tests/stress_ui.py). *(Chose the in-chat ephemeral prompt over a separate popup window — lighter, reuses the
+  promptInline pattern, no extra Tauri window/capability.)*
+- **3 — Variant nav ‹n/m› broken. DONE (D-62).** Was a downstream symptom of the sync-regen path leaving stale
+  state (it only settled after a manual reload). With async regen now pushing the variant + `render()`ing
+  immediately, and variant-switch going through `loadChatIntoFeed` (rebuilds sibling groups from `tree.nodes` —
+  every record carries an explicit `parent`, so path/tree keys match), the switcher updates live and survives
+  switch-back. `renderVariantNav` already renders whenever siblings>1 (incl. the primary). Live-verify on rebuild.
+- **4 — Regen ops are UI-BLOCKING (freeze). DONE (D-62).** `/chats/{id}/regenerate` now → `regenerate_async`
+  which **enqueues a turn job** (shared `_build_regen_turn`; `_run_turn_job` enriches the result via
+  `_enrich_regen_result`); the UI polls `/jobs/{id}` (`waitForBridgeJob(...,{noPending:true})`), is cancellable
+  (Escape/Stop via `activeJobId`), and the sync `regenerate()` stays for tests/fallback. *Files:*
+  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py), [app.js](../apps/desktop/web/variants/classic/app.js), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py).
+- **5 — "(empty response)" on a regenerated variant. DONE (D-62).** Root cause: regen deltas spawned a separate
+  live-draft bubble that was never handed off → orphaned with a stuck cursor, read as "(empty response)". Fix:
+  regen streams **in place** into the target message (`state.regenTargetUiId` in `onDelta`), `finishLiveDraft()`
+  on every exit, and an **empty-guard** keeps the previous variant rather than blanking the message. *Files:*
+  [app.js](../apps/desktop/web/variants/classic/app.js).
+- **6 — UI stuck on "streaming" after generation finished. DONE (D-62).** Added `healStuckStream()` on the 3s
+  health tick: when nothing is genuinely in flight it resets a busy pill to Idle and settles an orphaned/stale
+  live-draft (≥6s silent) — a general self-heal independent of the cause. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js).
 
-**DISCOVERABILITY & NEW UI:**
-- **7 — Sensor thumbnail hovers (Vision/Audio/Transcription):** useful tooltips — latest retrieved-context
-  **summary** per sensor; transcription = **scrollable transcript**. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (hover handlers),
-  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/metrics` or `/sensors` latest-context + transcript), [obs/*](../services/lk/obs/) (expose latest), [index.html](../apps/desktop/web/index.html)/[styles.css](../apps/desktop/web/styles.css).
-- **8 — Chat-ops discoverability + delete/link:** surface clear/delete/restore/history/archive/new/link (some
-  exist but buried in the drawer/History panel; delete + link-at-point unsurfaced). *Files:* [index.html](../apps/desktop/web/index.html),
-  [app.js](../apps/desktop/web/variants/classic/app.js), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`DELETE /chats/{id}`, `/links`), [ctx/chats.py](../services/lk/ctx/chats.py) (delete), [stress_ui.py](../services/lk/tests/stress_ui.py).
+**DISCOVERABILITY & NEW UI (step 5 — refined by the 2026-06-21 rebuild feedback):**
+- **7 — Sensors: DISTINCT web-call / retrieval / transcription + useful hovers.** D-65 fixed the worst bug (the
+  transcript thumb was showing retrieval status text) + added a basic hover `title`. **Still to build:** the three
+  pipelines must be **visually distinct** indicators (the user saw web-call/retrieval folded into "Audio
+  transcript"); per-sensor hover = latest retrieved-context **summary**; transcription hover = **scrollable**
+  transcript (a real popover, not the native `title`). *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`liveContextAttachments`,
+  `renderAttachments`, a hover popover), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/sensors` latest-context + transcript), [obs/*](../services/lk/obs/), [styles.css](../apps/desktop/web/styles.css).
+- **8 — Chat-ops at the MESSAGE level (user: "unable to load/restore/link at message/response/query level").**
+  Per-message: **link** (this message ↔ a note/another chat via NoteStore edges + `/links`), **load/restore to a
+  point**, **delete**. Today only chat-level Clear/Save/Archive/Restore exist (History panel) + per-message
+  regen/edit/branch (D-62/63); **link-at-message + delete + restore-to-point are unbuilt.** Needs a target picker
+  for link. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`renderMessageControls` +link/delete, a link picker), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)
+  (`/links` message↔target, `DELETE` at message granularity), [ctx/chats.py](../services/lk/ctx/chats.py), [stress_ui.py](../services/lk/tests/stress_ui.py).
+- **8b — Option-drawer + config/sampling window polish (N-10 declutter).** User: the ≡ option-drawer "opens
+  broken, blocky, blocking, difficult to use"; config/sampling windows "outdated + difficult to adjust". Redesign
+  the drawer to not cover the chat (compact/anchored, dismiss-on-pick) and tidy the config grid. Soften the
+  "14 options inactive for this backend" meta (it's the honest WS-K capability marker, but reads alarmingly).
+  *Files:* [index.html](../apps/desktop/web/index.html), [styles.css](../apps/desktop/web/styles.css), [app.js](../apps/desktop/web/variants/classic/app.js) (`configMarkerMeta`, drawer open/close).
+- **8c — Startup hygiene (C1).** A leftover `panel-minimap` sidecar from a prior process flashes on launch.
+  Operational (`lk reset`/`lk restart --force` clears it); if it recurs from a clean reset, investigate the
+  rebuild teardown order in [desktopctl.sh](../apps/desktop/scripts/desktopctl.sh).
 
 **LAUNCHER (separate gateway GUI):**
 - **9 — Memory/logs/journal CRUD:** delete/revise/update/clean/**restore-from-backup (merge)**/reset/re-init/
@@ -3463,12 +3501,13 @@ CSS vars via `initUiPrefs` but localStorage-only → migrate to config. *Files:*
 [styles.css](../apps/desktop/web/styles.css) (new `--ui-font-family`/`--ui-font-weight` vars), [main.rs](../apps/desktop/src-tauri/src/main.rs) (read config at launch → `set_size`/`set_position`/webview zoom), [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) (static dims become overridable defaults).
 
 **EXECUTION ORDER (dependency-aware; each step gated before the next):**
-1. **Systemic:** 0A drag-click fix → 0C panel-host extraction (0B already in tree). *(small, high-impact, unblocks honest testing of everything else)*
-2. **N-75 correctness:** 6 stuck-streaming → 3 variant-nav → 5 empty-response → 4 async regen. *(make the existing feature trustworthy before redesigning its surface)*
-3. **Regenerate UX redesign (2).**
-4. **Branch-map redesign (1):** graph node/edge + separate window + hover tooltips.
+1. **Systemic: DONE (in tree, 2026-06-21, D-61).** 0A drag-click fix ✓ → 0C panel-host extraction (4 UI panels) ✓ (0B already in tree). *(small, high-impact, unblocks honest testing of everything else)*
+2. **N-75 correctness: DONE (in tree, 2026-06-21, D-62).** 4 async regen ✓ (regenerate→`regenerate_async` job + UI poll/cancel) → 5 empty-response ✓ (in-place stream + empty-guard, never blanks the message) → 6 stuck-streaming ✓ (health-tick watchdog resets pill + settles orphaned draft) → 3 variant-nav ✓ (was a downstream symptom of sync-regen; async render-on-regen + correct switch-reload fixes it). *(make the existing feature trustworthy before redesigning its surface)* — **next: step 3.**
+3. **Regenerate UX redesign (2): DONE (in tree, 2026-06-21, D-63).** Single button + ephemeral no-residue picker. — **next: step 4.**
+4. **Branch-map redesign (1): DONE (in tree, 2026-06-21, D-64).** node→edge CSS graph + summary nodes + scrollable hover tip. — **next: step 5.**
 5. **Discoverability + new UI:** 8 chat-ops surface (+delete/link) → 7 sensor tooltips.
-6. **Appearance & window settings (13).**
+6. **Appearance & window settings (13)** — **also completes 0C:** the config-state refactor (config read from
+   lk.json/state, not the DOM) frees #settings + #advanced-panel from index.html → all 6 panels end up only in panel.html.
 7. **Launcher:** 9 memory/logs/journal CRUD → 10 chat VCS diff → 11 diagnostics → 12 knowledge panes.
 
 **FIRST FILES TO READ (step-1 start):** [app.js](../apps/desktop/web/variants/classic/app.js) (drag wiring + `initPanelMode` + stream-state),
@@ -3478,3 +3517,106 @@ CSS vars via `initUiPrefs` but localStorage-only → migrate to config. *Files:*
 **Edges:** `[N-80] --{fixes-live}--> [N-75]` · `--{operationalizes}--> [N-67 integrity]` · `--{advances}-->
 [N-10 canonical UI]` · `--{builds-on}--> [D-60]` (sidecar/dock/build-embed) · `--{extends}--> [N-08]` (chat-ops
 UI half) · `--{adds-config}--> [config GUI==CLI]`.
+
+### §Q.13 — N-81 (CHAT MANAGEMENT) — full chat-lifecycle/org/search/linking suite `[ ]`
+> **Source:** user 2026-06-21 — "these are chats, regular chat management features should be there." User
+> directive: **build the FULL catalog in priority order** (committed scope, not optional); **Projects (#11)
+> deferred to LAST** (cleaner once the rest exists). Search is **general** with a **use-time scope restriction**
+> (current chat / subset / project). Builds on N-75 DAG (D-48..D-64). Invariants: I1 single writer · I5 ADD-not-
+> rename · GUI==CLI · stdlib core. Each slice gated (test_chats_dag / test_chat_ops_bridge / stress_ui).
+
+**KB ANSWER (user asked: is the web/docs store "properly maintained, NotebookLM-like, not just append?").** Yes —
+foundation is structured: [retrieval/db.py](../services/lk/retrieval/db.py) `SemanticDB` (SQLite chunks + FTS5 + url+content-hash dedup +
+ts_fetched; re-fetch skipped unless changed) and [retrieval/memory.py](../services/lk/retrieval/memory.py) `MemoryIndex` (hash-guarded
+re-embed + lexical/vector/graph fusion = paper `S_ret`); ingest = parse→chunk→dedupe→index→citable. **Gaps to
+close for Projects:** sources as first-class managed objects (add/remove/**refresh**/enable), **per-project DB
+isolation** (today global), staleness/refresh policy, richer provenance. Project KB = built on this, **properly**.
+
+**CATALOG (priority order; `[have]`/`[part]`/`[new]`):**
+1. **Lifecycle/CRUD:** new-chat-auto-archive `[have]` · load `[have]` · rename `[have]` · fork-at-msg `[have]` ·
+   **trash bin (soft-delete → restore → purge)** `[done D-66]` · archive/unarchive `[have]` · **full-chat restore**
+   `[done D-71]` · **temporary chats (adjustable expiry timer + countdown)** `[done D-69]` · pin/favorite `[done D-72]`.
+2. **Search/nav (general, scope-restrictable at use time):** in-chat find (text/regex) `[done D-67]` · across-all
+   (text/regex/date/source) `[done D-67]` · **semantic** (ranked FTS5/BM25) `[done D-72=B7]` · bookmarks/pins + jump `[done D-72=B8]`.
+3. **Linking:** **link at response/message/query level** (→ note / chat / doc via NoteStore edges + `/links`)
+   `[part: endpoint, no UI]` · backlinks `[new]` · provenance links `[part]`.
+4. **Persistence/backup = B6 DONE (D-71):** export md/json `[have]` · **backup-all** `[done]` · import `[done]` ·
+   **restore + merge-conflict resolution** `[done]`.
+   **B6 SHIPPED (D-71):** store `backup_all()` = a complete, **lossless** snapshot (full append-only event log +
+   head cursor + registry meta per chat — NOT the lossy active-path MDX of `export_chat`); `restore_bundle(bundle,
+   on_conflict=skip|rename|merge)` round-trips it. New id ⇒ imported **verbatim** (ids/parents/head preserved).
+   Conflict policy: **skip** (keep existing), **rename** (re-id the incoming copy via `_remap_ids`, conflict-free),
+   **merge** (`_merge_into`: union the logs — identical-by-id+text deduped; new-by-content appended with parents
+   remapped as **browsable sibling variants**, `set_head=False` so the existing active path is untouched; same-id-
+   but-different-text = a **conflict**, BOTH kept). **Merge bug fixed:** conflict/dedup must check an **immutable
+   snapshot of the original** messages — a freshly-merged node reuses the `<chatId>:<seq>` id space, so a live map
+   let an incoming id spuriously collide. Bridge: `chat_backup` (GET `/chats/backup`) + `chat_restore_bundle`
+   (POST `/chats/restore`, lands the UI on a valid active chat after a bulk import). UI: **Backup all** (downloads a
+   JSON bundle) + **Restore…** (file picker → confirm = merge / cancel = rename). CLI: `lk chats backup [path]`
+   (read-only, file-level even with kernel up) + `lk chats import <path> [--skip|--rename|--merge]` (a WRITE →
+   through the bridge when the kernel is up for single-writer I1, else file-level). **NOTE:** `ChatStore` ignores
+   `LK_MEM_DIR` (hardcoded `REPO_ROOT/memory`) — smoke tests MUST pass `mem_dir=tmp`, never run mutating `lk chats`
+   against the real store.
+   **B7/B8 SHIPPED (D-72):** **B7 semantic search** — `ChatStore.semantic_search()` builds an **ephemeral `:memory:`
+   FTS5** index per query from the scoped messages (porter-stemmed BM25, word-order/morphology tolerant — distinct
+   from B2's exact substring/regex) and returns `score`-ranked hits; **no second persistent writer** (I1 untouched),
+   **graceful degrade** (no FTS5 → lexical B2 fallback, `ranked:false`). Embedding/`MemoryIndex` vector recall left as a
+   documented seam (embed role is gated/local-first). Bridge `chat_semantic_search` + GET `/semantic`. **B8 pins/
+   bookmarks** — chat **pin/favorite** (`pinned` meta flag; `_sort` floats pinned chats first; pin does NOT bump
+   `updated`) via `pin_chat` + POST `/chats/{id}/pin`; message **bookmarks/pinned-snippets** in an atomic
+   `bookmarks.json` (`add_bookmark`/`remove_bookmark`/`list_bookmarks`, idempotent per (chatId,messageId), optional
+   `note`) via GET `/chats/bookmarks` + POST `/chats/bookmarks` + POST `/chats/bookmarks/remove`; hard-delete/purge
+   cleans dangling bookmarks. UI: **Semantic** search toggle (mutually exclusive w/ regex) + per-row **★ pin star** +
+   per-message **★ Bookmark** op + a **Bookmarks** view toggle (jump/remove). CLI parity: `lk chats search <q>
+   [--semantic] [--regex] [--chat <id>]` (NEW — also closes the B2 CLI gap) · `pin <id> [--off]` · `bookmark
+   <chatId> <msgId> [note…]` · `unbookmark …` · `bookmarks [chatId]`. Same `LK_MEM_DIR` gotcha applies (search/
+   bookmarks-list are read-only & safe; pin/bookmark mutate → never against the real store in smoke tests).
+5. **Context/summarization (LAWRENCE-distinctive) = B5 DONE (D-70):** summarize chat → compacted context `[done]` ·
+   summarize → **insert at a chosen anchor of another chat** `[done]` · rolling auto-summary `[part: L1/L2]` ·
+   pinned snippets `[done D-72 — bookmarks carry an optional note = a pinned snippet]`.
+   **B5 SHIPPED (D-70):** bridge `summarize_chat` runs ONE kernel turn over the chat's active path with a `_noPersist`
+   flag (turn captures the answer, writes nothing; active-pointer restored after → zero chat pollution); #12 sink =
+   **BOTH** (durable NoteStore `kind='summary'` note auto-linked back to the source chat via a B3 edge + an inline
+   `summary` message appended to the source); #13 = cross-chat anchored insert via `ChatStore.insert_after` (leaf →
+   inline, mid-path → non-destructive sibling branch; `append_message(set_head=…)` guard). UI: per-chat **Summarize**
+   chip + two-stage cross-chat picker (chat → anchor message). CLI: `lk chats summarize <id> [--into <chat> <msg>]`
+   (POSTs to the running bridge — needs the model). **NOTE (latent, cross-subsystem):** NoteStore + ChatStore mint ids
+   from the same `%Y%m%d-%H%M%S` stamp → a note created the same second as a chat can collide, dropping the bare
+   note↔chat edge; B5 always also links note↔inline-summary-message (`chatId:seq`, collision-free) so chat
+   connectivity holds. Worth a real fix when the graph id space is hardened.
+6. **Recall integration = B9 DONE (D-73):** promote message → durable note `[done D-73=B9a]` · weighted relevance
+   (link=+, delete=−) `[done D-73=B9b]`.
+   **B9 SHIPPED (D-73):** **B9a** bridge `chat_promote` (POST `/chats/{id}/promote`) snapshots a message → a durable
+   NoteStore `kind='excerpt'` note (optional prepended annotation) with a back-edge written `kind='link'` **on purpose**
+   so the source message ALSO earns the +G boost; UI **Promote → note** op + CLI `lk chats promote <chatId> <msgId>
+   [note…]` (bridge when kernel up, else file-level). **B9b** wires the *delete=−P* half that was missing: new
+   `_recall_suppress(chat_id, deleted=)` toggles `MemoryIndex.mark_deleted`/`clear_deleted` for the chat + every message
+   on trash/purge/delete (ids collected **before** a hard delete) and lifts it on restore — a suppressed node is
+   **excluded** from recall. The *link=+* half was already live (B3 `create_link` defaults `kind='link'` →
+   `_linked_nodes`). I4 graceful-degrade (no-op if memory lacks `mark_deleted`).
+7. **Organization → Projects (#11, LAST):** tags **DONE (D-74)** · folders/collections **DONE (D-74)** ·
+   sort/bulk **DONE (D-74)** · **Projects** = collection + per-project rules + gated/permissioned content +
+   restrictions + **project-scoped, properly-maintained web/docs KB** (source registry + per-project DB isolation +
+   refresh) `[new, LAST]`.
+   **B9c SHIPPED (D-74):** chat-level tags (normalised, case-insensitive de-dupe) + folders (flat label) are meta
+   fields; `list_chats(folder=, tag=, sort=)` filters + `_sort` adds recency|created|title|messages (pinned always
+   floats first); `bulk(ids, op, value=)` loops existing single-chat ops. Bridge `chat_tags`/`chat_folder`/`chat_bulk`
+   + `chats_index(params)` threads `?folder=&tag=&sort=` and emits tag/folder facets; routes `POST /chats/bulk`,
+   `POST /chats/{id}/tags|folder`, `GET /chats/tags|folders`. CLI `tag/untag/tags/folder/folders/bulk`. UI: org control
+   bar (sort + folder/tag dropdowns), per-chat chips + 🏷/🗀 edits, multi-select checkboxes + bulk-action bar. Tags/
+   folders are org actions → don't bump `updated`. **Folders will be the substrate for Projects (#11).** Tests:
+   chats_dag §M +24, bridge +18, stress_ui +7; CHECK: PASS.
+
+**BUILD ORDER (user-approved first batches):** **B1 = trash/delete/restore DONE (D-66)** → **B2 = search
+(in-chat + global, scope-restrictable) DONE (D-67)** → **B3 = link-at-message (+ backlinks) DONE (D-68)** → **B4 =
+temporary chats (adjustable timer) DONE (D-69)** → **B5 = summarize→context (#12/#13) DONE (D-70)** → **B6 = backup+merge
+(backup-all + import + restore w/ merge-conflict resolution, item #4) DONE (D-71)** → **B7 = semantic search (ranked
+FTS5/BM25 over the log) + B8 = pins/bookmarks (chat pin/favorite + message bookmarks/pinned-snippets) DONE (D-72)** →
+**B9 = recall integration (#6: promote→note + weighted relevance link=+/delete=−) DONE (D-73)** → **B9c = organization
+(#7: tags/folders/collections + sort/bulk) DONE (D-74)** → … → **Projects (#11) LAST**. *(CI: D-67 also fixed the offline-gate determinism bug — tracked `memory/chats/active`.)* *Files (recurring):* [ctx/chats.py](../services/lk/ctx/chats.py) (store +
+DAG), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (ADD endpoints), [app.js](../apps/desktop/web/variants/classic/app.js)/[index.html](../apps/desktop/web/index.html)/[panel.html](../apps/desktop/web/panel.html)/[styles.css](../apps/desktop/web/styles.css) (UI),
+[retrieval/](../services/lk/retrieval/) (search/KB), [launcher/qt_tabs.py](../services/lk/launcher/qt_tabs.py) (CLI/GUI parity for backup/CRUD), tests.
+
+**Edges:** `[N-81] --{builds-on}--> [N-75 DAG]` (D-48..D-64) · `--{reuses}--> [N-02 retrieval / SemanticDB / MemoryIndex]`
+(search + project KB) · `--{extends}--> [WS-U NoteStore edges]` (linking) · `--{gated-by}--> [I1 single-writer, I3 role-seam]`
+(Projects KB isolation) · `--{feeds}--> [§P SOUL gate]` (chat = durable episodic memory, not a chat UI).

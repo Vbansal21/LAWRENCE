@@ -1,4 +1,20 @@
 <!doctype html>
+<!--
+  panel.html — SIDECAR PANEL HOST (0C / N-80).
+
+  The decoration-less sidecar windows (settings / advanced / tasks / reminders /
+  history / minimap) load THIS file via open_panel("…") → panel.html?panel=X.
+  It is a structural mirror of index.html so the shared variant app.js loads with
+  zero changes in either window; .panel-window CSS hides everything except the
+  one requested <section>.
+
+  index.html (the MAIN overlay) deliberately OMITS the four pure-UI panels
+  (tasks/reminders/history/minimap) so they no longer bloat the main DOM. The
+  #settings and #advanced-panel sections still live in BOTH files: the main
+  window reads their live control values in configSnapshot() every turn, so they
+  cannot leave index.html until the Phase-6 config-state refactor. KEEP those two
+  sections in sync across index.html and panel.html until then.
+-->
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
@@ -286,15 +302,88 @@
         </div>
       </section>
 
-      <!--
-        0C (N-80): the four pure-UI panels (tasks / reminders / history / minimap)
-        used to live here as always-present hidden <section>s, bloating the main
-        overlay DOM. They now live ONLY in panel.html and open as sidecar windows
-        via open_panel(). The drawer buttons that summon them stay above; app.js
-        resolves the panels null-safely so the main window never references them.
-        (#settings and #advanced-panel remain in this file — configSnapshot reads
-        their live values every turn; they leave in the Phase-6 config refactor.)
-      -->
+      <section class="tasks-panel" id="tasks-panel" hidden aria-label="Bullet journal">
+        <header class="panel-head" data-tauri-drag-region="deep">
+          <strong>Bullet journal</strong>
+          <div class="panel-head-actions">
+            <button type="button" class="chip ghost" id="tasks-clear-done">Clear done</button>
+            <button type="button" class="icon-btn" id="tasks-close" title="Close" aria-label="Close tasks">
+              <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
+            </button>
+          </div>
+        </header>
+        <div class="tasks-body">
+          <form class="tasks-add" id="tasks-add-form">
+            <input id="tasks-add-input" type="text" placeholder="Add a bullet item…" />
+            <button type="submit" class="detail-btn compact">Task</button>
+            <button type="button" class="detail-btn compact" id="remember-add">Note</button>
+          </form>
+          <h4 class="tasks-h">Open bullets</h4>
+          <ul class="tasks-list" id="tasks-list"></ul>
+          <h4 class="tasks-h">Notes</h4>
+          <ul class="remember-list" id="remember-list"></ul>
+        </div>
+      </section>
+
+      <section class="reminders-panel" id="reminders-panel" hidden aria-label="Active reminders">
+        <header class="panel-head" data-tauri-drag-region="deep">
+          <strong>Reminders</strong>
+          <button type="button" class="icon-btn" id="reminders-close" title="Close" aria-label="Close reminders">
+            <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
+          </button>
+        </header>
+        <div class="reminders-body">
+          <form class="reminders-add" id="reminders-add-form">
+            <input id="reminder-title" type="text" placeholder="Reminder" />
+            <input id="reminder-rule" type="text" placeholder="time or duration" />
+            <button type="submit" class="detail-btn compact">Add</button>
+          </form>
+          <ul class="reminders-list" id="reminders-list"></ul>
+        </div>
+      </section>
+
+      <section class="history-panel" id="history-panel" hidden aria-label="Previous chats and journals">
+        <header class="panel-head" data-tauri-drag-region="deep">
+          <strong>History</strong>
+          <div class="panel-head-actions">
+            <button type="button" class="chip ghost" id="chat-new">Clear / new</button>
+            <button type="button" class="chip ghost" id="chat-save">Save</button>
+            <button type="button" class="chip ghost" id="chat-archive">Archive</button>
+            <button type="button" class="chip ghost" id="history-trash-toggle" aria-pressed="false" title="Show the trash bin">Trash</button>
+            <button type="button" class="chip ghost" id="history-bookmarks-toggle" aria-pressed="false" title="Show bookmarked messages">Bookmarks</button>
+            <button type="button" class="chip ghost danger" id="history-empty-trash" hidden title="Permanently delete all trashed chats">Empty trash</button>
+            <button type="button" class="chip ghost" id="history-backup" title="Download a full, lossless backup of every chat">Backup all</button>
+            <button type="button" class="chip ghost" id="history-restore" title="Restore chats from a backup file">Restore…</button>
+            <input type="file" id="history-restore-input" accept="application/json,.json" hidden />
+            <button type="button" class="chip ghost" id="history-refresh">Refresh</button>
+            <button type="button" class="icon-btn" id="history-close" title="Close" aria-label="Close history">
+              <svg viewBox="0 0 24 24"><path d="m7 7 10 10M17 7 7 17" /></svg>
+            </button>
+          </div>
+        </header>
+        <div class="history-body">
+          <form class="history-search" id="history-search-form">
+            <input id="history-search-input" type="search" placeholder="Search messages…" aria-label="Search chats" />
+            <button type="button" class="chip ghost" id="history-search-scope" aria-pressed="false" title="Scope: all chats / this chat">All chats</button>
+            <button type="button" class="chip ghost" id="history-search-semantic" aria-pressed="false" title="Semantic (relevance-ranked) search instead of exact text">Semantic</button>
+            <button type="button" class="chip ghost" id="history-search-regex" aria-pressed="false" title="Match as a regular expression">.*</button>
+            <button type="button" class="chip ghost" id="history-search-clear" hidden title="Clear search">Clear</button>
+          </form>
+          <nav class="history-list" id="history-list" aria-label="History entries"></nav>
+          <article class="history-preview">
+            <div class="mdx" id="history-preview"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="minimap-panel" id="minimap-panel" hidden aria-label="Chat branch map">
+        <header class="panel-head" data-tauri-drag-region="deep">
+          <div class="drawer-title">Branch map</div>
+          <button type="button" class="icon-btn" id="minimap-close" title="Close" aria-label="Close map">✕</button>
+        </header>
+        <div class="minimap-body" id="minimap-body"></div>
+      </section>
+
       <input id="file-input" type="file" multiple accept=".png,.jpg,.jpeg,.webp,.gif,.svg,.heic,.tif,.tiff,.wav,.mp3,.m4a,.flac,.ogg,.opus,.mp4,.mov,.mkv,.webm,.avi,.pdf,.md,.mdx,.txt,.html,.htm,.doc,.docx,.odt,.rtf,.ppt,.pptx,.odp,.xls,.xlsx,.ods,.csv,.tsv,.tex,.bib,.mmd,.mermaid,.json,.jsonl,.yaml,.yml,.xml,.epub" hidden />
       <div class="resize-grip" id="resize-grip" title="Resize" aria-hidden="true"></div>
     </main>

@@ -67,9 +67,21 @@ const state = {
   sessionTokens: 0,         // approximate text tokens since this UI session/reset
   trajectory: null,         // latest user/proactive context path
   pendingTurns: 0,
+  regenTargetUiId: "",      // N-80 #4/#5: regen streams into THIS message in place (no stray draft bubble)
+  regenBuffer: "",          // accumulating regen delta text for the in-place stream
+  liveDraftAt: 0,           // N-80 #6: last delta timestamp → watchdog finalizes a stalled draft
   tasks: { tasks: [], remember: [], counts: { open: 0, done: 0, remember: 0 } },
   history: { items: [], selected: null, text: "", format: "mdx" },
-  chats: { items: [], active: "" },
+  chats: {
+    items: [], active: "", trash: [], showTrash: false,           // N-81 B1: trash bin view
+    // N-81 B2/B7: search — `semantic` flips to relevance-ranked (FTS5/BM25) over exact text.
+    search: { active: false, query: "", scope: "all", regex: false, semantic: false, hits: [] },
+    showBookmarks: false, bookmarks: [],                           // N-81 B8: bookmarks view
+    // N-81 B9c: organization — sort key, folder/tag filters, the facet lists, and
+    // the multi-select set driving the bulk-action bar.
+    sort: "recency", filterFolder: "", filterTag: "",
+    tags: [], folders: [], selected: [],
+  },
   reminders: [],
   metrics: {
     queued: 0,
@@ -148,6 +160,7 @@ function render(options = {}) {
           </div>
           <div class="mdx">${renderMdx(bodyText)}${cursor}</div>
           ${renderDiff(message)}
+          ${renderLinks(message)}
           ${sources}
           ${actions}
           ${message.streaming ? "" : renderMessageControls(message)}
@@ -243,25 +256,45 @@ function renderVariantNav(message) {
     </span>`;
 }
 
+// N-80 #2: regenerate UX — ONE plain "Regenerate" (re-roll) button + a "Custom ▾"
+// trigger that opens an EPHEMERAL op picker (openRegenPicker) with no residue. The
+// old always-open 12-item dropdown that hogged every message is gone.
+const DEFAULT_REGEN = { op: "regen", label: "Regenerate" };
+
 function renderMessageControls(message) {
   if (!message.msgId) return "";
   const isAssistant = message.role === "assistant";
   const regen = isAssistant ? `
-      <span class="op-menu">
-        <button type="button" class="op-btn" data-chat-op="regen-menu">Regenerate ▾</button>
-        <span class="op-dropdown" hidden>${REGEN_OPS.map((o, idx) =>
-          `<button type="button" class="op-item" data-chat-op="regen" data-op-index="${idx}">${escapeHtml(o.label)}</button>`
-        ).join("")}</span>
-      </span>` : "";
+      <button type="button" class="op-btn" data-chat-op="regen-default" title="Regenerate this response">Regenerate</button>
+      <button type="button" class="op-btn" data-chat-op="regen-custom" title="Regenerate a different way…">Custom ▾</button>` : "";
   const diffBtn = message.diff
     ? `<button type="button" class="op-btn" data-chat-op="diff-toggle">${message.showDiff ? "Hide diff" : "Show diff"}</button>`
     : "";
+  // N-81 B3: "Links" lazily loads the message's neighborhood (out/in edges +
+  // note backlinks) and toggles an inline panel; the count shows once loaded so
+  // an already-linked message reads as linked without a fetch-per-message on load.
+  const linkBtn = message.links
+    ? `<button type="button" class="op-btn" data-chat-op="links-toggle">${message.showLinks ? "Hide links" : `Links (${linkCount(message.links)})`}</button>`
+    : `<button type="button" class="op-btn" data-chat-op="links-toggle">Links</button>`;
   return `<div class="msg-ops">
       ${regen}
       <button type="button" class="op-btn" data-chat-op="edit">Edit</button>
+      <button type="button" class="op-btn" data-chat-op="link" title="Link this message to a chat or note">Link…</button>
+      <button type="button" class="op-btn" data-chat-op="bookmark" title="Bookmark this message (jump target / pinned snippet)">★ Bookmark</button>
+      <button type="button" class="op-btn" data-chat-op="promote" title="Promote this message to a durable note (recall memory)">Promote → note</button>
+      ${linkBtn}
       <button type="button" class="op-btn" data-chat-op="branch">Branch from here</button>
       ${diffBtn}
     </div>`;
+}
+
+// N-81 B3: total cross-references on a message — graph edges (both directions)
+// plus any note backlinks the neighborhood payload carries.
+function linkCount(links) {
+  if (!links) return 0;
+  const edges = Array.isArray(links.edges) ? links.edges.length : 0;
+  const back = Array.isArray(links.backlinks) ? links.backlinks.length : 0;
+  return edges + back;
 }
 
 function renderDiff(message) {
@@ -275,9 +308,55 @@ function renderDiff(message) {
   return `<div class="msg-diff">${lines}</div>`;
 }
 
+// N-81 B3: the inline links panel under a message. Each peer is a graph node id
+// (a "<chatId>:<seq>" message, or a note id); message peers are clickable to jump,
+// note peers surface for context. Direction: → this message links out, ← linked
+// from. Lazily populated by toggleLinks; hidden until the user opens it.
+function renderLinks(message) {
+  if (!message.showLinks) return "";
+  const links = message.links;
+  if (!links) return `<div class="msg-links"><small>Loading links…</small></div>`;
+  const edges = Array.isArray(links.edges) ? links.edges : [];
+  const back = (links.backlinks || []).filter((b) => !edges.some((e) => e.peer === b));
+  if (!edges.length && !back.length) {
+    return `<div class="msg-links"><small>No links yet — use “Link…” to connect this message.</small></div>`;
+  }
+  const rows = edges.map((e) => {
+    const dir = e.dir === "in" ? "←" : "→";
+    const peer = e.peer || "";
+    return `<button type="button" class="link-row" data-link-peer="${escapeAttr(peer)}" title="${escapeAttr(peer)}">
+        <span class="link-dir">${dir}</span>
+        <span class="link-label">${escapeHtml(linkLabel(peer))}</span>
+        <small class="link-kind">${escapeHtml(e.kind || "link")}</small>
+      </button>`;
+  }).join("");
+  const backRows = back.map((peer) =>
+    `<button type="button" class="link-row" data-link-peer="${escapeAttr(peer)}" title="${escapeAttr(peer)}">
+        <span class="link-dir">←</span>
+        <span class="link-label">${escapeHtml(linkLabel(peer))}</span>
+        <small class="link-kind">backlink</small>
+      </button>`).join("");
+  return `<div class="msg-links">${rows}${backRows}</div>`;
+}
+
+// Pretty label for a graph node id: a "<chatId>:<seq>" message shows the chat
+// title (when known) + #seq; anything else (a note id / raw node) shows as-is.
+function linkLabel(peer) {
+  const m = /^(.*):(\d+)$/.exec(peer || "");
+  if (m) {
+    const chatId = m[1];
+    const known = (state.chats.items || []).find((c) => c.id === chatId);
+    const title = known?.title || (chatId === state.chats.active ? "this chat" : chatId);
+    return `${title} · #${m[2]}`;
+  }
+  const chat = (state.chats.items || []).find((c) => c.id === peer);   // whole-chat link
+  if (chat) return chat.title || peer;
+  return peer || "(unknown)";                                          // a note / raw node
+}
+
 function renderAttachments() {
   const live = liveContextAttachments().map((item) => `
-    <button type="button" class="attachment context" data-type="live" title="${escapeHtml(item.title)}">
+    <button type="button" class="attachment context" data-type="live" title="${escapeAttr(`${item.title} — ${item.detail || "ready"}`)}">
       <span class="thumb ${escapeAttr(item.kind)}" ${item.thumbnail ? `style="background-image:url('${escapeAttr(item.thumbnail)}')"` : ""}></span>
       <span class="attachment-copy">
         <b>${escapeHtml(item.title)}</b>
@@ -317,7 +396,11 @@ function liveContextAttachments() {
   const voice = health.voice || {};
   const forcedVisual = state.kernelContext.find((item) => item.forceKind === "visual");
   const forcedAudio = state.kernelContext.find((item) => item.forceKind === "audio");
-  const transcript = audioTranscriptText(pipeline.transcript || state.metrics.transcript || state.voiceTranscript);
+  // B1: prefer the genuine heard speech (voiceTranscript); each candidate is filtered
+  // so retrieval/turn status never masquerades as the transcript.
+  const transcript = audioTranscriptText(state.voiceTranscript)
+    || audioTranscriptText(pipeline.transcript)
+    || audioTranscriptText(state.metrics.transcript);
   const items = [];
 
   if (pressed("#video-toggle") && (forcedVisual || observers.vision || pipeline.visualThumbnail || (pipeline.visual && pipeline.visual !== "idle"))) {
@@ -361,6 +444,11 @@ function audioTranscriptText(value) {
   const text = String(value || "").trim();
   if (!text || text === "idle") return "";
   if (/^\[VISION\b/i.test(text) || /^vision:/i.test(text)) return "";
+  // N-80 B1: the "Audio transcript" thumb must show SPEECH only — never the turn/
+  // retrieval status line (e.g. "[retrieval] UI-forced single-pass: 4 sources…").
+  // Any bracketed status marker or retrieval/source chatter is not transcript text.
+  if (/^\[/.test(text)) return "";
+  if (/\b(retrieval|ui[- ]forced|sources?\s+for|single-pass|deep research)\b/i.test(text)) return "";
   return text.replace(/^(audio|voice):\s*/i, "").replace(/^heard:\s*/i, "").trim();
 }
 
@@ -965,7 +1053,7 @@ function configMarkerMeta(controls) {
   return out;
 }
 
-async function waitForBridgeJob(jobId, config) {
+async function waitForBridgeJob(jobId, config, opts = {}) {
   if (!jobId) throw new Error("bridge did not return a job id");
   const timeoutSeconds = config.decoding.timeoutEnabled === false ? 0 : (config.decoding.timeout || 300);
   const hardTimeoutMs = config.decoding.timeoutEnabled === false
@@ -985,7 +1073,9 @@ async function waitForBridgeJob(jobId, config) {
     streamState.textContent = job.state === "running" ? "Thinking" : "Queued";
     const elapsed = Date.now() - started;
     if (Number.isFinite(hardTimeoutMs) && elapsed >= hardTimeoutMs) break;
-    if (elapsed >= softTimeoutMs || polls >= softPolls) {
+    // opts.noPending (regenerate): keep polling to completion instead of detaching
+    // to a background "Still Running" bubble — the result must land on the variant.
+    if (!opts.noPending && (elapsed >= softTimeoutMs || polls >= softPolls)) {
       return {
         pending: true,
         jobId,
@@ -1086,6 +1176,7 @@ async function refreshHealth() {
   } catch {
     state.health = null;
   }
+  healStuckStream();        // N-80 #6: recover a stuck pill / orphaned streaming draft
   renderAttachments();
   renderTelemetry();
 }
@@ -1095,6 +1186,9 @@ async function pollRemoteJobs() {
     const data = await getBridge("/jobs");
     for (const job of data.items || []) {
       if (state.seenRemoteJobs.has(job.id)) continue;
+      // N-80 #4: a regenerate job's result lands on its variant via regenerateMessage,
+      // NOT as a fresh bubble — never let the remote-job poller re-render it.
+      if (job.source === "regenerate") { state.seenRemoteJobs.add(job.id); continue; }
       const followed = state.followedJobs.get(job.id);
       const source = job.source || followed?.source || "";
       const finished = Date.parse(job.finishedAt || job.createdAt || "");
@@ -1196,7 +1290,22 @@ function connectEvents(url) {
 function onDelta(text) {
   if (!text) return;
   addTokenEstimate(text);
+  state.liveDraftAt = Date.now();
   if (state.trajectory) state.trajectory.stage = "response";
+  // N-80 #4/#5: during a regeneration, stream tokens INTO the target message in
+  // place — never spawn a separate draft bubble (the old stray bubble that got
+  // orphaned and read as "(empty response)" + a stuck cursor).
+  if (state.regenTargetUiId) {
+    state.regenBuffer += text;
+    streamState.textContent = "Regenerating";
+    const targetBody = feed.querySelector(`[data-message-id="${state.regenTargetUiId}"] .mdx`);
+    if (targetBody) {
+      const follow = feedNearBottom();
+      targetBody.innerHTML = `${renderMdx(state.regenBuffer)}<span class="cursor"></span>`;
+      followFeedIfNearBottom(follow);
+    }
+    return;
+  }
   if (!state.liveDraft) {
     state.liveDraft = { role: "assistant", text: "", time: currentTime(), streaming: true, meta: ["streaming"] };
     state.messages.push(state.liveDraft);
@@ -1219,6 +1328,27 @@ function finishLiveDraft() {
   state.messages = state.messages.filter((message) => message !== state.liveDraft);
   state.liveDraft = null;
   return true;
+}
+
+// N-80 #6: self-heal a stuck "streaming" pill / orphaned live draft. Called on the
+// 3s health tick. Acts ONLY when nothing is genuinely in flight, and only settles a
+// draft that has been silent a while — so it never cuts off a live remote stream.
+function healStuckStream() {
+  const inFlight = state.streaming || state.activeJobId
+    || state.pendingTurns > 0 || state.regenTargetUiId;
+  if (state.liveDraft && !inFlight && Date.now() - (state.liveDraftAt || 0) > 6000) {
+    // Deltas stopped and no turn is running → settle the partial as a normal message
+    // (the generation finished; the final-answer hand-off never fired).
+    state.liveDraft.streaming = false;
+    state.liveDraft.meta = ["recovered"];
+    state.liveDraft = null;
+    render();
+  }
+  if (!inFlight && !state.liveDraft) {
+    const busy = ["Streaming", "Thinking", "Queued", "Regenerating", "Cancelling", "Retrieving"]
+      .includes(streamState.textContent);
+    if (busy) streamState.textContent = "Idle";
+  }
 }
 
 // ── proactive findings (SSE "finding" — surfaced unprompted by the kernel) ───
@@ -1551,24 +1681,11 @@ async function streamAssistant(reply) {
   draft.meta = finalMeta || ["ready"];
   state.streaming = false;
   streamState.textContent = "Idle";
-  if (draftBody && draftEl) {
-    draftBody.innerHTML = renderMdx(draft.text);
-    const metaHtml = (draft.meta || []).map((item) => `<span>${escapeHtml(String(item))}</span>`).join("");
-    let metaEl = draftEl.querySelector(".meta");
-    if (metaHtml && !metaEl) {
-      metaEl = document.createElement("div");
-      metaEl.className = "meta";
-      draftEl.querySelector(".message-body")?.append(metaEl);
-    }
-    if (metaEl) metaEl.innerHTML = metaHtml;
-    const actionHtml = renderActions(draft.actions || []);
-    if (actionHtml) draftEl.querySelector(".message-body")?.insertAdjacentHTML("beforeend", actionHtml);
-    renderAttachments();
-    renderTelemetry();
-    saveSessionState();
-  } else {
-    render();
-  }
+  // N-80 B2: a full render at turn-end so the completed message gets its msg-ops
+  // (Regenerate/Custom/Edit/Branch) + variant nav. The old fast-path DOM surgery
+  // only refreshed the body/meta, leaving the message with NO chat-op controls
+  // until some later render — which read as "the chat ops don't work."
+  render();
 }
 
 form.addEventListener("submit", async (event) => {
@@ -1643,23 +1760,125 @@ async function submitNote(text) {
 
 // N-75 chat-ops handlers — all operate on the durable transcript via the bridge.
 async function handleChatOp(op, message, btn) {
-  const chatId = message.chatId || state.chats.active;
-  if (op === "regen-menu") {
-    const dd = btn.parentElement.querySelector(".op-dropdown");
-    if (dd) dd.hidden = !dd.hidden;
-    return;
-  }
   if (op === "diff-toggle") { message.showDiff = !message.showDiff; render(); return; }
   if (op === "variant-prev" || op === "variant-next") { await switchVariant(message, op === "variant-next" ? 1 : -1); return; }
-  if (op === "regen")   { await regenerateMessage(message, Number(btn.dataset.opIndex)); return; }
+  if (op === "regen-default") { await regenerateMessage(message, DEFAULT_REGEN); return; }   // one-click re-roll
+  if (op === "regen-custom")  { openRegenPicker(message); return; }                           // ephemeral picker
   if (op === "edit")    { await editMessage(message); return; }
+  if (op === "link")    { await openLinkPicker(message); return; }                            // B3: create a link
+  if (op === "bookmark") { await bookmarkMessage(message.chatId || state.chats.active, message.msgId); return; }  // B8
+  if (op === "promote") { await promoteMessage(message.chatId || state.chats.active, message.msgId); return; }    // B9a
+  if (op === "links-toggle") { await toggleLinks(message); return; }                          // B3: show/hide links
   if (op === "branch")  { await branchFromMessage(message); return; }
 }
 
-async function regenerateMessage(message, opIndex) {
-  if (!message.msgId || state.streaming) return;
+// ── N-81 B3: link-at-message + backlinks ─────────────────────────────────────
+// Links are cross-references in the kernel's note graph (NoteStore edges, via the
+// existing /links endpoint). A message links to another chat, a message in another
+// chat, or a note. Backlinks surface the reverse direction. No model call.
+
+// Lazily fetch the message's neighborhood, then toggle the inline links panel.
+async function toggleLinks(message) {
+  if (!message.msgId) return;
+  if (message.showLinks) { message.showLinks = false; render(); return; }
+  message.showLinks = true;
+  render();                                  // shows "Loading links…" immediately
+  await refreshMessageLinks(message);
+}
+
+async function refreshMessageLinks(message) {
   const chatId = message.chatId || state.chats.active;
-  const spec = REGEN_OPS[opIndex] || REGEN_OPS[0];
+  try {
+    const res = await getBridge(
+      `/links/${encodeURIComponent(chatId)}/${encodeURIComponent(message.msgId)}`);
+    message.links = res || { edges: [], out: [], in: [] };
+  } catch (error) {
+    message.links = { edges: [], out: [], in: [], error: error.message };
+    streamState.textContent = `Could not load links: ${error.message}`;
+  }
+  render();
+}
+
+// Ephemeral picker (mirrors openRegenPicker — no residue): pick a target chat
+// from the history list, or type a node id (a note id, or "<chatId>:<seq>" for a
+// specific message). On choose → POST /links, then refresh this message's links.
+async function openLinkPicker(message) {
+  if (!message?.msgId) return;
+  document.querySelector(".link-picker, .regen-picker")?.remove();   // never stack pickers
+  const chatId = message.chatId || state.chats.active;
+  const targets = (state.chats.items || []).filter((c) => c.id !== chatId);
+  const host = document.createElement("div");
+  host.className = "link-picker inline-prompt";
+  host.innerHTML = `
+    <label class="ip-label">Link this message to…</label>
+    <div class="link-targets">${
+      targets.length
+        ? targets.map((c) =>
+            `<button type="button" class="op-btn" data-link-target="${escapeAttr(c.id)}">${escapeHtml(c.title || c.id)}</button>`
+          ).join("")
+        : `<small>No other chats yet.</small>`
+    }</div>
+    <div class="link-manual">
+      <input class="ip-input" type="text" placeholder="…or a note id / chatId:seq" />
+      <button type="button" class="op-btn" data-link-manual>Link</button>
+    </div>
+    <span class="ip-actions"><button type="button" class="op-btn ghost" data-link-cancel>Cancel</button></span>`;
+  (form?.parentElement || document.body).insertBefore(host, form);
+  const input = host.querySelector(".ip-input");
+  input?.focus();
+  const close = () => { host.remove(); promptInput.focus(); };
+  const commit = async (dst) => {
+    dst = (dst || "").trim();
+    if (!dst) return;
+    close();
+    await createMessageLink(message, dst);
+  };
+  host.addEventListener("click", (event) => {
+    if (event.target.closest("[data-link-cancel]")) { close(); return; }
+    const tgt = event.target.closest("[data-link-target]");
+    if (tgt) { commit(tgt.dataset.linkTarget); return; }
+    if (event.target.closest("[data-link-manual]")) { commit(input.value); return; }
+  });
+  host.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); close(); }
+    else if (event.key === "Enter" && event.target === input) { event.preventDefault(); commit(input.value); }
+  });
+}
+
+async function createMessageLink(message, dst) {
+  const chatId = message.chatId || state.chats.active;
+  // A bare "<chatId>:<seq>" target is another message; anything else is a note /
+  // whole-chat node — the bridge's _link_node normalises raw strings as-is.
+  try {
+    await postBridge("/links", {
+      src: { chatId, msgId: message.msgId },
+      dst,
+      kind: "link",
+    });
+    streamState.textContent = `Linked → ${linkLabel(dst)}`;
+    message.showLinks = true;
+    await refreshMessageLinks(message);          // reflect the new edge immediately
+  } catch (error) {
+    streamState.textContent = `Link failed: ${error.message}`;
+  }
+}
+
+// Navigate to a linked peer: a "<chatId>:<seq>" message opens that chat + scrolls
+// to it; a note / raw node surfaces in the status bar (no in-chat note viewer yet).
+async function openLinkPeer(peer) {
+  const m = /^(.*):(\d+)$/.exec(peer || "");
+  if (m) { await openSearchHit(m[1], peer); return; }                  // a message → jump to it
+  if ((state.chats.items || []).some((c) => c.id === peer)) {          // a whole chat → open it
+    await openSearchHit(peer, "");
+    return;
+  }
+  streamState.textContent = `Linked note: ${peer}`;                    // no in-chat note viewer yet
+}
+
+async function regenerateMessage(message, spec) {
+  if (!message.msgId || state.streaming) return;
+  spec = spec || DEFAULT_REGEN;           // plain re-roll when no op is chosen
+  const chatId = message.chatId || state.chats.active;
   const prevText = message.text;          // capture BEFORE we overwrite (variant 0 keeps it)
   const body = { message_id: message.msgId, op: spec.op, config: configSnapshot() };
   if (spec.preset) body.preset = spec.preset;
@@ -1686,27 +1905,87 @@ async function regenerateMessage(message, opIndex) {
     if (guidance == null) return;          // cancelled
     body.guidance = guidance;
   }
+  // N-80 #4: regenerate is now an ASYNC job — enqueue, then poll (never block the UI
+  // for a CPU-minutes turn). #5: tokens stream into THIS message in place via the
+  // regenTarget path in onDelta, so no stray bubble is left to read as "(empty
+  // response)". #6: the pill + draft are always cleaned up on every exit.
+  state.streaming = true;
+  state.regenTargetUiId = message.uiId;
+  state.regenBuffer = "";
+  streamState.textContent = "Regenerating";
+  let res;
+  let regenJobId = "";
   try {
-    streamState.textContent = "Regenerating";
-    state.streaming = true;
-    const res = await postBridge(`/chats/${encodeURIComponent(chatId)}/regenerate`, body);
-    const text = normalizeAssistantReply(res).text;
-    message.variants = message.variants || [{ id: message.msgId, text: prevText }];
-    message.text = text;
-    if (res.assistantMsgId) {
-      message.variants.push({ id: res.assistantMsgId, text });
-      message.variantIndex = message.variants.length - 1;
-      message.msgId = res.assistantMsgId;
+    const queued = await postBridge(`/chats/${encodeURIComponent(chatId)}/regenerate`, body);
+    regenJobId = queued.jobId || "";
+    state.activeJobId = regenJobId;
+    try {
+      res = await waitForBridgeJob(regenJobId, body.config, { noPending: true });
+    } finally {
+      if (state.activeJobId === regenJobId) state.activeJobId = null;
     }
-    if (res.diff) { message.diff = res.diff; message.showDiff = false; }
-    message.meta = ["regenerated", spec.label.replace(/…$/, "")];
   } catch (error) {
     streamState.textContent = `Regenerate failed: ${error.message}`;
   } finally {
+    if (regenJobId) state.seenRemoteJobs.add(regenJobId);   // poller must not re-render it
+    finishLiveDraft();              // clear any draft the stream may have created
+    state.regenTargetUiId = "";
+    state.regenBuffer = "";
     state.streaming = false;
+  }
+  if (!res) { streamState.textContent = "Idle"; render(); return; }
+  if (res.cancelled) { streamState.textContent = "Regenerate cancelled"; render(); return; }
+  const text = normalizeAssistantReply(res).text;
+  if (!text.trim()) {
+    // Honest failure: keep the previous answer as the active variant; never blank it.
+    message.meta = ["regenerate returned an empty response"];
     streamState.textContent = "Idle";
     render();
+    return;
   }
+  message.variants = message.variants || [{ id: message.msgId, text: prevText }];
+  message.text = text;
+  if (res.assistantMsgId) {
+    message.variants.push({ id: res.assistantMsgId, text });
+    message.variantIndex = message.variants.length - 1;
+    message.msgId = res.assistantMsgId;
+  }
+  if (res.diff) { message.diff = res.diff; message.showDiff = false; }
+  message.meta = ["regenerated", spec.label.replace(/…$/, "")];
+  streamState.textContent = "Idle";
+  render();
+}
+
+// N-80 #2: the "Custom ▾" affordance opens this EPHEMERAL op picker just above the
+// composer — a transient row of op buttons that removes itself with NO residue
+// (Escape or Cancel = dismiss). Replaces the always-open per-message dropdown. The
+// text selection for selective/explain is preserved via lastSelection (captured on
+// selectionchange), so it survives the picker stealing focus.
+function openRegenPicker(message) {
+  if (!message?.msgId) return;
+  document.querySelector(".regen-picker, .link-picker")?.remove();   // never stack pickers
+  const host = document.createElement("div");
+  host.className = "regen-picker inline-prompt";
+  host.innerHTML = `
+    <label class="ip-label">Regenerate — choose how:</label>
+    <div class="regen-ops">${REGEN_OPS.map((o, idx) =>
+      `<button type="button" class="op-btn" data-regen-index="${idx}">${escapeHtml(o.label)}</button>`
+    ).join("")}</div>
+    <span class="ip-actions"><button type="button" class="op-btn ghost" data-regen-cancel>Cancel</button></span>`;
+  (form?.parentElement || document.body).insertBefore(host, form);
+  const close = () => { host.remove(); promptInput.focus(); };
+  host.addEventListener("click", (event) => {
+    if (event.target.closest("[data-regen-cancel]")) { close(); return; }
+    const btn = event.target.closest("[data-regen-index]");
+    if (!btn) return;
+    const spec = REGEN_OPS[Number(btn.dataset.regenIndex)];
+    close();
+    regenerateMessage(message, spec);
+  });
+  host.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); close(); }
+  });
+  host.querySelector("[data-regen-index]")?.focus();
 }
 
 // Text the user has selected within a given rendered message body (for §3a
@@ -1823,6 +2102,8 @@ function messageFromEvent(event) {
 }
 
 feed.addEventListener("click", async (event) => {
+  const peer = event.target.closest("[data-link-peer]");        // B3: navigate a linked peer
+  if (peer) { await openLinkPeer(peer.dataset.linkPeer); return; }
   const opBtn = event.target.closest("[data-chat-op]");
   if (opBtn) {
     const message = messageFromEvent(event);
@@ -2032,6 +2313,7 @@ document.querySelector("#advanced-open").addEventListener("click", openAdvanced)
 document.querySelector("#advanced-open-settings").addEventListener("click", openAdvanced);
 document.querySelector("#advanced-close").addEventListener("click", closeAdvanced);
 document.querySelector("#settings-close").addEventListener("click", () => closeSettingsTray(true));
+document.querySelector("#settings-head-close")?.addEventListener("click", () => closeSettingsTray(true));
 
 fileInput.addEventListener("change", () => addFiles(fileInput.files));
 
@@ -2624,12 +2906,16 @@ async function startDefaultObservers() {
 
 document.querySelector("#tasks-open")?.addEventListener("click", () => {
   if (openSidecarPanel("tasks")) return;
+  // In-window fallback (non-Tauri preview only). The panel lives in panel.html
+  // now, so the main overlay no longer carries it — bail if it isn't here.
+  const tasksPanel = document.querySelector("#tasks-panel");
+  if (!tasksPanel) return;
   advancedPanel.hidden = true;
   closeSettingsTray();
   closeRemindersPanel();
   closeHistoryPanel();
   closeOptionDrawer();
-  document.querySelector("#tasks-panel").hidden = false;
+  tasksPanel.hidden = false;
   refreshTasks();
 });
 document.querySelector("#tasks-close")?.addEventListener("click", () => {
@@ -2684,13 +2970,15 @@ function renderReminders() {
 
 document.querySelector("#reminders-open")?.addEventListener("click", () => {
   if (openSidecarPanel("reminders")) return;
+  const remindersPanel = document.querySelector("#reminders-panel");   // panel.html now; main overlay omits it
+  if (!remindersPanel) return;
   advancedPanel.hidden = true;
   closeSettingsTray();
   closeTasksPanel();
   closeHistoryPanel();
   closeOptionDrawer();
-  document.querySelector("#reminders-panel").hidden = false;
-  document.querySelector("#reminder-title").focus();
+  remindersPanel.hidden = false;
+  document.querySelector("#reminder-title")?.focus();
   refreshReminders();
 });
 document.querySelector("#reminders-close")?.addEventListener("click", () => closeRemindersPanel(true));
@@ -2745,11 +3033,15 @@ async function openMinimap() {
   }
 }
 
+// N-80 #1: the branch map is a GRAPH (node → directed edge), NOT an indented text
+// tree. Each node is a compact box (default = a one-line summary, colored by role,
+// active path highlighted); parent→child edges are drawn by CSS connectors; siblings
+// (regenerated variants) branch side-by-side. Hover a node → a scrollable detail tip.
+// Click a node → switch the active path to it (head select). Pure DOM/CSS, no D3.
 function renderMinimap(tree) {
   const nodes = tree.nodes || [];
   if (!nodes.length) return '<span class="tasks-empty">Empty chat.</span>';
   const onPath = new Set(tree.path || []);
-  // group siblings by parent so variants render side-by-side under their query
   const byParent = new Map();
   for (const n of nodes) {
     const key = n.parent || "";
@@ -2759,33 +3051,99 @@ function renderMinimap(tree) {
   const childIds = new Set(nodes.map((n) => n.id));
   const roots = nodes.filter((n) => !n.parent || !childIds.has(n.parent));
   const seen = new Set();
-  const walk = (node, depth) => {
-    if (seen.has(node.id)) return "";
-    seen.add(node.id);
-    const sibs = (byParent.get(node.parent || "") || []);
-    const variant = sibs.length > 1 ? ` <em>(${sibs.indexOf(node) + 1}/${sibs.length} ${escapeHtml(node.kind)})</em>` : "";
+
+  const nodeBox = (node) => {
+    const sibs = byParent.get(node.parent || "") || [];
+    const variant = sibs.length > 1
+      ? `<span class="map-variant">${sibs.indexOf(node) + 1}/${sibs.length} ${escapeHtml(node.kind || "")}</span>`
+      : "";
+    const role = node.role === "user" ? "you" : "lk";
     const active = onPath.has(node.id) ? " active" : "";
-    const label = `${node.role === "user" ? "▸" : "◂"} ${escapeHtml(node.snippet || "")}`;
-    const self = `<div class="map-node${active}" style="margin-left:${depth * 14}px" data-map-id="${escapeAttr(node.id)}"
-        data-map-parent="${escapeAttr(node.parent || "")}">${label}${variant}</div>`;
-    const kids = (byParent.get(node.id) || []).map((c) => walk(c, depth + 1)).join("");
-    return self + kids;
+    const summary = escapeHtml(node.summary || node.snippet || "(empty)");
+    const detail = escapeHtml(node.detail || node.snippet || "");
+    return `<div class="map-node role-${role}${active}" role="button" tabindex="0"
+        title="${summary}" data-map-id="${escapeAttr(node.id)}" data-map-parent="${escapeAttr(node.parent || "")}">
+        <span class="map-role">${role === "you" ? "You" : "LK"}</span>
+        <span class="map-summary">${summary}</span>${variant}
+        <span class="map-tip"><span class="map-tip-detail">${detail || "—"}</span></span>
+      </div>`;
   };
-  return roots.map((r) => walk(r, 0)).join("");
+
+  const walk = (node) => {
+    if (seen.has(node.id)) return "";       // cycle guard (defensive)
+    seen.add(node.id);
+    const kids = (byParent.get(node.id) || []).map(walk).filter(Boolean).join("");
+    return `<li>${nodeBox(node)}${kids ? `<ul>${kids}</ul>` : ""}</li>`;
+  };
+
+  const body = roots.map(walk).filter(Boolean).join("");
+  return `<div class="map-graph"><ul>${body}</ul></div>`;
 }
 
 // ── previous chats / journals ────────────────────────────────────────────────
 async function refreshHistory() {
+  // N-81 B9c: pass the current sort + folder/tag filters so the server returns the
+  // ordered/filtered listing and the facet lists (tags/folders) for the controls.
+  const qs = new URLSearchParams();
+  if (state.chats.sort && state.chats.sort !== "recency") qs.set("sort", state.chats.sort);
+  if (state.chats.filterFolder) qs.set("folder", state.chats.filterFolder);
+  if (state.chats.filterTag) qs.set("tag", state.chats.filterTag);
+  const chatsUrl = qs.toString() ? `/chats?${qs}` : "/chats";
   const [history, chats] = await Promise.allSettled([
     getBridge("/history"),
-    getBridge("/chats")
+    getBridge(chatsUrl)
   ]);
   state.history.items = history.status === "fulfilled" && Array.isArray(history.value.items)
     ? history.value.items : [];
   state.chats.items = chats.status === "fulfilled" && Array.isArray(chats.value.items)
     ? chats.value.items : [];
+  state.chats.trash = chats.status === "fulfilled" && Array.isArray(chats.value.trash)
+    ? chats.value.trash : [];
+  state.chats.tags = chats.status === "fulfilled" && Array.isArray(chats.value.tags)
+    ? chats.value.tags : [];
+  state.chats.folders = chats.status === "fulfilled" && Array.isArray(chats.value.folders)
+    ? chats.value.folders : [];
   state.chats.active = chats.status === "fulfilled" ? (chats.value.active || "") : "";
+  // Drop any selections that no longer correspond to a visible chat.
+  const ids = new Set(state.chats.items.map((c) => c.id));
+  state.chats.selected = state.chats.selected.filter((id) => ids.has(id));
   renderHistory();
+}
+
+// N-81 B9c: the organization bar above the chat list — sort selector, folder + tag
+// filter dropdowns (fed by the server's facet lists), and the bulk-action bar that
+// appears whenever one or more chats are selected.
+function renderChatOrgControls() {
+  const c = state.chats;
+  const opt = (val, label, sel) => `<option value="${escapeAttr(val)}" ${sel ? "selected" : ""}>${escapeHtml(label)}</option>`;
+  const sort = `<label class="org-ctl">Sort
+    <select id="chat-sort">
+      ${opt("recency", "Recent", c.sort === "recency")}
+      ${opt("created", "Created", c.sort === "created")}
+      ${opt("title", "Title A–Z", c.sort === "title")}
+      ${opt("messages", "Messages", c.sort === "messages")}
+    </select></label>`;
+  const folderOpts = [opt("", "All folders", !c.filterFolder)]
+    .concat((c.folders || []).map((f) => opt(f.folder, `🗀 ${f.folder} (${f.count})`, c.filterFolder === f.folder)))
+    .join("");
+  const folder = `<label class="org-ctl">Folder<select id="chat-folder-filter">${folderOpts}</select></label>`;
+  const tagOpts = [opt("", "All tags", !c.filterTag)]
+    .concat((c.tags || []).map((t) => opt(t.tag, `#${t.tag} (${t.count})`, c.filterTag === t.tag)))
+    .join("");
+  const tag = `<label class="org-ctl">Tag<select id="chat-tag-filter">${tagOpts}</select></label>`;
+  const n = c.selected.length;
+  const bulk = n ? `
+    <div class="bulk-bar" role="group" aria-label="bulk actions">
+      <span class="bulk-count">${n} selected</span>
+      <button type="button" class="chip ghost" data-bulk-op="pin">Pin</button>
+      <button type="button" class="chip ghost" data-bulk-op="unpin">Unpin</button>
+      <button type="button" class="chip ghost" data-bulk-op="archive">Archive</button>
+      <button type="button" class="chip ghost" data-bulk-op="tag">Tag…</button>
+      <button type="button" class="chip ghost" data-bulk-op="folder">Folder…</button>
+      <button type="button" class="chip ghost danger" data-bulk-op="trash">Delete</button>
+      <button type="button" class="chip ghost" data-bulk-clear>Clear</button>
+    </div>` : "";
+  return `<div class="chat-org-controls">${sort}${folder}${tag}</div>${bulk}`;
 }
 
 function renderHistory() {
@@ -2794,20 +3152,82 @@ function renderHistory() {
   if (badge) badge.textContent = count ? String(count) : "";
   const list = document.querySelector("#history-list");
   if (list) {
-    const chats = state.chats.items.map((item) => `
-        <div class="history-item ${state.chats.active === item.id ? "active" : ""} ${item.archived ? "archived" : ""}">
-          <button type="button" class="history-main" data-chat-id="${escapeAttr(item.id)}" ${item.archived ? "disabled" : ""}>
-            <b>${escapeHtml(item.title || "Chat")}${state.chats.active === item.id ? " · active" : ""}${item.archived ? " · archived" : ""}</b>
-            <small>${escapeHtml(item.updated || item.created || "")} · ${item.messages || 0} messages</small>
+    // N-81 B2/B7: search results take over the list while a query is active.
+    if (state.chats.search.active && state.chats.search.query) {
+      const s = state.chats.search;
+      const hits = (s.hits || []).map((h) => `
+        <button type="button" class="history-item search-hit" data-hit-chat="${escapeAttr(h.chatId)}" data-hit-msg="${escapeAttr(h.messageId || "")}">
+          <b>${escapeHtml(h.chatTitle || h.chatId)} · ${escapeHtml(h.role || "")}${s.semantic && h.score ? ` · ${h.score}` : ""}</b>
+          <small>${escapeHtml(h.snippet || "")}</small>
+        </button>`).join("");
+      const mode = s.semantic ? " · semantic" : (s.regex ? " · regex" : "");
+      list.innerHTML = `<div class="search-summary">${s.hits.length} match${s.hits.length === 1 ? "" : "es"}`
+        + ` · ${s.scope === "current" ? "this chat" : "all chats"}${mode}</div>`
+        + (hits || '<span class="tasks-empty">No matches.</span>');
+    } else if (state.chats.showBookmarks) {
+      // N-81 B8: bookmarks view — jump to, or remove, each bookmarked message.
+      const marks = (state.chats.bookmarks || []).map((b) => `
+        <div class="history-item chat-row">
+          <button type="button" class="history-main search-hit" data-hit-chat="${escapeAttr(b.chatId)}" data-hit-msg="${escapeAttr(b.messageId || "")}">
+            <b>★ ${escapeHtml(b.role || "")} · ${escapeHtml(b.chatId)}</b>
+            <small>${escapeHtml(b.note || b.preview || "")}</small>
           </button>
-          ${item.archived ? `<button type="button" class="chip ghost history-restore" data-restore-chat="${escapeAttr(item.id)}">Restore</button>` : ""}
+          <span class="history-actions">
+            <button type="button" class="chip ghost" data-unbookmark-chat="${escapeAttr(b.chatId)}" data-unbookmark-msg="${escapeAttr(b.messageId || "")}" title="Remove bookmark">✕</button>
+          </span>
         </div>`).join("");
-    const history = state.history.items.map((item, index) => `
+      list.innerHTML = marks || '<span class="tasks-empty">No bookmarks yet.</span>';
+    } else if (state.chats.showTrash) {
+      // N-81 B1: trash view — restore / delete-forever each, or empty the whole bin.
+      const trash = (state.chats.trash || []).map((item) => `
+        <div class="history-item trashed chat-row">
+          <span class="history-main" aria-disabled="true">
+            <b>${escapeHtml(item.title || "Chat")} · trashed</b>
+            <small>${escapeHtml(item.trashed_at || item.updated || "")} · ${item.messages || 0} messages</small>
+          </span>
+          <span class="history-actions">
+            <button type="button" class="chip ghost" data-restore-chat="${escapeAttr(item.id)}">Restore</button>
+            <button type="button" class="chip ghost danger" data-purge-chat="${escapeAttr(item.id)}">Delete forever</button>
+          </span>
+        </div>`).join("");
+      list.innerHTML = trash || '<span class="tasks-empty">Trash is empty.</span>';
+    } else {
+      const controls = renderChatOrgControls();      // N-81 B9c: sort + folder/tag + bulk
+      const chats = state.chats.items.map((item) => {
+        const ttl = ttlRemaining(item);          // B4: temporary-chat countdown
+        const checked = state.chats.selected.includes(item.id);
+        const tags = (item.tags || []).map((t) =>      // B9c: tag chips (click → filter)
+          `<button type="button" class="chip tag-chip" data-tag-filter="${escapeAttr(t)}" title="Filter by tag">#${escapeHtml(t)}</button>`).join("");
+        const folder = item.folder
+          ? `<button type="button" class="chip folder-chip" data-folder-filter="${escapeAttr(item.folder)}" title="Filter by folder">🗀 ${escapeHtml(item.folder)}</button>` : "";
+        return `
+        <div class="history-item chat-row ${state.chats.active === item.id ? "active" : ""} ${item.archived ? "archived" : ""} ${item.ephemeral ? "temporary" : ""} ${item.pinned ? "pinned" : ""} ${checked ? "selected" : ""}">
+          <input type="checkbox" class="chat-select" data-select-chat="${escapeAttr(item.id)}" ${checked ? "checked" : ""} title="Select for a bulk action" aria-label="select chat">
+          <button type="button" class="history-main" data-chat-id="${escapeAttr(item.id)}" ${item.archived ? "disabled" : ""}>
+            <b>${item.pinned ? "★ " : ""}${escapeHtml(item.title || "Chat")}${state.chats.active === item.id ? " · active" : ""}${item.archived ? " · archived" : ""}${ttl ? ` · ⏱ ${escapeHtml(ttl)}` : ""}</b>
+            <small>${escapeHtml(item.updated || item.created || "")} · ${item.messages || 0} messages</small>
+            ${folder || tags ? `<span class="chat-org-chips">${folder}${tags}</span>` : ""}
+          </button>
+          <span class="history-actions">
+            <button type="button" class="chip ghost ${item.pinned ? "active" : ""}" data-pin-chat="${escapeAttr(item.id)}" data-pinned="${item.pinned ? "1" : "0"}" title="${item.pinned ? "Unpin / unfavorite" : "Pin / favorite (keeps it at the top)"}">${item.pinned ? "★" : "☆"}</button>
+            <button type="button" class="chip ghost" data-tag-chat="${escapeAttr(item.id)}" title="Edit tags (comma-separated)">🏷</button>
+            <button type="button" class="chip ghost" data-folder-chat="${escapeAttr(item.id)}" title="Move to a folder / collection">🗀</button>
+            <button type="button" class="chip ghost" data-summarize-chat="${escapeAttr(item.id)}" title="Summarize this chat → a note + an inline recap (optionally insert into another chat)">Summarize</button>
+            <button type="button" class="chip ghost ${item.ephemeral ? "active" : ""}" data-ttl-chat="${escapeAttr(item.id)}" title="${item.ephemeral ? "Adjust or clear the auto-expire timer" : "Make this a temporary (auto-expiring) chat"}">⏱</button>
+            ${item.archived ? `<button type="button" class="chip ghost" data-restore-chat="${escapeAttr(item.id)}">Restore</button>` : ""}
+            <button type="button" class="chip ghost" data-trash-chat="${escapeAttr(item.id)}" title="Move to trash">Delete</button>
+          </span>
+        </div>`;
+      }).join("");
+      const history = state.history.items.map((item, index) => `
         <button type="button" class="history-item ${state.history.selected?.id === item.id ? "active" : ""}" data-index="${index}">
           <b>${escapeHtml(item.kind === "journal" ? "Journal" : "Chat")}</b>
           <small>${escapeHtml(item.date)}${item.entries ? ` · ${item.entries} entries` : ""}</small>
         </button>`).join("");
-    list.innerHTML = chats || history ? chats + history : '<span class="tasks-empty">No chats or journals found.</span>';
+      list.innerHTML = controls + (chats || history
+        ? chats + history
+        : '<span class="tasks-empty">No chats or journals found.</span>');
+    }
   }
   const preview = document.querySelector("#history-preview");
   if (!preview) return;
@@ -2964,16 +3384,252 @@ async function loadHistoryItem(index) {
 
 document.querySelector("#history-open")?.addEventListener("click", () => {
   if (openSidecarPanel("history")) return;
+  const historyPanel = document.querySelector("#history-panel");   // panel.html now; main overlay omits it
+  if (!historyPanel) return;
   advancedPanel.hidden = true;
   closeSettingsTray();
   closeTasksPanel();
   closeRemindersPanel();
   closeOptionDrawer();
-  document.querySelector("#history-panel").hidden = false;
+  historyPanel.hidden = false;
   refreshHistory();
 });
 document.querySelector("#history-close")?.addEventListener("click", () => closeHistoryPanel(true));
 document.querySelector("#history-refresh")?.addEventListener("click", refreshHistory);
+// N-81 B1: toggle the trash-bin view + empty it.
+document.querySelector("#history-trash-toggle")?.addEventListener("click", (event) => {
+  state.chats.showTrash = !state.chats.showTrash;
+  event.currentTarget.setAttribute("aria-pressed", String(state.chats.showTrash));
+  event.currentTarget.classList.toggle("active", state.chats.showTrash);
+  const empty = document.querySelector("#history-empty-trash");
+  if (empty) empty.hidden = !state.chats.showTrash;
+  renderHistory();
+});
+// N-81 B8: toggle the bookmarks view (mutually exclusive with the trash view).
+document.querySelector("#history-bookmarks-toggle")?.addEventListener("click", async (event) => {
+  state.chats.showBookmarks = !state.chats.showBookmarks;
+  if (state.chats.showBookmarks) state.chats.showTrash = false;
+  event.currentTarget.setAttribute("aria-pressed", String(state.chats.showBookmarks));
+  event.currentTarget.classList.toggle("active", state.chats.showBookmarks);
+  if (state.chats.showBookmarks) await refreshBookmarks();
+  else renderHistory();
+});
+// N-81 B8: pin/favorite a chat, then refresh so it re-sorts to the top.
+async function pinChatOp(chatId, pinned) {
+  if (!chatId) return;
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/pin`, { pinned });
+    await refreshHistory();
+  } catch (error) {
+    streamState.textContent = `Could not pin chat: ${error.message}`;
+  }
+}
+// N-81 B8: load the message bookmarks list.
+async function refreshBookmarks() {
+  try {
+    const res = await getBridge("/chats/bookmarks");
+    state.chats.bookmarks = Array.isArray(res.bookmarks) ? res.bookmarks : [];
+  } catch (error) {
+    state.chats.bookmarks = [];
+    streamState.textContent = `Could not load bookmarks: ${error.message}`;
+  }
+  renderHistory();
+}
+// N-81 B8: drop a bookmark, then refresh the bookmarks list.
+async function removeBookmarkOp(chatId, messageId) {
+  if (!chatId || !messageId) return;
+  try {
+    await postBridge("/chats/bookmarks/remove", { chatId, messageId });
+    await refreshBookmarks();
+  } catch (error) {
+    streamState.textContent = `Could not remove bookmark: ${error.message}`;
+  }
+}
+// N-81 B8: bookmark a message from the live feed (a jump target / pinned snippet).
+async function bookmarkMessage(chatId, messageId) {
+  if (!chatId || !messageId) return;
+  try {
+    await postBridge("/chats/bookmarks", { chatId, messageId });
+    streamState.textContent = "Bookmarked.";
+  } catch (error) {
+    streamState.textContent = `Could not bookmark: ${error.message}`;
+  }
+}
+
+// N-81 B9a (recall integration #6): promote a message → a durable note (recall memory).
+// The optional annotation is prepended to the note body; the back-edge also earns the
+// +G weighted-relevance boost for the source message.
+async function promoteMessage(chatId, messageId) {
+  if (!chatId || !messageId) return;
+  const note = (window.prompt?.("Optional note to prepend (blank = just the message):") || "").trim();
+  const payload = { messageId };
+  if (note) payload.note = note;
+  try {
+    const res = await postBridge(`/chats/${encodeURIComponent(chatId)}/promote`, payload);
+    streamState.textContent = `Promoted → note ${res.noteId || "(saved)"}.`;
+  } catch (error) {
+    streamState.textContent = `Could not promote: ${error.message}`;
+  }
+}
+document.querySelector("#history-empty-trash")?.addEventListener("click", async () => {
+  if (!window.confirm?.("Permanently delete ALL trashed chats? This cannot be undone.")) return;
+  try {
+    await postBridge("/chats/trash/empty", {});
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Could not empty trash: ${error.message}`;
+    renderHistory();
+  }
+});
+
+// ── N-81 #4: full backup (download a lossless bundle) + restore (import a bundle,
+// with merge-conflict resolution) ───────────────────────────────────────────────
+async function backupAllChats() {
+  try {
+    const res = await getBridge("/chats/backup");
+    const bundle = res.bundle || res;
+    const text = JSON.stringify(bundle, null, 2);
+    if (window.URL?.createObjectURL) {
+      const url = window.URL.createObjectURL(new Blob([text], { type: "application/json" }));
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `lawrence-chats-${new Date().toISOString().slice(0, 10)}.json`;
+      link.click();
+      window.URL.revokeObjectURL(url);
+    }
+    streamState.textContent = `Backed up ${res.count ?? bundle.count ?? 0} chat(s).`;
+  } catch (error) {
+    streamState.textContent = `Backup failed: ${error.message}`;
+  }
+}
+
+async function restoreChatsFromBundle(file) {
+  if (!file) return;
+  let bundle;
+  try {
+    bundle = JSON.parse(await file.text());
+  } catch (error) {
+    streamState.textContent = `Could not read backup: ${error.message}`;
+    return;
+  }
+  // Two real choices for an id that already exists: merge into it, or import the
+  // conflicting copy under a fresh id (rename) so nothing is ever lost.
+  const onConflict = window.confirm?.(
+    "Merge restored chats into existing ones with the same id?\n\n" +
+    "OK = merge · Cancel = import conflicts as separate copies (rename)") ? "merge" : "rename";
+  try {
+    const res = await postBridge("/chats/restore", { bundle, onConflict });
+    const c = (a) => (a?.length || 0);
+    streamState.textContent =
+      `Restored: ${c(res.imported)} new · ${c(res.renamed)} copied · ` +
+      `${c(res.merged)} merged · ${c(res.skipped)} skipped.`;
+    await refreshHistory();
+  } catch (error) {
+    streamState.textContent = `Restore failed: ${error.message}`;
+  }
+}
+
+document.querySelector("#history-backup")?.addEventListener("click", backupAllChats);
+document.querySelector("#history-restore")?.addEventListener("click", () =>
+  document.querySelector("#history-restore-input")?.click());
+document.querySelector("#history-restore-input")?.addEventListener("change", (event) => {
+  const file = event.target.files?.[0];
+  restoreChatsFromBundle(file);
+  event.target.value = "";              // allow re-selecting the same file
+});
+
+// ── N-81 B2: search across chats (scope-restrictable: all / current) ─────────
+let searchDebounce = null;
+async function runChatSearch() {
+  const input = document.querySelector("#history-search-input");
+  const s = state.chats.search;
+  s.query = (input?.value || "").trim();
+  const clearBtn = document.querySelector("#history-search-clear");
+  if (clearBtn) clearBtn.hidden = !s.query;
+  if (!s.query) { s.active = false; s.hits = []; renderHistory(); return; }
+  s.active = true;
+  try {
+    let res;
+    if (s.semantic) {
+      // N-81 B7: relevance-ranked search (regex N/A here — semantic ignores it).
+      const params = new URLSearchParams({ q: s.query, scope: s.scope });
+      res = await getBridge(`/semantic?${params.toString()}`);
+    } else {
+      const params = new URLSearchParams({ q: s.query, scope: s.scope, regex: s.regex ? "1" : "0" });
+      res = await getBridge(`/search?${params.toString()}`);
+    }
+    s.hits = Array.isArray(res.hits) ? res.hits : [];
+  } catch (error) {
+    s.hits = [];
+    streamState.textContent = `Search failed: ${error.message}`;
+  }
+  renderHistory();
+}
+
+async function openSearchHit(chatId, msgId) {
+  if (!chatId) return;
+  try {
+    await loadChatIntoFeed(chatId);                 // switches + loads the active path
+    if (msgId) {
+      const msg = state.messages.find((m) => m.msgId === msgId);
+      if (msg?.uiId) feed.querySelector(`[data-message-id="${msg.uiId}"]`)?.scrollIntoView({ block: "center" });
+    }
+  } catch (error) {
+    streamState.textContent = `Could not open chat: ${error.message}`;
+  }
+}
+
+document.querySelector("#history-search-form")?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  runChatSearch();
+});
+document.querySelector("#history-search-input")?.addEventListener("input", () => {
+  clearTimeout(searchDebounce);
+  searchDebounce = setTimeout(runChatSearch, 250);
+});
+document.querySelector("#history-search-scope")?.addEventListener("click", (event) => {
+  const s = state.chats.search;
+  s.scope = s.scope === "all" ? "current" : "all";
+  event.currentTarget.textContent = s.scope === "current" ? "This chat" : "All chats";
+  event.currentTarget.setAttribute("aria-pressed", String(s.scope === "current"));
+  event.currentTarget.classList.toggle("active", s.scope === "current");
+  runChatSearch();
+});
+document.querySelector("#history-search-regex")?.addEventListener("click", (event) => {
+  const s = state.chats.search;
+  s.regex = !s.regex;
+  event.currentTarget.setAttribute("aria-pressed", String(s.regex));
+  event.currentTarget.classList.toggle("active", s.regex);
+  if (s.regex && s.semantic) {        // regex + semantic are mutually exclusive
+    s.semantic = false;
+    const sem = document.querySelector("#history-search-semantic");
+    sem?.setAttribute("aria-pressed", "false");
+    sem?.classList.remove("active");
+  }
+  runChatSearch();
+});
+// N-81 B7: semantic (relevance-ranked) search toggle — mutually exclusive with regex.
+document.querySelector("#history-search-semantic")?.addEventListener("click", (event) => {
+  const s = state.chats.search;
+  s.semantic = !s.semantic;
+  event.currentTarget.setAttribute("aria-pressed", String(s.semantic));
+  event.currentTarget.classList.toggle("active", s.semantic);
+  if (s.semantic && s.regex) {
+    s.regex = false;
+    const rx = document.querySelector("#history-search-regex");
+    rx?.setAttribute("aria-pressed", "false");
+    rx?.classList.remove("active");
+  }
+  runChatSearch();
+});
+document.querySelector("#history-search-clear")?.addEventListener("click", () => {
+  const input = document.querySelector("#history-search-input");
+  if (input) input.value = "";
+  Object.assign(state.chats.search, { active: false, query: "", hits: [] });
+  const clearBtn = document.querySelector("#history-search-clear");
+  if (clearBtn) clearBtn.hidden = true;
+  renderHistory();
+});
 document.querySelector("#minimap-open")?.addEventListener("click", () => {
   // The branch map lives in its own side-flanking window so it never covers the
   // chat. openSidecarPanel returns false outside Tauri (static preview) — there
@@ -2982,20 +3638,19 @@ document.querySelector("#minimap-open")?.addEventListener("click", () => {
   openMinimap();
 });
 document.querySelector("#minimap-close")?.addEventListener("click", () => closeMinimapPanel(true));
-// In the in-window fallback the header is NOT a separate window's titlebar, so its
-// data-tauri-drag-region swallows the ✕ click under WebKitGTK (window-drag wins).
-// Drop it there; keep it only in the separate sidecar window (PANEL_MODE), which
-// has no decorations and needs the header to move.
-if (PANEL_MODE !== "minimap") {
-  document.querySelector("#minimap-panel .panel-head")?.removeAttribute("data-tauri-drag-region");
-}
-// Esc closes the in-window map even if the ✕ is ever obstructed.
+// 0A (N-80): panel headers use data-tauri-drag-region="deep" so the whole header
+// is a drag surface while clickable children (the ✕, chips) short-circuit drag
+// per Tauri 2.11 isDragRegion — the ✕ is no longer eaten, in either window mode.
+// (The old per-panel removeAttribute hack is gone; the real culprit was the
+// full-width .drag-zone overlay covering panel tops, now display:none in panels.)
+// Esc still closes the in-window map as a keyboard fallback.
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   const panel = document.querySelector("#minimap-panel");
   if (panel && !panel.hidden && !PANEL_MODE) closeMinimapPanel(true);
 });
 document.querySelector("#minimap-body")?.addEventListener("click", async (event) => {
+  if (event.target.closest(".map-tip")) return;   // reading/scrolling the detail tip ≠ switching
   const node = event.target.closest("[data-map-id]");
   if (!node) return;
   const chatId = state.chats.active || "";
@@ -3041,17 +3696,47 @@ document.querySelector("#chat-archive")?.addEventListener("click", async () => {
     renderHistory();
   }
 });
-document.querySelector("#history-list")?.addEventListener("click", (event) => {
-  const restore = event.target.closest("[data-restore-chat]");
-  if (restore) {
-    postBridge(`/chats/${encodeURIComponent(restore.dataset.restoreChat)}/restore`, {})
-      .then(refreshHistory)
-      .catch((error) => {
-        state.history.text = `Could not restore chat: ${error.message}`;
-        renderHistory();
-      });
+document.querySelector("#history-list")?.addEventListener("click", async (event) => {
+  // N-81 B2: a search result → open that chat (and scroll to the message if on path).
+  const hit = event.target.closest("[data-hit-chat]");
+  if (hit) { await openSearchHit(hit.dataset.hitChat, hit.dataset.hitMsg); return; }
+  // N-81 B1: trash bin ops — soft-delete, restore, and permanent purge.
+  const trash = event.target.closest("[data-trash-chat]");
+  if (trash) { await chatTrashOp("trash", trash.dataset.trashChat); return; }
+  const purge = event.target.closest("[data-purge-chat]");
+  if (purge) {
+    if (!window.confirm?.("Delete this chat forever? This cannot be undone.")) return;
+    await chatTrashOp("purge", purge.dataset.purgeChat);
     return;
   }
+  const restore = event.target.closest("[data-restore-chat]");
+  if (restore) { await chatTrashOp("restore", restore.dataset.restoreChat); return; }
+  // N-81 B8: pin/favorite toggle + remove a bookmark.
+  const pin = event.target.closest("[data-pin-chat]");
+  if (pin) { await pinChatOp(pin.dataset.pinChat, pin.dataset.pinned !== "1"); return; }
+  const unbm = event.target.closest("[data-unbookmark-chat]");
+  if (unbm) { await removeBookmarkOp(unbm.dataset.unbookmarkChat, unbm.dataset.unbookmarkMsg); return; }
+  // N-81 B5: summarize this chat → note + inline recap (+ optional cross-chat insert).
+  const summ = event.target.closest("[data-summarize-chat]");
+  if (summ) { await openSummarizePicker(summ.dataset.summarizeChat); return; }
+  // N-81 B4: set/adjust/clear a temporary-chat timer.
+  const ttl = event.target.closest("[data-ttl-chat]");
+  if (ttl) { await chatTtlOp(ttl.dataset.ttlChat); return; }
+  // N-81 B9c: tag/folder edit + facet-chip filters + multi-select + bulk actions.
+  const tagBtn = event.target.closest("[data-tag-chat]");
+  if (tagBtn) { await chatTagOp(tagBtn.dataset.tagChat); return; }
+  const folderBtn = event.target.closest("[data-folder-chat]");
+  if (folderBtn) { await chatFolderOp(folderBtn.dataset.folderChat); return; }
+  const tagFilter = event.target.closest("[data-tag-filter]");
+  if (tagFilter) { await setChatFilter("tag", tagFilter.dataset.tagFilter); return; }
+  const folderFilter = event.target.closest("[data-folder-filter]");
+  if (folderFilter) { await setChatFilter("folder", folderFilter.dataset.folderFilter); return; }
+  const sel = event.target.closest("[data-select-chat]");
+  if (sel) { toggleChatSelected(sel.dataset.selectChat); return; }
+  const bulk = event.target.closest("[data-bulk-op]");
+  if (bulk) { await chatBulkOp(bulk.dataset.bulkOp); return; }
+  const bulkClear = event.target.closest("[data-bulk-clear]");
+  if (bulkClear) { state.chats.selected = []; renderHistory(); return; }
   const chat = event.target.closest("[data-chat-id]");
   if (chat) loadChat(chat.dataset.chatId);
   else {
@@ -3059,6 +3744,236 @@ document.querySelector("#history-list")?.addEventListener("click", (event) => {
     if (row) loadHistoryItem(Number(row.dataset.index));
   }
 });
+
+// N-81 B9c: the sort/folder/tag <select>s live inside #history-list (re-rendered each
+// refresh), so delegate their change events off the list container.
+document.querySelector("#history-list")?.addEventListener("change", async (event) => {
+  const sortSel = event.target.closest("#chat-sort");
+  if (sortSel) { state.chats.sort = sortSel.value || "recency"; await refreshHistory(); return; }
+  const folderSel = event.target.closest("#chat-folder-filter");
+  if (folderSel) { await setChatFilter("folder", folderSel.value); return; }
+  const tagSel = event.target.closest("#chat-tag-filter");
+  if (tagSel) { await setChatFilter("tag", tagSel.value); return; }
+});
+
+// N-81 B9c: org operations (tag/folder edit, facet filter, multi-select, bulk).
+async function setChatFilter(kind, value) {
+  if (kind === "folder") state.chats.filterFolder = value || "";
+  else state.chats.filterTag = value || "";
+  await refreshHistory();
+}
+
+function toggleChatSelected(chatId) {
+  if (!chatId) return;
+  const i = state.chats.selected.indexOf(chatId);
+  if (i >= 0) state.chats.selected.splice(i, 1);
+  else state.chats.selected.push(chatId);
+  renderHistory();
+}
+
+async function chatTagOp(chatId) {
+  if (!chatId) return;
+  const item = (state.chats.items || []).find((c) => c.id === chatId);
+  const cur = (item?.tags || []).join(", ");
+  const next = window.prompt?.("Tags (comma-separated; blank clears):", cur);
+  if (next === null || next === undefined) return;
+  const tags = next.split(",").map((t) => t.trim()).filter(Boolean);
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/tags`, { tags });
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Could not set tags: ${error.message}`;
+    renderHistory();
+  }
+}
+
+async function chatFolderOp(chatId) {
+  if (!chatId) return;
+  const item = (state.chats.items || []).find((c) => c.id === chatId);
+  const next = window.prompt?.("Folder / collection (blank to unfile):", item?.folder || "");
+  if (next === null || next === undefined) return;
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/folder`, { folder: next.trim() });
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Could not move chat: ${error.message}`;
+    renderHistory();
+  }
+}
+
+async function chatBulkOp(op) {
+  const ids = state.chats.selected.slice();
+  if (!ids.length) return;
+  let value;
+  if (op === "tag") {
+    value = window.prompt?.("Tag to add to the selected chats:", "");
+    if (!value) return;
+  } else if (op === "folder") {
+    value = window.prompt?.("Folder for the selected chats (blank to unfile):", "");
+    if (value === null || value === undefined) return;
+  } else if (op === "trash") {
+    if (!window.confirm?.(`Move ${ids.length} chat(s) to the trash?`)) return;
+  }
+  try {
+    const res = await postBridge("/chats/bulk", { ids, op, value });
+    if (op === "trash" && ids.includes(state.chats.active)) clearVisibleChat();
+    state.chats.selected = res.failed || [];     // keep only what didn't apply
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Bulk ${op} failed: ${error.message}`;
+    renderHistory();
+  }
+}
+
+// N-81 B1: trash / purge / restore against the bridge, then refresh the list. Purge
+// posts to /purge, trash to /trash, restore to /restore.
+async function chatTrashOp(op, chatId) {
+  if (!chatId) return;
+  const path = op === "trash" ? "trash" : op === "purge" ? "purge" : "restore";
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/${path}`, {});
+    if (op !== "restore" && state.chats.active === chatId) clearVisibleChat();
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Could not ${op} chat: ${error.message}`;
+    renderHistory();
+  }
+}
+
+// ── N-81 B4: temporary chats (adjustable auto-expire timer) ──────────────────
+// A short human countdown for an ephemeral chat ("3m left" / "expiring…"); "" for
+// a permanent chat. The server is the authority — this is display only; the actual
+// retire-to-trash happens in ChatStore.sweep_expired on the next bridge refresh.
+function ttlRemaining(item) {
+  if (!item || !item.ephemeral || !item.expires_at) return "";
+  const ms = new Date(item.expires_at).getTime() - Date.now();
+  if (Number.isNaN(ms)) return "";
+  if (ms <= 0) return "expiring…";
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "<1m left";
+  if (mins < 60) return `${mins}m left`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h left`;
+  return `${Math.round(hrs / 24)}d left`;
+}
+
+// Set / adjust / clear a chat's temporary timer. Blank or 0 = make it permanent.
+async function chatTtlOp(chatId) {
+  if (!chatId) return;
+  const cur = (state.chats.items || []).find((c) => c.id === chatId);
+  const def = cur?.ttl_minutes ? String(cur.ttl_minutes) : "60";
+  const val = await promptInline(
+    "Temporary chat — minutes until it auto-trashes (blank or 0 = keep permanently):",
+    { value: def, kind: "number" });
+  if (val == null) return;                                   // cancelled
+  const minutes = String(val).trim() === "" ? 0 : Number(val);
+  try {
+    await postBridge(`/chats/${encodeURIComponent(chatId)}/ttl`, { minutes });
+    streamState.textContent = minutes > 0
+      ? `Temporary: auto-trashes in ${minutes} min`
+      : "Chat is now permanent";
+    await refreshHistory();
+  } catch (error) {
+    state.history.text = `Could not set timer: ${error.message}`;
+    renderHistory();
+  }
+}
+
+// ── N-81 B5: summarize → context ─────────────────────────────────────────────
+// Summarize a chat into a compact block. Sink = BOTH (a durable note auto-linked to
+// the source chat + an inline recap in the source chat); optionally also inserted at
+// a chosen anchor in another chat (#13 — a cross-chat message picker). The model turn
+// runs server-side without polluting the active chat.
+async function openSummarizePicker(chatId) {
+  if (!chatId) return;
+  document.querySelector(".summarize-picker")?.remove();          // never stack pickers
+  const meta = (state.chats.items || []).find((c) => c.id === chatId);
+  const title = meta?.title || chatId;
+  const others = (state.chats.items || []).filter((c) => c.id !== chatId && !c.archived);
+  const list = document.querySelector("#history-list");
+  const host = document.createElement("div");
+  host.className = "summarize-picker inline-prompt";
+  host.innerHTML = `
+    <label class="ip-label">Summarize “${escapeHtml(title)}”</label>
+    <input class="ip-input sp-guidance" type="text" placeholder="optional focus (e.g. decisions only)…" />
+    <div class="sp-actions">
+      <button type="button" class="op-btn" data-sp-go>Summarize → note + inline</button>
+    </div>
+    <div class="sp-into">
+      <small>…and insert into another chat:</small>
+      <div class="sp-chats">${
+        others.length
+          ? others.map((c) =>
+              `<button type="button" class="op-btn" data-sp-chat="${escapeAttr(c.id)}">${escapeHtml(c.title || c.id)}</button>`
+            ).join("")
+          : `<small>No other chats yet.</small>`
+      }</div>
+      <div class="sp-anchors" hidden></div>
+    </div>
+    <span class="ip-actions"><button type="button" class="op-btn ghost" data-sp-cancel>Cancel</button></span>`;
+  (list?.parentElement || document.body).insertBefore(host, list);
+  const guidanceEl = host.querySelector(".sp-guidance");
+  guidanceEl?.focus();
+  const close = () => host.remove();
+  const guidance = () => (guidanceEl?.value || "").trim();
+
+  // Stage 2: a chosen target chat → fetch its active path → pick an anchor message.
+  async function pickAnchor(tgtChat) {
+    const box = host.querySelector(".sp-anchors");
+    if (!box) return;
+    box.hidden = false;
+    box.innerHTML = `<small>Loading messages…</small>`;
+    try {
+      const data = await getBridge(`/chats/${encodeURIComponent(tgtChat)}`);
+      const msgs = (data.messages_list || []).filter((m) => m.id && (m.text || "").trim());
+      box.innerHTML = msgs.length
+        ? `<small>Insert after which message in “${escapeHtml(data.title || tgtChat)}”?</small>` +
+          msgs.map((m) => {
+            const who = m.role === "user" ? "you" : "lk";
+            const snip = escapeHtml(String(m.text).replace(/\s+/g, " ").slice(0, 60));
+            return `<button type="button" class="op-btn sp-anchor" data-sp-anchor="${escapeAttr(m.id)}" data-sp-target="${escapeAttr(tgtChat)}">[${m.seq}] ${who}: ${snip}</button>`;
+          }).join("")
+        : `<small>That chat has no messages to anchor to.</small>`;
+    } catch (error) {
+      box.innerHTML = `<small>Could not load messages: ${escapeHtml(error.message)}</small>`;
+    }
+  }
+
+  host.addEventListener("click", async (event) => {
+    if (event.target.closest("[data-sp-cancel]")) { close(); return; }
+    if (event.target.closest("[data-sp-go]")) { close(); await summarizeChat(chatId, null, guidance()); return; }
+    const chatBtn = event.target.closest("[data-sp-chat]");
+    if (chatBtn) { await pickAnchor(chatBtn.dataset.spChat); return; }
+    const anchor = event.target.closest("[data-sp-anchor]");
+    if (anchor) {
+      close();
+      await summarizeChat(chatId, { chatId: anchor.dataset.spTarget, msgId: anchor.dataset.spAnchor }, guidance());
+    }
+  });
+  host.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") { event.preventDefault(); close(); }
+  });
+}
+
+async function summarizeChat(chatId, target, guidance) {
+  if (!chatId) return;
+  streamState.textContent = "Summarizing…";
+  const payload = {};
+  if (target?.chatId && target?.msgId) payload.target = target;
+  if (guidance) payload.guidance = guidance;
+  try {
+    const res = await postBridge(`/chats/${encodeURIComponent(chatId)}/summarize`, payload);
+    const where = res.insertedAt
+      ? ` and inserted into ${linkLabel(res.insertedAt.messageId || res.insertedAt.chatId)}`
+      : "";
+    streamState.textContent = `Summarized → note + inline recap${where}.`;
+    await refreshHistory();
+    // If the source chat is on screen, reload it so the inline recap appears.
+    if (state.chats.active === chatId) await loadChatIntoFeed(chatId);
+  } catch (error) {
+    streamState.textContent = `Summarize failed: ${error.message}`;
+  }
+}
 
 function appWindow() {
   try {

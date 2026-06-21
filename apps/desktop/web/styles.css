@@ -81,10 +81,13 @@ button {
   display: none;
 }
 
+/* 0A (N-80): in a sidecar/panel window the main drag-zone div would float at
+   z-index 3 over the top 40px of the panel — directly on top of the panel-head's
+   ✕ and action buttons, so every click started a window-drag instead. The
+   panel-head is the drag surface in panel mode (data-tauri-drag-region="deep"),
+   so the floating strip must not exist here. */
 .panel-window .drag-zone {
-  left: 0;
-  right: 0;
-  height: 40px;
+  display: none;
 }
 
 .drag-zone {
@@ -763,6 +766,13 @@ svg {
   padding: 16px;
 }
 
+/* A1 (N-80): the config panel's header spans the grid so it has a real drag handle
+   + ✕ in the sidecar window (0A hid the floating drag-zone; #settings had no header). */
+.settings > .panel-head {
+  grid-column: 1 / -1;
+  height: 34px;
+}
+
 .settings label {
   min-width: 0;
   display: grid;
@@ -1177,6 +1187,84 @@ input[type="range"] {
   opacity: 0.72;
 }
 
+/* N-81 B1: chat rows carry action chips (Delete / Restore) on the right; trash rows
+   are dimmed; the "danger" chips (purge / empty) read as destructive. */
+.history-item.chat-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+}
+/* N-81 B9c: a leading select checkbox makes the chat row a 3-column grid. */
+.history-item.chat-row:has(.chat-select) {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+.history-item.chat-row.selected { background: rgba(224, 184, 96, 0.08); }
+.chat-select { accent-color: #e0b860; cursor: pointer; }
+/* N-81 B9c: per-chat folder/tag chips under the title + the org/bulk control bars. */
+.chat-org-chips { display: inline-flex; flex-wrap: wrap; gap: 4px; margin-top: 3px; }
+.chip.tag-chip, .chip.folder-chip {
+  font-size: 11px; padding: 1px 7px; opacity: 0.85;
+}
+.chat-org-controls {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+  padding: 4px 2px 8px; font-size: 12px; opacity: 0.85;
+}
+.org-ctl { display: inline-flex; gap: 4px; align-items: center; }
+.org-ctl select {
+  background: rgba(255, 255, 255, 0.04); color: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.14); border-radius: 6px; padding: 2px 6px;
+}
+.bulk-bar {
+  display: flex; flex-wrap: wrap; gap: 6px; align-items: center;
+  padding: 6px 8px; margin-bottom: 8px; border-radius: 8px;
+  background: rgba(224, 184, 96, 0.1); border: 1px solid rgba(224, 184, 96, 0.3);
+}
+.bulk-count { font-size: 12px; font-weight: 600; margin-right: 4px; }
+.history-item.trashed { opacity: 0.74; }
+/* N-81 B4: temporary (auto-expiring) chats — a subtle amber edge + lit ⏱ chip. */
+.history-item.chat-row.temporary { border-left: 2px solid rgba(224, 184, 96, 0.7); }
+.chip.ghost.active { color: #e9c878; border-color: rgba(224, 184, 96, 0.6); }
+.history-actions {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.chip.ghost.danger { color: #f0b4b4; border-color: rgba(190, 90, 90, 0.5); }
+.chip.ghost.danger:hover {
+  color: #ffd6d6;
+  border-color: rgba(220, 120, 120, 0.85);
+  background: rgba(120, 40, 40, 0.25);
+}
+
+/* N-81 B2: chat search bar + results */
+.history-search {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.history-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(21, 27, 24, 0.7);
+  color: #dfe7df;
+}
+.search-summary {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+.history-item.search-hit { border-style: dashed; }
+.history-item.search-hit small {
+  white-space: normal;
+  opacity: 0.85;
+}
+
 .history-item.active {
   color: #e2f3e4;
   border-color: rgba(90, 151, 100, 0.72);
@@ -1307,34 +1395,33 @@ input[type="range"] {
   transition: opacity 0.15s ease;
 }
 .message:hover .msg-ops { opacity: 1; }
+/* N-80 B2: msg-ops read as live controls, not disabled text (user: "options look
+   inactive"). Brighter label + clearer border + hover/active affordance. */
 .op-btn, .op-item {
   font: inherit;
   font-size: 11px;
-  color: var(--muted);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #cdd6cd;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(164, 188, 169, 0.28);
   border-radius: 6px;
-  padding: 2px 8px;
+  padding: 3px 9px;
   cursor: pointer;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
 }
-.op-btn:hover, .op-item:hover { color: var(--accent); border-color: var(--accent); }
-.op-menu { position: relative; display: inline-flex; }
-.op-dropdown {
-  position: absolute;
-  top: 100%;
-  left: 0;
-  z-index: 20;
-  margin-top: 4px;
+.op-btn:hover, .op-item:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(118, 208, 131, 0.12);
+}
+.op-btn:active, .op-item:active { background: rgba(118, 208, 131, 0.2); }
+/* N-80 #2: the ephemeral "Custom ▾" regenerate picker (above the composer, no residue). */
+.regen-picker .regen-ops {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: 4px;
-  background: rgba(20, 26, 23, 0.98);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 8px;
-  min-width: 130px;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+  flex: 0 0 100%;
 }
-.op-item { text-align: left; background: transparent; border: none; }
 .variant-nav {
   display: inline-flex;
   align-items: center;
@@ -1368,6 +1455,70 @@ input[type="range"] {
 .diff-line.hunk { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
 .diff-line.ctx { color: var(--muted); }
 
+/* N-81 B3: inline links panel under a message + the link target picker. */
+.msg-links {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.msg-links small { color: var(--muted); font-size: 11px; }
+.link-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  color: #cdd6cd;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+.link-row:hover { background: rgba(118, 208, 131, 0.12); border-color: var(--accent); }
+.link-row .link-dir { color: var(--accent); font-variant-numeric: tabular-nums; }
+.link-row .link-label { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link-row .link-kind { color: var(--muted); flex: 0 0 auto; }
+.link-picker .link-targets,
+.link-picker .link-manual {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+  flex: 0 0 100%;
+  align-items: center;
+}
+.link-picker .link-manual .ip-input { flex: 1 1 180px; }
+
+/* N-81 B5: summarize → context picker (two-stage: chat → anchor message). */
+.summarize-picker .sp-actions,
+.summarize-picker .sp-into,
+.summarize-picker .sp-chats,
+.summarize-picker .sp-anchors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0;
+  flex: 0 0 100%;
+  align-items: center;
+}
+.summarize-picker .sp-into small { flex: 0 0 100%; color: var(--muted); }
+.summarize-picker .sp-anchors {
+  flex-direction: column;
+  align-items: stretch;
+  max-height: 180px;
+  overflow-y: auto;
+}
+.summarize-picker .sp-anchor {
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.summarize-picker .sp-guidance { flex: 1 1 100%; }
+
 /* In-window fallback ONLY (static preview / when a separate window can't open):
    dock to the RIGHT side so the map flanks the chat instead of covering it.
    The real surface is the side sidecar window (open_panel "minimap"). */
@@ -1392,18 +1543,111 @@ input[type="range"] {
   padding: 12px;
   font-size: 12px;
 }
-.map-node {
-  padding: 4px 8px;
-  border-radius: 6px;
-  cursor: pointer;
-  color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* N-80 #1: branch map = node→edge GRAPH (CSS org-chart connectors), not indented
+   text. Parent→child edges are drawn with the classic pure-CSS tree borders; the
+   container scrolls when variants spread wider/taller than the sidecar. */
+.map-graph { --map-edge: rgba(164, 188, 169, 0.32); min-width: max-content; padding: 4px; }
+.map-graph ul {
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding-top: 16px;
+  list-style: none;
 }
-.map-node:hover { background: rgba(255, 255, 255, 0.06); }
-.map-node.active { color: var(--accent); border-left: 2px solid var(--accent); }
-.map-node em { color: var(--accent); font-style: normal; opacity: 0.8; }
+.map-graph > ul { padding-top: 0; }
+.map-graph li {
+  position: relative;
+  padding: 16px 8px 0;
+  list-style: none;
+}
+/* connector lines from each child up to the parent */
+.map-graph li::before,
+.map-graph li::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 50%;
+  width: 50%;
+  height: 16px;
+  border-top: 1px solid var(--map-edge);
+}
+.map-graph li::after {
+  right: auto;
+  left: 50%;
+  border-left: 1px solid var(--map-edge);
+}
+.map-graph li:only-child::before,
+.map-graph li:only-child::after { display: none; }
+.map-graph li:first-child::before,
+.map-graph li:last-child::after { border: 0; }
+.map-graph li:last-child::before { border-right: 1px solid var(--map-edge); }
+.map-graph ul ul::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  height: 16px;
+  border-left: 1px solid var(--map-edge);
+}
+.map-graph > ul > li::before,
+.map-graph > ul > li::after { display: none; }   /* root: no parent edge */
+
+.map-node {
+  position: relative;
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 96px;
+  max-width: 150px;
+  padding: 5px 7px;
+  border: 1px solid var(--map-edge);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  cursor: pointer;
+  text-align: left;
+  vertical-align: top;
+}
+.map-node:hover { border-color: var(--accent); }
+.map-node.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.map-node.role-you { background: rgba(118, 208, 131, 0.08); }
+.map-role { font-size: 9px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
+.map-summary {
+  font-size: 11px;
+  color: #dfe7df;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.map-variant { font-size: 9px; color: var(--accent); }
+/* hover detail tip — scrollable; stays open while the pointer is inside it */
+.map-tip {
+  display: none;
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 30;
+  margin-top: 4px;
+  width: 240px;
+  max-width: 78vw;
+  padding: 6px;
+  background: rgba(20, 26, 23, 0.99);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  cursor: auto;
+}
+.map-node:hover .map-tip { display: block; }
+.map-tip-detail {
+  display: block;
+  max-height: 160px;
+  overflow: auto;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #cdd6cd;
+  white-space: pre-wrap;
+  scrollbar-width: thin;
+}
 
 /* In-UI prompt (edit / informed regen / N / selection guidance) — replaces
    window.prompt, which is unreliable inside the Tauri webview. */

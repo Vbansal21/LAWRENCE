@@ -1534,6 +1534,478 @@ removed) · `--{precedes}--> [N-72 shared-space]`.
 
 ---
 
+## D-74 — N-81 B9c: organization — tags / folders / sort / bulk (2026-06-21) — N-81
+Catalog **#7 organization**: chat-level **tags**, **folders/collections**, selectable **sort**, and **bulk ops**
+over a multi-selection. Pure stdlib, ADD-only endpoints (I5), single writer (I1), graceful degrade (I4). Projects
+(#11) still LAST.
+- **Store** ([chats.py](../services/lk/ctx/chats.py)): tags are a normalised meta list (`set_tags`/`add_tag`/`remove_tag`,
+  case-insensitive de-dupe keeping first-seen casing; `all_tags()` = facet+counts). Folders are a flat label
+  (`set_folder`, blank ⇒ unfile; `all_folders()` facet). `list_chats(folder=, tag=, sort=)` filters (folder `"none"`
+  ⇒ the unfiled set; tag is case-insensitive) and `_sort(rows, sort=)` adds **recency|created|title|messages** keys —
+  **pinned always floats first** regardless of key. Tagging/foldering are org actions → they do **NOT** bump
+  `updated`. `bulk(ids, op, value=)` loops the existing single-chat ops (trash|restore|archive|unarchive|pin|unpin|
+  tag|untag|folder) → `{op, ok[], failed[]}`; unknown op raises `ValueError` (per-chat exceptions degrade to failed).
+- **Bridge** ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)): `chat_tags` (set/add/remove), `chat_folder`,
+  `chat_bulk` (validates op + non-empty ids → 400). `chats_index(params)` now threads `?folder=&tag=&sort=` and
+  emits `tags`/`folders` facet lists alongside `items`/`trash`. Routes: `POST /chats/bulk`, `POST /chats/{id}/tags`,
+  `POST /chats/{id}/folder`, `GET /chats/tags`, `GET /chats/folders`. ADD-only.
+- **CLI** ([ctl.py](../services/lk/ctl.py)): `lk chats tag/untag/tags`, `folder/folders`, `bulk <op> <id…> [--value v]`
+  (file-level like pin/trash — **same LK_MEM_DIR gotcha**; never run mutating ops against the real store).
+- **UI** (classic [app.js](../apps/desktop/web/variants/classic/app.js) + [styles.css](../apps/desktop/web/styles.css)):
+  org control bar (sort `<select>` + folder/tag filter dropdowns fed by facets), per-chat tag/folder chips (click →
+  filter), 🏷/🗀 row actions (prompt-driven edit), a leading select checkbox per row, and a bulk-action bar that
+  appears when ≥1 chat is selected (Pin/Unpin/Archive/Tag…/Folder…/Delete/Clear). Filters/sort re-fetch via the
+  index query params. Selection state survives refresh (prunes vanished ids); bulk keeps only the `failed` ids selected.
+- **Tests:** test_chats_dag §M (+24), test_chat_ops_bridge (+18: tags set/add/remove/400/404, folder set/clear/404,
+  index facets+folder/tag/sort filters, bulk ok/per-id/empty-400/badop-400/trash), stress_ui (+7 store↔bridge↔UI↔CLI
+  contract). **`scripts/check.sh` = CHECK: PASS** (47 suites; retrieval-engine flake did not recur), `node --check` OK.
+- **Live-verify (needs a WSLg rebuild):** sort dropdown reorders; folder/tag dropdowns + chip clicks filter; 🏷/🗀
+  prompts edit; checkboxes + bulk bar apply across selection; pinned still floats under every sort.
+- **Edges:** Projects (#11) will reuse folders as its collection substrate (load-bearing → #11). Tag/folder node-id
+  space is chat-level meta (no NoteStore-id collision risk, unlike B5's message ids).
+
+## D-73 — N-81 B9a/B9b: recall integration — promote → note + weighted relevance (2026-06-21) — N-81
+Catalog **#6 recall integration**: promote a message into durable memory, and make link/delete *re-weight* recall
+(the "link=+, delete=−" decision, [[lawrence-autonomous-spine-decision]]). Local-first, stdlib-only, no model.
+- **B9a — promote message → durable note.** Bridge `chat_promote(chat_id, request)` ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)) —
+  resolves the message id via `_link_node`, reads it (`get_by_id`), and `NoteStore.write_note("excerpt", …,
+  source="promote:<mid>", tags=[…,"promoted","chat-excerpt"])`. An optional `note` annotation is **prepended** to the
+  body. The back-edge is written `add_edge(note_id, mid, kind="link")` — **deliberately `link`, not `summary`** — so
+  the source message ALSO earns the +G weighted-relevance boost (the "link=+" half of #6: promoting a point is an
+  explicit signal it matters). NO model turn. Validation: 400 (no messageId) · 404 (unknown message) · 422 (empty).
+  The note auto-indexes into recall via the existing `_index_note` hook (db + MemoryIndex). Route: POST
+  `/chats/{id}/promote`. UI: a **Promote → note** message-op (`promoteMessage` → optional annotation prompt →
+  `/chats/{id}/promote`). CLI: `lk chats promote <chatId> <msgId> [note…]` — bridge when the kernel is up (single-writer
+  I1), else file-level via a direct `NoteStore`.
+- **B9b — weighted relevance, the delete=−P half (the gap).** The S_ret machinery already existed in
+  [retrieval/memory.py](../services/lk/retrieval/memory.py) (`mark_deleted`/`clear_deleted` = −P; `_linked_nodes` reading `kind="link"` edges = +G via
+  `LINK_BOOST`), but `mark_deleted`/`clear_deleted` were **never called outside a test** — trashing/deleting a chat did
+  NOT remove it from recall. The +G half was already live (B3 `create_link` defaults `kind="link"` → `_linked_nodes`
+  picks it up). New bridge helper `_recall_suppress(chat_id, *, deleted)` toggles the penalty for the chat node + every
+  message id (collected **before** a hard delete, since the messages then vanish; I4 best-effort — no-op if the memory
+  lacks `mark_deleted`). Wired into `chat_trash`/`chat_purge`/`chat_delete`/`chat_empty_trash` (deleted=True) and
+  `chat_restore` (deleted=False, reversibly lifts it). A suppressed node is **excluded** from `recall()` (not merely
+  down-weighted), so a trashed chat stops surfacing until restored.
+- **Tests.** `test_chat_ops_bridge.py` +14 (chat_promote ok/kind/body/tags/back-edge-is-link/+G-set/annotation/400/404/422;
+  delete-penalty trash→suppress, restore→clear, purge-before-vanish, hard-delete, I4 degrade — via a `_MemRec`
+  recording fake). `stress_ui.py` +4 (promote store↔bridge↔UI↔CLI contract; `_recall_suppress` mark/clear + ≥4 call
+  sites). `node --check` clean; `scripts/check.sh = CHECK: PASS` (retrieval-engine flake did not recur this run).
+- **Gotcha.** The promote back-edge uses `kind="link"` ON PURPOSE so it counts in `_linked_nodes`; a `kind="promote"`
+  would have been invisible to the boost. Delete-penalty ids must be collected **before** purge/hard-delete.
+- **Live-verify (needs ONE WSLg rebuild).** Promote → note op shows the annotation prompt + success metric;
+  trashed chats drop out of recall and reappear on restore.
+**Edges.** `[D-73] --{implements}--> [N-81 #6 recall integration]` · `--{realises}--> [autonomous-spine link=+/delete=−]` ·
+`--{reuses}--> [N-02 MemoryIndex S_ret]` · `--{builds-on}--> [WS-U NoteStore edges]` · `--{precedes}--> [B9c organization #7]`.
+
+---
+
+## D-72 — N-81 B7/B8: semantic search + pins/bookmarks (2026-06-21) — N-81
+**B7 — semantic search** (catalog #2 "semantic", build-order "reuse retrieval FTS") + **B8 — pins/bookmarks** (catalog
+#1 pin/favorite + #2 bookmarks/pins + #5 pinned-snippets). Local-first, stdlib-only, no embed model needed for MVP.
+- **B7 store ([chats.py](../services/lk/ctx/chats.py)).** `semantic_search(query, *, chat_id, include_archived, include_trashed, limit)` —
+  gathers the scoped messages (full event log, so non-active variants match too), builds an **ephemeral `:memory:`
+  FTS5** table (`tokenize='porter unicode61'`), BM25-ranks, maps rows back to message metadata + `_hit_snippet`, and
+  returns `score`-ranked hits (`ranked:true`). Porter stemming makes it tolerant of word-order/morphology — distinct
+  from B2's exact substring/regex (`search`). **No second persistent writer** (per-query in-memory build → I1 intact,
+  no index staleness; chat corpora are small). **Graceful degrade (I4):** `sqlite3.OperationalError` (no FTS5) →
+  falls back to lexical `search()` tagged `ranked:false`. `_fts_query` mirrors `retrieval.db._fts_query`. Embedding/
+  `MemoryIndex` vector recall is a **documented seam** (embed role gated/local-first), not wired for MVP.
+- **B8 store.** **Chat pin/favorite:** `pin_chat(chat_id, pinned=True)` sets/clears a `pinned` meta flag; `_sort`
+  now keys on `(pinned, updated)` desc so pinned chats float to the top of every listing; pinning does NOT bump
+  `updated` (org action, not edit). **Message bookmarks:** atomic `bookmarks.json` registry (`_read/_write_bookmarks`
+  temp+replace); `add_bookmark(chat_id, msg_id, note='')` (idempotent per (chatId,messageId) — re-bookmark updates the
+  note; returns None for a missing message so nothing dangles; stores a `preview` + optional `note` = a pinned
+  snippet), `remove_bookmark`, `list_bookmarks(chat_id=None)`. Hard-delete/purge inline-cleans a chat's bookmarks
+  (within the held lock via the non-locking helpers — `_lock` is non-reentrant).
+- **Bridge ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)).** `chat_semantic_search` (GET `/semantic?q&scope`) · `chat_pin` (POST `/chats/{id}/pin`
+  `{pinned}`) · `chat_bookmarks` (GET `/chats/bookmarks?chat=`) · `chat_add_bookmark` (POST `/chats/bookmarks`) ·
+  `chat_remove_bookmark` (POST `/chats/bookmarks/remove`). Route guards: GET `/chats/bookmarks` before generic
+  `chat_get`; POST `/chats/bookmarks[/remove]` before generic `/chats/`. ADD-only (I5).
+- **UI ([app.js](../apps/desktop/web/variants/classic/app.js)/[panel.html](../apps/desktop/web/panel.html)).** **Semantic** search toggle (mutually exclusive with regex; hits `/semantic`,
+  shows the score); per-chat-row **★ pin star** (re-sorts to top); per-message **★ Bookmark** op; a **Bookmarks** view
+  toggle in the history toolbar (lists bookmarks, jump-to / ✕-remove). All writes flow through the bridge transport.
+- **CLI ([ctl.py](../services/lk/ctl.py)).** NEW `lk chats search <q> [--semantic] [--regex] [--chat <id>]` (also **closes the B2 CLI
+  parity gap** — there was no search subcommand) · `pin <id> [--off]` · `bookmark <chatId> <msgId> [note…]` ·
+  `unbookmark <chatId> <msgId>` · `bookmarks [chatId]`. search/bookmarks-list are read-only (safe even with kernel up);
+  pin/bookmark are file-level (matching trash/rename precedent).
+- **Tests.** chats_dag §L (+20: ranked hits, score, porter-vs-substring, scope, pin float/flag/no-updated-bump,
+  bookmark idempotency/note/missing/scope/remove/dangling-cleanup); bridge (+13: semantic ok/rank/scope/empty, pin
+  on/off/404, bookmark add/list/scope/400/404/remove); stress_ui (+6 contract). `scripts/check.sh = CHECK: PASS`
+  (one retrieval-quality flake on first run — stochastic fusion sampling, unrelated; green on re-run), `make lint`, `node --check` clean.
+- **⚠ Gotcha.** Same `LK_MEM_DIR`-ignored hazard as D-71 — pin/bookmark MUTATE, so never run them against the real
+  store in smoke tests; search/bookmarks-list are read-only and safe.
+- **LIVE-VERIFY (needs WSLg rebuild):** semantic toggle ranks results; ★ pins a chat to the top; ★ Bookmark + Bookmarks
+  view jump/remove a message.
+
+**Edges.** `[D-72] --{executes}--> [N-81 §Q.13 #1 pin · #2 semantic+bookmarks · #5 pinned-snippets]` ·
+`--{reuses}--> [N-02 retrieval FTS5/BM25 pattern]` (semantic) · `--{builds-on}--> [N-75 DAG]` (message ids as bookmark
+targets) · `--{extends}--> [D-67 B2 search]` (semantic = ranked sibling of lexical) · `--{gated-by}--> [I1, I4, I5]`.
+
+---
+
+## D-71 — N-81 B6: full backup / restore + merge-conflict resolution (2026-06-21) — N-81
+**B6 — persistence/backup** (user catalog #4: backup-all + import + restore w/ merge-conflict resolution). A complete,
+**lossless** snapshot that round-trips, distinct from the lossy active-path MDX export.
+- **Store ([chats.py](../services/lk/ctx/chats.py)).** `backup_all()` → `{version, kind:"lawrence-chat-backup", exported, active, count,
+  chats:[{meta, messages (full event log), head}]}`. `restore_bundle(bundle, on_conflict=skip|rename|merge)`:
+  a **new** chat id is imported **verbatim** (ids/parents/head preserved, via `_install_chat` atomic temp+replace);
+  on a colliding id — **skip** (keep existing), **rename** (`_remap_ids` re-ids the incoming copy, conflict-free),
+  or **merge** (`_merge_into`: union the logs — identical-by-id+text deduped; new-by-content appended with parents/
+  edit_of remapped as **browsable sibling variants** with `set_head=False` so the active path is untouched;
+  same-id/different-text = a **conflict**, BOTH kept). Returns `{imported, skipped, renamed, merged:[{id,added,conflicts}]}`.
+- **Merge bug fixed.** Conflict/dedup detection runs against an **immutable snapshot of the original** messages —
+  a freshly-merged node reuses the `<chatId>:<seq>` id space, so checking a live map let an incoming id spuriously
+  collide with a just-merged node (over-counted conflicts).
+- **Bridge ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)).** `chat_backup` (GET `/chats/backup`) + `chat_restore_bundle` (POST `/chats/restore`,
+  accepts `{bundle, onConflict}` or a bare bundle; lands the UI on a valid active chat after a bulk import). ADD-only (I5).
+- **UI ([app.js](../apps/desktop/web/variants/classic/app.js)/[panel.html](../apps/desktop/web/panel.html)).** **Backup all** downloads a JSON bundle; **Restore…** = file picker → confirm (merge) /
+  cancel (rename). Results surfaced in the below-input status line.
+- **CLI ([ctl.py](../services/lk/ctl.py)).** `lk chats backup [path]` (read-only, file-level even with the kernel up) + `lk chats import
+  <path> [--skip|--rename|--merge]` (a WRITE → through the bridge when the kernel is up for single-writer I1, else file-level).
+- **Tests.** chats_dag §K (+25: backup shape, verbatim import, skip no-dup, rename re-id+internal-consistency, merge
+  dedup/conflict/non-destructive, guards); bridge (+13: backup/restore/skip/rename/merge/bare-bundle/404s); stress_ui
+  (+4 contract). All gates green (`scripts/check.sh = CHECK: PASS`, `make lint`, `node --check`).
+- **⚠ Gotcha (recorded).** `ChatStore` ignores `LK_MEM_DIR` (hardcoded `REPO_ROOT/memory`) — smoke-test the store with
+  `ChatStore(mem_dir=tmp)`; never run mutating `lk chats …` against the real store (it edits live data).
+- **LIVE-VERIFY (needs WSLg rebuild):** Backup all downloads a file; Restore… imports it; merge vs rename confirm dialog.
+
+**Edges.** `[D-71] --{executes}--> [N-81 §Q.13 #4]` · `--{builds-on}--> [N-75 DAG]` (append-only log + head + variants) ·
+`--{reuses}--> [D-69/D-70 store+bridge+CLI+UI seams]` · `--{gated-by}--> [I1 single-writer, I5 ADD-not-rename]`.
+
+---
+
+## D-70 — N-81 B5: summarize → context (note + inline recap + cross-chat anchor) (2026-06-21) — N-81
+**B5 — summarize→context** (user catalog #12/#13; **first MODEL-touching chat-mgmt batch**). Summarize a chat into a
+compact block and route it; sink = **BOTH** (durable note + inline recap) plus an optional cross-chat anchored insert.
+- **Model seam — no-persist turn ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)).** `summarize_chat` builds a turn over the chat's
+  active-path text (`_build_summary_turn`: `_SUMMARY_PROMPT`, retrieval forced off, optional `guidance`) tagged
+  `_noPersist`. `turn()` now honors `_noPersist` → captures the answer but writes **nothing** to the transcript; the
+  active-chat pointer is saved and **restored** in a `finally`, so summarizing chat A while viewing chat B never flips
+  the active chat or leaks a phantom turn. (Sync core — mirrors `regenerate()`; async deferred.)
+- **#12 BOTH sinks.** (a) `notes.write_note('summary', …)` → a durable NoteStore note, `add_edge(note, chat, kind='summary')`
+  auto-linking it back to the source chat (B3 edge); (b) an inline `kind='summary'` message appended to the source chat,
+  plus a note↔inline-message edge and a best-effort recall upsert.
+- **#13 cross-chat anchored insert ([ctx/chats.py](../services/lk/ctx/chats.py)).** New `insert_after(chat, anchor, …)`: anchor is a leaf →
+  the block extends that path inline; anchor is mid-path → it is recorded as a **non-destructive sibling branch**
+  (browsable via the variant switcher) so the existing conversation is never disrupted. Backed by a new
+  `append_message(set_head=…)` guard (don't repoint head when False). Append-only / DAG-faithful (I1).
+- **Route.** `POST /chats/{id}/summarize {guidance?, target?:{chatId,msgId}}` (ADD-only, I5).
+- **UI ([app.js](../apps/desktop/web/variants/classic/app.js) + [styles.css](../apps/desktop/web/styles.css)).** Per-chat **Summarize** chip (`data-summarize-chat`) →
+  `openSummarizePicker`: a two-stage ephemeral panel (optional focus input + "Summarize → note + inline", then "insert
+  into another chat" → that chat's messages as anchor buttons). `summarizeChat` POSTs, reports the sink + insertion
+  point, reloads the source chat if on screen.
+- **CLI parity ([ctl.py](../services/lk/ctl.py)).** `lk chats summarize <id> [--into <chatId> <msgId>] [guidance…]` (+ a new `_post_json`
+  helper) — POSTs to the running bridge since summarization needs the model; degrades with a clear message if the
+  bridge is down.
+- **LOCAL-FIRST.** Runs through the same kernel turn path as any chat (local model); no cloud default.
+- **Latent cross-subsystem note.** NoteStore + ChatStore both mint ids from `%Y%m%d-%H%M%S` → a note created the same
+  second as a chat can collide, making the bare note↔chat edge a self-loop (rejected). B5 always also links the note to
+  the inline summary message (`chatId:seq`, collision-free), so chat connectivity holds; the bare-id space deserves a
+  real fix later (tracked in PLAN §Q.13 item #5).
+- **Gates (offline, green).** [test_chats_dag.py](../services/lk/tests/test_chats_dag.py) §J +12 (insert_after leaf-inline vs mid-path branch,
+  parent/tree/meta, set_head guard), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) +17 (no-persist contract, retrieval-off + guidance
+  shaping, #12a note+edge, #12b inline, #13 anchored insert, active-chat-not-flipped, no-LEAK, 404/400 guards),
+  [stress_ui.py](../services/lk/tests/stress_ui.py) +8 (store/bridge/UI/CLI + CSS), **full `scripts/check.sh` = CHECK: PASS**, `node --check`, `make lint`.
+**Status.** `[~]` — store/bridge/CLI exercised real with a fake turn (the only un-exercised path is the live model
+producing the summary text). **LIVE-VERIFY pending** (rebuild): Summarize chip → note appears + inline recap in the
+source + (with a target) a block at the chosen anchor in another chat; active chat unchanged; `lk chats summarize`.
+**Edges.** `[D-70] --{executes}--> [N-81 §Q.13 B5 (#12/#13)]` · `--{builds-on}--> [N-75 DAG]` (insert_after/head) ·
+`--{reuses}--> [B3 NoteStore edges]` (auto-link) · `--{reuses}--> [the kernel turn path]` (no-persist) ·
+`--{honors}--> [I1 single-writer / I5 add-only / LOCAL-FIRST / GUI==CLI]` · `--{continues-as}--> [N-81 backup+merge]`.
+
+---
+
+## D-69 — N-81 B4: temporary chats (adjustable auto-expire timer) (2026-06-21) — N-81
+**B4 — temporary chats** (user catalog #7: "temporary chats with adjustable timer"). A chat can carry a TTL; when
+it elapses it is **moved to the trash** (reversible — the existing B1 trash lifecycle then governs final purge), so a
+temp chat never silently destroys data.
+- **Store ([ctx/chats.py](../services/lk/ctx/chats.py)).** Additive, back-compatible meta fields `ephemeral` / `ttl_minutes` /
+  `expires_at` (absent ⇒ a normal permanent chat). `create_chat(title, *, ttl_minutes=None)` (>0 ⇒ ephemeral with a
+  future `expires_at`); `set_ttl(chat_id, minutes)` — `>0` (re-)arms the timer **from now** (the "adjustable" part),
+  `None`/`<=0` clears it back to permanent; `sweep_expired()` — lazy, lock-guarded; trashes every past-due ephemeral
+  chat (sets `trashed`/`trashed_at`, clears the active pointer if it expired), writes the registry only when something
+  expired, returns the swept ids. Wired into `ensure_default()` so expiry is retired on access (no background thread —
+  stdlib core + graceful degrade, I4). `timedelta` added to imports.
+- **Bridge ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)).** `chat_create` accepts `ttlMinutes`/`ttl_minutes`; new `chat_set_ttl` +
+  route `POST /chats/{id}/ttl {minutes}`; `chats_index` calls `sweep_expired()` first so every UI refresh retires
+  expired temp chats into the trash payload it already returns.
+- **UI ([app.js](../apps/desktop/web/variants/classic/app.js) + [styles.css](../apps/desktop/web/styles.css)).** Per-chat **⏱** control (`data-ttl-chat` → `chatTtlOp` →
+  `promptInline` minutes → `POST /chats/{id}/ttl`; blank/0 = permanent) in each history row; `ttlRemaining(item)`
+  shows a live "Nm left / expiring…" countdown badge in the title; temporary rows get an amber left-edge + a lit ⏱
+  chip. (Make any chat temporary, including a fresh one — covers create+adjust+clear.)
+- **CLI parity ([ctl.py](../services/lk/ctl.py)) — GUI==CLI invariant.** `lk chats new [--ttl <min>] [title…]`, `lk chats ttl <id>
+  <min|off>`, `lk chats sweep`; plus **B1 parity** (previously GUI-only): `lk chats trash <id>` / `restore <id>` /
+  `purge <id|--all>`. Usage strings + docstring updated.
+- **Gates (offline, green).** [test_chats_dag.py](../services/lk/tests/test_chats_dag.py) §I +14 (ttl create/set/clear, sweep leaves live alone,
+  back-dated expiry → trash → restorable, active-pointer clear, unknown→None), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) +7
+  (chat_create ttl, set_ttl arm/clear/404, chats_index sweep→trash), [stress_ui.py](../services/lk/tests/stress_ui.py) +5 (store/bridge/UI/CLI),
+  **full `scripts/check.sh` = CHECK: PASS**, `node --check`, py syntax.
+**Status.** `[~]` — store/bridge/CLI exercised real (no rebuild needed). **LIVE-VERIFY pending** (rebuild): ⏱ sets a
+timer + countdown badge shows; an expired chat appears in the trash on the next refresh; CLI `lk chats ttl/sweep`.
+**Refinement deferred:** a *sliding* (activity-reset) window — currently expiry is a fixed point, user-adjustable.
+**Edges.** `[D-69] --{executes}--> [N-81 §Q.13 B4]` · `--{reuses}--> [B1 trash lifecycle]` (expiry → trash → purge) ·
+`--{honors}--> [I4 stdlib-core/graceful-degrade]` (lazy sweep, no thread) · `--{honors}--> [GUI==CLI parity]` ·
+`--{continues-as}--> [N-81 B5 summarize→context]`.
+
+---
+
+## D-68 — N-81 B3: link-at-message + backlinks (2026-06-21) — N-81
+**B3 — per-message cross-references in the kernel note graph.** User's first batch included "Link + delete/trash
++ restore" and "Link at response level"; this adds linking + backlinks **at the message level** (query OR response).
+- **Store (reused, no change).** Links live as **NoteStore edges** ([ctx/notes.py](../services/lk/ctx/notes.py)) — `add_edge`
+  (bidirectional, idempotent, self-loops/empties rejected), `edges_for` (annotates each edge `dir=out|in` + `peer`),
+  `neighborhood` (out/in peers + edges, plus note `links`/`backlinks` when the node is itself a note). A message node
+  is the id `"<chatId>:<seq>"`; a note node is the note id — so messages and notes link uniformly.
+- **Bridge (reused, no change).** `create_link({src,dst,kind})` + `_link_node` (normalises a `{chatId,msgId|seq}`
+  message / `{noteId}` note / raw id → a graph node) via `POST /links`; `links_for(chatId,msgId)` via
+  `GET /links/{chatId}/{msgId}` returns the neighborhood. B3 wired the **UI** to the endpoints that already existed.
+- **UI ([app.js](../apps/desktop/web/variants/classic/app.js) + [styles.css](../apps/desktop/web/styles.css)).** Per-message **Link…** (`data-chat-op="link"`) opens an ephemeral
+  `openLinkPicker` (pick another chat from the history list, or type a note id / `chatId:seq`) → `createMessageLink`
+  → `POST /links`. **Links** toggle (`data-chat-op="links-toggle"`) lazily fetches `GET /links/…` (`toggleLinks` →
+  `refreshMessageLinks`) and renders an inline panel (`renderLinks`): outgoing `→` / incoming `←` peers + note
+  backlinks, each a clickable `data-link-peer` row → `openLinkPeer` (message → open chat + scroll; whole-chat → open
+  chat; note → status). `linkLabel` prettifies node ids to chat-title·#seq; `linkCount` shows the count once loaded.
+  Per-message controls are JS-rendered by `render()` (shared by index.html + panel.html) → **no static HTML change**.
+  Pickers never stack (`openRegenPicker`/`openLinkPicker` clear `.regen-picker, .link-picker`).
+- **Gates (offline, green).** [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) +9 (create_link normalise/idempotent/self-loop/missing-dst,
+  message↔chat + message↔note edges, `links_for` out/in directions + reverse backlink; fake gained a real
+  `NoteStore` + bound `_link_node`), [stress_ui.py](../services/lk/tests/stress_ui.py) +5 (store/bridge/UI/transport/panel), **full
+  `scripts/check.sh` = CHECK: PASS**, `node --check`.
+**Status.** `[~]` — **LIVE-VERIFY pending** (rebuild): Link… picker links a message to a chat/note; Links toggle
+shows out/in/backlink rows; clicking a peer navigates. Backend exercised real (no rebuild needed for the store/bridge).
+**Edges.** `[D-68] --{executes}--> [N-81 §Q.13 B3]` · `--{reuses}--> [WS-U NoteStore edges]` ·
+`--{builds-on}--> [N-75 DAG message ids]` · `--{continues-as}--> [N-81 B4 temporary chats]`.
+
+---
+
+## D-67 — N-81 B2: chat search (in-chat + global, scope-restrictable) + CI determinism fix (2026-06-21) — N-81 / CI
+**B2 — search across chats.** User picked search as a first batch; "general working, not limited to one scope,
+but scope restrictable at use time."
+- **Store ([ctx/chats.py](../services/lk/ctx/chats.py)).** `search(query, *, regex=False, chat_id=None, include_archived=True,
+  include_trashed=False, limit=200)` over the **whole append-only log** (finds matches in non-active variants too);
+  case-insensitive substring or **regex** (bad regex → `[]`, never raises); `chat_id` = the use-time scope
+  restriction; trashed excluded by default; hits carry chatId/title/messageId/role/ts + a `_hit_snippet` context window.
+- **Bridge ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)).** `chat_search(params)` + `GET /search?q=&scope=&regex=` (scope = `all` |
+  `current` | a chatId); `parse_qs` added to imports.
+- **UI ([app.js](../apps/desktop/web/variants/classic/app.js) + [panel.html](../apps/desktop/web/panel.html) + [styles.css](../apps/desktop/web/styles.css)).** History-panel search bar (debounced input, **All chats / This
+  chat** scope toggle, **regex** toggle, Clear); results take over the history list with a summary + per-hit
+  snippet; clicking a hit `openSearchHit` → loads that chat + scrolls to the message if on the active path.
+  (One UI delivers both "find in current chat" and "across all chats" via the scope toggle; semantic + bookmarks
+  remain later batches.)
+
+**CI determinism fix (user: "previous CI 2 failed, 1 passed").** Root cause of the 2 failing **offline-gate**
+cells (diagram-lint was the "1 passed"): `.gitignore` `memory/chats/*.*` uses a `*.*` glob that **misses the
+extensionless `memory/chats/active`**, so that runtime pointer was **tracked** while its `index.json` + chat dirs
+were ignored → a fresh CI checkout had a stale `active` with no backing state. Fix: ignore `memory/chats/active`
+(+ `memory/**/active`) explicitly and `git rm --cached` it (file kept on disk). A fresh checkout now starts with a
+clean `memory/chats/`; `active_chat()` already returns None on a missing pointer → `ensure_default` makes a scratch.
+
+**Gates (offline, green).** [test_chats_dag.py](../services/lk/tests/test_chats_dag.py) +11 (search text/regex/scope/case/trash-exclusion),
+[test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) +5 (scope all/current/byId, regex, empty), [stress_ui.py](../services/lk/tests/stress_ui.py) +4 (store/bridge/UI),
+**full `scripts/check.sh` = CHECK: PASS** (mirrors CI offline-gate), `node --check`. Local py3.12 only (3.11 cell
+not reproducible here; no 3.12-only syntax used).
+**Status.** `[~]` — **LIVE-VERIFY pending** (rebuild): search bar finds across/within chats; scope + regex toggles
+work; clicking a hit opens the chat. **CI:** committing this work (incl. the .gitignore fix) should turn the
+offline-gate green; if a cell still fails, the Actions log will pinpoint it.
+**Edges.** `[D-67] --{executes}--> [N-81 §Q.13 B2]` · `--{fixes}--> [CI offline-gate determinism]` ·
+`--{reuses}--> [ChatStore log]` · `--{continues-as}--> [N-81 B3 link-at-message]` · later: semantic search (reuse
+[retrieval/db.py](../services/lk/retrieval/db.py) FTS) + bookmarks.
+
+---
+
+## D-66 — N-81 B1: chat trash bin (soft-delete → restore → purge) (2026-06-21) — N-81
+**Context.** First batch of N-81 (Chat Management, PLAN §Q.13). User: "Trash bin + delete chats" + "even the
+entire chat should be restore-able." Previously "delete" was conflated with "archive" (`delete_chat(hard=False)`
+just set `archived`); there was no reversible trash with a purge step.
+**Store ([ctx/chats.py](../services/lk/ctx/chats.py)).** New **distinct `trashed` state** (+ `trashed_at`), separate from `archived`:
+`trash_chat` (soft-delete, clears active pointer), `purge_chat` (permanent hard-delete), `purge_trashed
+(older_than_days?)` (empty bin / auto-purge timer hook), `list_trash`; `restore_chat` now clears **both**
+archived + trashed; `list_chats(include_archived, include_trashed)` excludes trashed by default; `ensure_default`
+skips trashed.
+**Bridge ([ui_bridge.py](../apps/desktop/scripts/ui_bridge.py)).** `chat_trash` / `chat_purge` / `chat_empty_trash` (ADD-only, I5); `chats_index` now
+returns a separate `"trash"` list; routes `POST /chats/{id}/trash`, `/purge`, and `/chats/trash/empty`.
+**UI ([app.js](../apps/desktop/web/variants/classic/app.js) + [panel.html](../apps/desktop/web/panel.html) + [styles.css](../apps/desktop/web/styles.css)).** History panel: per-chat **Delete** (→trash), a **Trash** toggle
+view listing trashed chats with **Restore** + **Delete forever** (confirmed), and **Empty trash** (confirmed);
+`chatTrashOp()` drives trash/restore/purge; `refreshHistory` reads `chats.trash`; danger-styled chips.
+**Gates (offline, green).** [test_chats_dag.py](../services/lk/tests/test_chats_dag.py) +15 (trash distinct from archive, restore clears both, purge
+removes dir, empty-bin), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) +6 (bridge methods + index split + 404), [stress_ui.py](../services/lk/tests/stress_ui.py) +4
+(store/bridge/UI wiring), `node --check`, py parse.
+**Status.** `[~]` — **LIVE-VERIFY pending** (next rebuild): Delete moves a chat to Trash; Trash view shows it;
+Restore brings it back; Delete-forever / Empty-trash purge; active chat reassigns when its chat is trashed.
+**Edges.** `[D-66] --{executes}--> [N-81 §Q.13 B1]` · `--{extends}--> [ChatStore archive/restore]` ·
+`--{continues-as}--> [N-81 B2 search]` (in-chat + global) `--{then}--> [B3 link-at-message]`.
+
+---
+
+## D-65 — N-80 feedback-1: live-rebuild regressions + sensor/ops fixes (2026-06-21) — N-80 / N-67 / N-10
+**Context.** First real WSLg rebuild of the N-80 work. User testing surfaced a regression I introduced plus two
+real bugs and several refinement asks (screenshots).
+
+**A1 — config window had NO drag handle (regression from 0A).** 0A hid the floating `.drag-zone` in panel mode
+(it was covering panel-head buttons), but `#settings` is the one panel with **no `.panel-head`**, so the config
+sidecar lost its only drag surface ("hidden in a magic spot top-left"). **Fix:** added a real `.panel-head`
+(title "Config" + ✕) to `#settings` in [index.html](../apps/desktop/web/index.html) + [panel.html](../apps/desktop/web/panel.html); CSS `.settings > .panel-head { grid-column: 1/-1 }`
+so it spans the grid; wired `#settings-head-close` → `closeSettingsTray(true)`. (`#advanced-panel` already had one.)
+
+**B1 — the 3rd sensor thumb showed retrieval text as "Audio transcript".** The transcript thumb sourced
+`pipeline.transcript || state.metrics.transcript`, which carry the turn/retrieval status line
+(`[retrieval] UI-forced single-pass: N sources…`). **Fix ([app.js](../apps/desktop/web/variants/classic/app.js)):** `audioTranscriptText` now rejects any
+bracketed status + retrieval/ui-forced/single-pass chatter; the thumb prefers genuine `state.voiceTranscript`
+(each candidate filtered). Sensor thumbnails also got a useful **hover tip** (`title = "<sensor> — <latest
+context>"`) — partial #7.
+
+**B2 — chat-ops "inactive / can't do them" (a real bug + a perception fix).** Real bug: `streamAssistant`'s
+fast path updated the finished message's body/meta via direct DOM surgery but **never called `render()`**, so a
+just-completed assistant message had **no msg-ops buttons** (Regenerate/Custom/Edit/Branch) until some later
+render — exactly "the chat ops don't work." **Fix:** `streamAssistant` now does one full `render()` at turn-end.
+Perception: `.op-btn` was `color: var(--muted)` (read as disabled) → brighter label + clearer border + hover/active.
+
+**C1 — branch map flashes on the right at startup then dismisses.** Diagnosed as NOT a main-window code bug:
+[index.html](../apps/desktop/web/index.html) has **zero** `minimap-panel` refs (0C removed it) and no startup code opens a panel. It is a
+**leftover `panel-minimap` sidecar window from the pre-rebuild process** being torn down — cleared by
+`lk reset` / `lk restart --force` (kills tracked+untracked popups). No code change; operational.
+
+**Gates (offline, green).** [stress_ui.py](../services/lk/tests/stress_ui.py) +5 feedback checks (config header in both files; transcript rejects
+retrieval; sensor hover tips; turn-end render of ops; op-btn active styling), `node --check`. Full suite ALL-PASS.
+**Status.** `[~]` — **LIVE-VERIFY pending** (next rebuild): config window drags + closes; transcript thumb no
+longer shows retrieval; msg-ops appear immediately after a turn and respond; `lk reset` clears the startup flash.
+**Still open (folded into PLAN §Q.12 step-5/6, NOT yet built):** link/load/restore at the **message** level (#8);
+**distinct** web-call vs retrieval vs transcription sensors (#7); option-drawer "blocky/blocking" redesign (N-10);
+config/sampling window polish ("outdated/difficult to adjust"). "14 options inactive for this backend" meta is the
+honest WS-K capability marker (local backend lacks those decoding knobs) — wording to be softened in step-5.
+**Edges.** `[D-65] --{fixes-regression-of}--> [D-61 0A]` · `--{fixes-live}--> [N-75]` · `--{operationalizes}-->
+[N-67]` · `--{advances}--> [N-10]` · `--{feeds}--> [N-80 step-5]` (link-at-message + distinct sensors + drawer).
+
+---
+
+## D-64 — N-80 step-4: branch map → node/edge GRAPH with scrollable hover detail (2026-06-21) — N-80 / N-75 / N-10
+**Problem (user, with screenshot).** The branch map rendered as an **indented text tree** (`map-node` boxes with
+`margin-left: depth*14px`) — "must NOT be literal messages with indented subsequent messages; it MUST be a
+graph-node-edge"; nodes should show a summary by default and a longer **scrollable** detail on hover.
+**Fix.** `renderMinimap` ([app.js](../apps/desktop/web/variants/classic/app.js)) now emits a **node→edge graph**: a nested `<ul><li>` whose CSS
+([styles.css](../apps/desktop/web/styles.css) `.map-graph`) draws classic org-chart connector edges (parent→child, directed top-down) with
+sibling **variants branching side-by-side**. Each `.map-node` is a compact box: a role chip (You/LK), a default
+one-line **summary**, a `n/m kind` variant badge, role-coloring, and active-path highlight. **Hover** reveals
+`.map-tip` — a **scrollable** (`max-height:160px; overflow:auto`) detail panel that stays open while the pointer
+is inside it; the minimap click handler **ignores clicks inside `.map-tip`** so reading/scrolling never triggers
+a switch. Clicking a node still head-selects + reloads (sidecar emits `chat-path-changed`). Pure DOM/CSS, no D3.
+Backend: [ctx/chats.py](../services/lk/ctx/chats.py) `tree()` nodes gained `summary` (new `_node_summary()` — first meaningful line,
+heading/bullet-stripped, capped) + `detail` (≤600 chars); `snippet`/`kind`/`parent` retained for back-compat.
+**Gates (offline, green).** [test_chats_dag.py](../services/lk/tests/test_chats_dag.py) +1 (nodes carry summary+detail), [stress_ui.py](../services/lk/tests/stress_ui.py) +5 step-4
+(graph not indented text; summary default + scrollable tip; click-switches-but-tip-doesn't; CSS connectors+tip;
+tree() summary/detail), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) still green (chat_tree unaffected), `node --check`, `chats.py` parses.
+**Status.** `[~]` — **LIVE-VERIFY pending** (WSLg rebuild): map shows boxes+edges (not indented text); node hover
+shows a scrollable detail; clicking a variant switches the path; the sidecar map reflects switches in the feed.
+**Edges.** `[D-64] --{executes}--> [N-80 §Q.12 step-4]` · `--{fixes-live}--> [N-75 branch map]` ·
+`--{builds-on}--> [D-60]` (sidecar window) · `--{advances}--> [N-10]` · `--{continues-as}--> [N-80 step-5]`
+(chat-ops discoverability +delete/link, then sensor hover tooltips).
+
+---
+
+## D-63 — N-80 step-3: regenerate UX — single button + ephemeral no-residue picker (2026-06-21) — N-80 / N-75 / N-10
+**Problem (user, "the worst possible UIUX").** Every assistant message rendered an always-open 12-item
+"Regenerate ▾" dropdown (`op-menu`/`op-dropdown`) — it hogged the message surface and was a poor picker.
+**Fix ([app.js](../apps/desktop/web/variants/classic/app.js) + [styles.css](../apps/desktop/web/styles.css)).** `renderMessageControls` now emits exactly two controls on an assistant
+message: a **"Regenerate"** button (one-click neutral re-roll — op `regen`, the backend's plain "Regenerate your
+previous response", no guidance prompt) and a **"Custom ▾"** trigger. "Custom" opens `openRegenPicker()` — an
+**ephemeral** row of all §3a ops inserted just above the composer (reusing the `.inline-prompt` pattern) that
+**removes itself with no residue** (Escape or Cancel dismiss; a chosen op runs then closes). `regenerateMessage`
+was refactored from `(message, opIndex)` to `(message, spec)`; `DEFAULT_REGEN` is the plain re-roll spec. The
+text selection for selective/explain survives the picker via the existing `lastSelection` (captured on
+`selectionchange`). Dead `.op-menu`/`.op-dropdown`/`.op-item` CSS removed; no leftover `regen-menu`/`opIndex`
+refs. Chose the in-chat ephemeral prompt over a separate Tauri popup window — lighter, no extra window/capability.
+**Gates (offline, green).** [stress_ui.py](../services/lk/tests/stress_ui.py) +4 step-3 checks (single button + custom trigger, NO always-open
+dropdown; ephemeral self-removing picker; every §3a op reachable; one-click = neutral re-roll), `node --check`,
+no dangling dropdown refs. Full suite ALL-PASS.
+**Status.** `[~]` — **LIVE-VERIFY pending** (WSLg rebuild): the message surface is uncluttered; "Custom ▾" opens
+the picker; picking an op regenerates; Cancel/Escape leaves no residue; selective/explain still read the selection.
+**Edges.** `[D-63] --{executes}--> [N-80 §Q.12 step-3]` · `--{advances}--> [N-10 canonical UI]` (declutter) ·
+`--{builds-on}--> [D-62]` (regenerateMessage async) · `--{continues-as}--> [N-80 step-4]` (branch-map = graph
+node→edge + hover tooltips, separate window).
+
+---
+
+## D-62 — N-80 step-2 (N-75 live correctness): async regen + empty-guard + stuck-streaming watchdog (2026-06-21) — N-80 / N-75
+**Context.** Step-2 of N-80 (PLAN §Q.12). The N-75 chat features were built (D-48/49/50) but the live webview
+showed 4 interrelated bugs the user hit while testing. Root insight: they all stem from ONE lifecycle flaw —
+`regenerate()` ran the model **synchronously** while its streaming deltas spawned a **separate live-draft bubble
+that was never handed off** (the orphan), so the UI froze, showed a stuck cursor read as "(empty response)", left
+the pill on "Streaming", and only settled variant state after a manual reload.
+
+**#4 — regen was UI-blocking → async job (the keystone fix).** [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py): split `regenerate()` into a
+shared `_build_regen_turn()` (validates 400/404 + shapes the directive + `_regen` tag) and `_enrich_regen_result()`
+(op echo + diff/editOf). New `regenerate_async()` **enqueues a turn job** (`enqueue_turn`); `_run_turn_job` runs
+`self.turn` (which honors `_regen` via `_persist_turn`) then enriches the stored result. HTTP `/chats/{id}/regenerate`
+→ `regenerate_async`; the **sync `regenerate()` stays** for tests + fallback. UI [app.js](../apps/desktop/web/variants/classic/app.js): `regenerateMessage`
+enqueues → `waitForBridgeJob(...,{noPending:true})` (new opt: poll to completion, don't detach to a "Still Running"
+bubble) → cancellable via `activeJobId` (Escape/Stop). `pollRemoteJobs` **skips `source==="regenerate"`** jobs so
+the result lands on the variant, never as a fresh bubble.
+
+**#5 — "(empty response)" → in-place stream + empty-guard.** `onDelta` now streams regen tokens **into the target
+message in place** (`state.regenTargetUiId`/`regenBuffer`) instead of a stray draft; `finishLiveDraft()` runs on
+every exit; if the regen returns empty text the previous variant is kept (message never blanked, honest meta).
+
+**#6 — stuck "streaming" → self-heal watchdog.** `healStuckStream()` on the 3s health tick: when nothing is in
+flight it resets a busy pill to Idle and settles an orphaned live-draft that's been silent ≥6s (guarded so it
+never cuts off a live remote/voice stream).
+
+**#3 — variant nav ‹n/m›.** Was a downstream symptom of #4/#5: with async regen pushing the variant + `render()`
+immediately and switches going through `loadChatIntoFeed` (sibling groups rebuilt from `tree.nodes`; verified every
+record carries an explicit `parent` so path/tree keys match), the switcher updates live + survives switch-back.
+
+**Gates (offline, green).** [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py) (added `_build_regen_turn`/`_enrich_regen_result` to the
+fake binding; op/diff/editOf asserts pass), [test_chats_dag.py](../services/lk/tests/test_chats_dag.py), [stress_ui.py](../services/lk/tests/stress_ui.py) (+7 step-2 checks: async route,
+enriched job result, sync fallback, UI poll/cancel, empty-guard, in-place stream + poller skip, watchdog),
+`node --check` all web JS, `ui_bridge.py` parses.
+**Status.** `[~]` — **LIVE-VERIFY pending** (WSLg rebuild): (1) regenerate no longer freezes the UI; (2) the
+response updates in place with no stray "(empty response)" bubble; (3) ‹n/m› appears immediately and survives
+switching back/forth; (4) the pill returns to Idle after a turn; (5) Escape cancels an in-flight regen.
+**Edges.** `[D-62] --{executes}--> [N-80 §Q.12 step-2]` · `--{fixes-live}--> [N-75]` (regen/variant/streaming) ·
+`--{builds-on}--> [D-61]` (systemic) + `[D-48/49/50]` (N-75 build) · `--{reuses}--> [/turn/async job machinery]` ·
+`--{continues-as}--> [N-80 step-3]` (regenerate-UX redesign: single button + custom popup, no residue).
+
+---
+
+## D-61 — N-80 step-1 (systemic): drag-region click-fix (0A) + panel-host extraction (0C) (2026-06-21) — N-80 / N-67 / N-10
+**Context.** First execution step of N-80 (PLAN §Q.12). The user's 2026-06-21 testing exposed two systemic
+defects that made everything else hard to test honestly: "top-bar / panel buttons (create-new, ✕) blocked by
+drag" and "options shifted outside the window still bloat the main window by remaining hidden."
+
+**0A — panel header buttons "blocked by drag" — REAL root cause found.** Read Tauri **2.11.2**
+[`drag.js`](../../.cargo/registry) `isDragRegion`: clickable elements (BUTTON/A/INPUT…) **already short-circuit**
+drag, so a button *inside* a drag region is NOT eaten — the prior "generic WebKitGTK quirk" diagnosis was wrong.
+Actual culprit: in a sidecar/panel window the MAIN [`.drag-zone`](../apps/desktop/web/styles.css) div was restyled to
+`left:0;right:0;height:40px;z-index:3` and **floated over the top 40px of the panel — on top of the panel-head's
+✕ + action buttons**, so every click hit the invisible drag overlay → window-drag, click swallowed.
+**Fix (drag preserved, version-correct, NO JS interceptor):**
+- [styles.css](../apps/desktop/web/styles.css): `.panel-window .drag-zone { display:none }` (the panel-head is the drag surface in panel mode).
+- [index.html](../apps/desktop/web/index.html): all panel headers → `data-tauri-drag-region="deep"` (whole header drags; clickable children short-circuit).
+- [app.js](../apps/desktop/web/variants/classic/app.js): removed the now-redundant per-minimap `removeAttribute` hack from D-60; kept Esc-to-close.
+
+**0C — main-DOM declutter (partial, honest).** New [panel.html](../apps/desktop/web/panel.html) = the sidecar **panel host**
+(structural mirror of index.html so the shared app.js loads unchanged either window); `open_panel` now loads
+`panel.html?panel=X` ([main.rs](../apps/desktop/src-tauri/src/main.rs)). **The four pure-UI panels (tasks/reminders/history/minimap) are
+deleted from [index.html](../apps/desktop/web/index.html)** — they were already null-safe in app.js (render fns guard `if(el)`; the 3
+in-window fallbacks now bail when the panel is absent). **#settings + #advanced-panel deliberately KEPT in
+index.html** — `configSnapshot()` reads ~40 of their live control values **every turn** and module-load
+listeners hard-ref them; they can only leave once config moves off the DOM (Phase-6 config-state refactor →
+folds 0C fully). settings/advanced are duplicated in both files until then (cross-ref comments in each).
+
+**Gates (offline, green).** [stress_ui.py](../services/lk/tests/stress_ui.py) +7 checks (0A drag-zone hidden + deep headers; 0C panel.html
+has the 4 panels, index.html doesn't, settings/advanced in both, open_panel→panel.html, null-safe fallbacks);
+`node --check` app.js; HTML well-formedness of index.html + panel.html (zero residual-open tags). Full UI
+contract stress suite still ALL-PASS. Rust open_panel change = a one-line string swap in an existing `format!`.
+**Status.** `[~]` — **LIVE-VERIFY pending** (needs the user's WSLg rebuild): (1) `cargo build --release` clean;
+(2) panel ✕ + Clear/new/Save/Archive/Clear-done now click; (3) panel headers still drag on empty area;
+(4) main-window inspect shows the 4 panels gone; (5) settings/advanced sidecars (now panel.html) still
+round-trip config to a turn via the localStorage CONFIG_KEY sync.
+**Edges.** `[D-61] --{executes}--> [N-80 §Q.12 step-1]` · `--{operationalizes}--> [N-67 integrity]` ·
+`--{builds-on}--> [D-60]` (sidecar mechanism + build-embed fingerprint) · `--{advances}--> [N-10 canonical UI]`
+(declutter) · `--{defers-to}--> [N-80 step-6 / item-13]` (config-state refactor frees settings+advanced → full
+0C DRY) · `--{continues-as}--> [N-80 step-2]` (N-75 live correctness: streaming→variant-nav→empty-response→async).
+
+---
+
 ## D-60 — Branch map: full-window overlay → side-flanking sidecar window (2026-06-21) — N-75 / N-10
 **Problem (user, with screenshot: "The UI is being hogged by some overlay - branch map").** The N-75 minimap
 ("BRANCH MAP") rendered as an in-window overlay — `.minimap-panel { position:absolute; inset:0; z-index:40 }` —

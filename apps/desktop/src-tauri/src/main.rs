@@ -425,7 +425,9 @@ fn open_panel(app: AppHandle, panel: String) -> Result<(), String> {
     WebviewWindowBuilder::new(
         &app,
         label,
-        WebviewUrl::App(format!("index.html?panel={panel}").into()),
+        // 0C (N-80): sidecar panels load panel.html (the panel host), NOT index.html.
+        // The main overlay no longer carries the four pure-UI panels.
+        WebviewUrl::App(format!("panel.html?panel={panel}").into()),
     )
     .title(title)
     .inner_size(width, height)

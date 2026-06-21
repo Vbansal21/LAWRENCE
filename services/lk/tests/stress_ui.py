@@ -305,9 +305,36 @@ check("branch-map panel drops its overlay z-index/inset when run as a sidecar",
 check("in-window fallback flanks the chat (right dock, NOT a full inset:0 overlay)",
       "left: auto" in styles_css and "min(360px, 78%)" in styles_css
       and "inset: 0;" not in styles_css.split(".minimap-panel {")[1].split("}")[0])
-check("branch-map close is robust (drop drag-region in overlay mode + Esc-to-close)",
-      'removeAttribute("data-tauri-drag-region")' in app
-      and 'event.key !== "Escape"' in app)
+# 0A (N-80): the click-eating culprit was the full-width .drag-zone overlay sitting
+# at z-index 3 over panel tops in sidecar windows; panel headers are now "deep" drag
+# regions so the header drags but clickable children (✕, chips) short-circuit drag.
+index_html = Path("apps/desktop/web/index.html").read_text(encoding="utf-8")
+check("0A: drag-zone overlay no longer covers panel headers (hidden in panel windows)",
+      ".panel-window .drag-zone {" in styles_css
+      and "display: none;" in styles_css.split(".panel-window .drag-zone {")[1].split("}")[0])
+check("0A: panel headers are deep drag regions (header drags, buttons clickable)",
+      'class="panel-head" data-tauri-drag-region="deep"' in index_html
+      and '<header class="panel-head" data-tauri-drag-region>' not in index_html)
+check("branch-map close stays robust (Esc-to-close fallback present)",
+      'event.key !== "Escape"' in app)
+# 0C (N-80): the four pure-UI panels live in panel.html and open as sidecar windows;
+# index.html (main overlay) no longer carries them, so they stop bloating the DOM.
+# settings + advanced stay in index.html (configSnapshot reads them every turn).
+panel_html = Path("apps/desktop/web/panel.html").read_text(encoding="utf-8")
+_UI_PANELS = ('id="tasks-panel"', 'id="reminders-panel"', 'id="history-panel"', 'id="minimap-panel"')
+check("0C: panel.html (sidecar host) carries all four pure-UI panels",
+      all(p in panel_html for p in _UI_PANELS))
+check("0C: main index.html no longer carries the four pure-UI panels (de-bloated)",
+      not any(p in index_html for p in _UI_PANELS))
+check("0C: config-bearing settings + advanced stay in BOTH main and the panel host",
+      'id="settings"' in index_html and 'id="advanced-panel"' in index_html
+      and 'id="settings"' in panel_html and 'id="advanced-panel"' in panel_html)
+check("0C: open_panel loads the panel host, not index.html",
+      'panel.html?panel=' in rust_src and 'index.html?panel=' not in rust_src)
+check("0C: trimmed-main fallbacks resolve the four panels null-safely",
+      'const tasksPanel = document.querySelector("#tasks-panel");' in app
+      and 'const historyPanel = document.querySelector("#history-panel");' in app
+      and 'const remindersPanel = document.querySelector("#reminders-panel");' in app)
 check("sidecar path-switch syncs the main feed via the event bus",
       '"chat-path-changed"' in app and "loadChatIntoFeed(chatId)" in app)
 check("classic variant captures durable transcript ids from the turn",
@@ -334,6 +361,262 @@ check("proactive toggle truly gates the kernel loop (UI → /observer → _maybe
       "self.proactive_enabled" in bridge_src and 'observer == "proactive"' in bridge_src
       and "if not self.proactive_enabled" in bridge_src
       and 'setKernelObserver("proactive"' in app)
+
+# ─────────────────── N-80 step-2 — N-75 live correctness (regen/streaming) ───────────────────
+section("N-80 step-2 — async regen + empty-guard + stuck-streaming watchdog")
+check("#4: regenerate endpoint is async (enqueues a job, not a blocking sync call)",
+      "def regenerate_async(" in bridge_src and "regenerate_async(cid, body)" in bridge_src
+      and "def _build_regen_turn(" in bridge_src and "def _enrich_regen_result(" in bridge_src)
+check("#4: async regen job result is enriched with op/diff so the poller sees the full shape",
+      'request.get("_regen")' in bridge_src and "_enrich_regen_result(" in bridge_src.split("def _run_turn_job(")[1])
+check("#4: sync regenerate() still exists (tests + fallback) and reuses the shared builder",
+      "def regenerate(" in bridge_src and "self._build_regen_turn(" in bridge_src
+      and "self._enrich_regen_result(" in bridge_src)
+check("#4: UI regenerate polls a job (non-blocking) and is cancellable",
+      "noPending: true" in app and "state.activeJobId = regenJobId" in app and "waitForBridgeJob(" in app)
+check("#5: an empty regen never blanks the message (keeps the previous variant)",
+      "regenerate returned an empty response" in app)
+check("#5/#4: regen streams in place (no stray draft) + poller skips regen jobs",
+      "state.regenTargetUiId" in app and 'job.source === "regenerate"' in app)
+check("#6: stuck-streaming watchdog resets the pill / settles an orphaned draft on the health tick",
+      "function healStuckStream(" in app and "healStuckStream();" in app and "state.liveDraftAt" in app)
+
+# ─────────────────── N-80 step-3 — regenerate UX (single button + ephemeral picker) ───────────────────
+section("N-80 step-3 — regenerate is a single button + a no-residue custom picker")
+check("#2: a single Regenerate button + a Custom trigger (NOT an always-open 12-item dropdown)",
+      'data-chat-op="regen-default"' in app and 'data-chat-op="regen-custom"' in app
+      and 'data-chat-op="regen-menu"' not in app and "op-dropdown" not in app)
+check("#2: the custom picker is ephemeral and self-removing (no residue)",
+      "function openRegenPicker(" in app and ".regen-picker" in app
+      and '.regen-picker, .link-picker")?.remove()' in app)
+check("#2: every §3a op is still reachable through the picker",
+      "REGEN_OPS.map(" in app and "data-regen-index" in app)
+check("#2: one-click Regenerate is a plain re-roll (neutral op, no guidance prompt)",
+      "DEFAULT_REGEN" in app and 'op: "regen"' in app)
+
+# ─────────────────── N-80 step-4 — branch map = node/edge GRAPH (not indented text) ───────────────────
+section("N-80 step-4 — branch map is a node→edge graph with hover detail")
+check("#1: minimap renders a node/edge GRAPH (the old indented text tree is gone)",
+      'class="map-graph"' in app and "function renderMinimap(" in app
+      and "depth * 14" not in app and 'style="margin-left:' not in app)
+check("#1: nodes default to a summary + carry a scrollable hover detail tip",
+      "map-summary" in app and "map-tip-detail" in app
+      and "node.summary" in app and "node.detail" in app)
+check("#1: clicking a node switches head; reading/scrolling the tip does not",
+      'event.target.closest(".map-tip")' in app and "/head" in app)
+check("#1: graph CSS draws connectors (directed edges) + a scrollable tip",
+      ".map-graph" in styles_css and "var(--map-edge)" in styles_css
+      and "border-top: 1px solid var(--map-edge)" in styles_css and ".map-tip-detail" in styles_css)
+check("#1: tree() exposes summary + detail per node (snippet retained for back-compat)",
+      "def _node_summary(" in chats_src and '"summary": _node_summary(' in chats_src
+      and '"detail":' in chats_src and '"snippet":' in chats_src)
+
+# ─────────────────── N-80 feedback-1 (live rebuild) — regressions + sensor/ops fixes ───────────────────
+section("N-80 feedback-1 — config drag handle (A1) + transcript label (B1) + ops visible (B2)")
+check("A1: config window has a header drag handle + close in BOTH main and panel host",
+      "<strong>Config</strong>" in index_html and "<strong>Config</strong>" in panel_html
+      and 'id="settings-head-close"' in index_html and "settings-head-close" in app
+      and ".settings > .panel-head" in styles_css)
+check("B1: audio-transcript thumb shows speech only — rejects retrieval/turn status",
+      "ui[- ]forced" in app and "single-pass" in app
+      and "audioTranscriptText(state.voiceTranscript)" in app)
+check("B1: sensor thumbnails carry a useful hover tip (title = latest context detail)",
+      "${item.title} — ${item.detail" in app)
+check("B2: a completed turn renders its msg-ops immediately (no controls-less message)",
+      "a full render at turn-end" in app)
+check("B2: msg-op buttons read as live controls (not muted/disabled)",
+      ".op-btn:active" in styles_css and "color: #cdd6cd;" in styles_css)
+
+# ─────────────────── N-81 B1 — chat trash bin (soft-delete → restore → purge) ───────────────────
+section("N-81 B1 — trash bin store ↔ bridge ↔ UI")
+check("store: trash/purge/list_trash/purge_trashed + restore clears both states",
+      all(f"def {m}(" in chats_src for m in ("trash_chat", "purge_chat", "list_trash", "purge_trashed"))
+      and 'row["trashed"] = False' in chats_src and 'include_trashed' in chats_src)
+check("bridge: chat_trash/chat_purge/chat_empty_trash + trash in index",
+      all(f"def {m}(" in bridge_src for m in ("chat_trash", "chat_purge", "chat_empty_trash"))
+      and '"trash": self.chats.list_trash()' in bridge_src)
+check("bridge routes /trash, /purge, /chats/trash/empty",
+      '"trash"' in bridge_src and '"purge"' in bridge_src and '"/chats/trash/empty"' in bridge_src)
+check("UI: per-chat Delete→trash + trash view (restore/purge) + empty-trash",
+      "data-trash-chat" in app and "data-purge-chat" in app and "data-restore-chat" in app
+      and "chatTrashOp(" in app and "showTrash" in app and "/chats/trash/empty" in app)
+check("UI: trash + purge confirmed/guarded + the trash list comes from the index",
+      "state.chats.trash" in app and "history-trash-toggle" in panel_html
+      and "history-empty-trash" in panel_html)
+
+# ─────────────────── N-81 B2 — search (in-chat + global, scope-restrictable) ───────────────────
+section("N-81 B2 — search store ↔ bridge ↔ UI")
+check("store: ChatStore.search(query, regex, chat_id, include_trashed) + snippet",
+      "def search(" in chats_src and "def _hit_snippet(" in chats_src
+      and "regex" in chats_src and "chat_id" in chats_src)
+check("bridge: chat_search + GET /search route + scope/regex params",
+      "def chat_search(" in bridge_src and '"/search"' in bridge_src
+      and "parse_qs(" in bridge_src and '"scope"' in bridge_src)
+check("UI: search bar + scope toggle + regex toggle + results, via the transport",
+      "runChatSearch(" in app and "openSearchHit(" in app and "/search?" in app
+      and "history-search-scope" in panel_html and "history-search-regex" in panel_html
+      and "data-hit-chat" in app)
+check("UI: search results take over the history list + scope is restrictable",
+      "state.chats.search" in app and 'scope === "current"' in app and "search-hit" in app)
+
+# ─────────────────── N-81 B3 — link-at-message + backlinks ───────────────────
+section("N-81 B3 — link store(NoteStore edges) ↔ bridge ↔ UI")
+notes_src = Path("services/lk/ctx/notes.py").read_text(encoding="utf-8")
+check("store: NoteStore edges power links (add_edge / edges_for / neighborhood)",
+      "def add_edge(" in notes_src and "def edges_for(" in notes_src
+      and "def neighborhood(" in notes_src and '"backlinks"' in notes_src)
+check("bridge: create_link + links_for + POST /links + GET /links/{chat}/{msg}",
+      "def create_link(" in bridge_src and "def links_for(" in bridge_src
+      and '"/links"' in bridge_src and "/links/" in bridge_src
+      and "def _link_node(" in bridge_src)
+check("UI: per-message Link… + Links toggle controls, via data-chat-op",
+      'data-chat-op="link"' in app and 'data-chat-op="links-toggle"' in app
+      and "openLinkPicker(" in app and "toggleLinks(" in app)
+check("UI: links flow through the transport (POST /links + GET /links/…)",
+      'postBridge("/links"' in app and "getBridge(" in app
+      and "/links/${encodeURIComponent" in app and "createMessageLink(" in app)
+check("UI: inline links panel + clickable peers (backlinks surfaced, navigable)",
+      "renderLinks(" in app and "data-link-peer" in app and "openLinkPeer(" in app
+      and "linkLabel(" in app and "linkCount(" in app)
+
+# ─────────────────── N-81 B4 — temporary chats (adjustable auto-expire timer) ───────────────────
+section("N-81 B4 — temporary chats store ↔ bridge ↔ UI ↔ CLI")
+check("store: create_chat(ttl_minutes) + set_ttl + sweep_expired (expire → trash)",
+      "ttl_minutes" in chats_src and "def set_ttl(" in chats_src
+      and "def sweep_expired(" in chats_src and "ephemeral" in chats_src
+      and "expires_at" in chats_src)
+check("store: sweep is wired into ensure_default (lazy retire on access)",
+      "self.sweep_expired()" in chats_src)
+check("bridge: chat_create ttl + chat_set_ttl + POST /chats/{id}/ttl + sweep on index",
+      "def chat_set_ttl(" in bridge_src and 'parts[2] == "ttl"' in bridge_src
+      and "ttlMinutes" in bridge_src and "self.chats.sweep_expired()" in bridge_src)
+check("UI: per-chat ⏱ timer control + remaining-time badge, via the transport",
+      "data-ttl-chat" in app and "ttlRemaining(" in app and "chatTtlOp(" in app
+      and "/ttl`" in app)
+ctl_src_b4 = Path("services/lk/ctl.py").read_text(encoding="utf-8")
+check("CLI parity: lk chats ttl / sweep / new --ttl + B1 trash/restore/purge",
+      'sub == "ttl"' in ctl_src_b4 and 'sub == "sweep"' in ctl_src_b4
+      and "--ttl" in ctl_src_b4 and 'sub == "trash"' in ctl_src_b4
+      and 'sub == "restore"' in ctl_src_b4 and 'sub == "purge"' in ctl_src_b4)
+
+# ─────────────────── N-81 B5 — summarize → context (note + inline + cross-chat anchor) ───────────────────
+section("N-81 B5 — summarize store ↔ bridge ↔ UI ↔ CLI")
+check("store: insert_after (anchor → inline-or-branch) + append_message set_head guard",
+      "def insert_after(" in chats_src and "set_head: bool" in chats_src
+      and "set_head=not has_child" in chats_src)
+check("bridge: summarize_chat builds a _noPersist turn (no chat pollution)",
+      "def summarize_chat(" in bridge_src and "def _build_summary_turn(" in bridge_src
+      and '"_noPersist": True' in bridge_src and 'request.get("_noPersist")' in bridge_src)
+check("bridge: #12 BOTH sinks (durable note auto-linked + inline summary msg)",
+      "self.notes.write_note(" in bridge_src and "self.notes.add_edge(" in bridge_src
+      and 'kind="summary"' in bridge_src)
+check("bridge: #13 cross-chat anchored insert + POST /chats/{id}/summarize route",
+      "self.chats.insert_after(" in bridge_src and 'parts[2] == "summarize"' in bridge_src)
+check("bridge: the summarization turn never flips the active chat (pointer restore)",
+      "prev_active" in bridge_src and "self.chats.set_active(prev_active)" in bridge_src)
+check("UI: per-chat Summarize control + two-stage cross-chat picker, via the transport",
+      "data-summarize-chat" in app and "openSummarizePicker(" in app
+      and "summarizeChat(" in app and "/summarize`" in app and "data-sp-anchor" in app)
+check("UI: summarize picker styled (two-stage anchor list)",
+      ".summarize-picker" in styles_css and ".sp-anchors" in styles_css)
+check("CLI parity: lk chats summarize [--into <chat> <msg>] via the bridge",
+      'sub == "summarize"' in ctl_src_b4 and "/summarize" in ctl_src_b4
+      and "def _post_json(" in ctl_src_b4)
+
+# ─────────────────── N-81 #4 — full backup / restore (merge-conflict resolution) ───────────────────
+section("N-81 #4 — backup/restore store ↔ bridge ↔ UI ↔ CLI")
+check("store: backup_all + restore_bundle (skip/rename/merge) + helpers",
+      "def backup_all(" in chats_src and "def restore_bundle(" in chats_src
+      and "def _merge_into(" in chats_src and "def _remap_ids(" in chats_src
+      and "def _install_chat(" in chats_src)
+check("store: merge detects conflicts against an immutable original snapshot",
+      "original = {r.get(" in chats_src and "is_conflict = cur is not None" in chats_src)
+check("bridge: chat_backup + chat_restore_bundle + GET /chats/backup + POST /chats/restore",
+      "def chat_backup(" in bridge_src and "def chat_restore_bundle(" in bridge_src
+      and 'parts[1] == "backup"' in bridge_src and 'self.path == "/chats/restore"' in bridge_src)
+check("UI: Backup all + Restore controls wired through the transport",
+      "history-backup" in panel_html and "history-restore" in panel_html
+      and "backupAllChats(" in app and "restoreChatsFromBundle(" in app
+      and '"/chats/backup"' in app and '"/chats/restore"' in app)
+check("CLI parity: lk chats backup [path] | import <path> [--skip|--rename|--merge]",
+      'sub == "backup"' in ctl_src_b4 and 'sub == "import"' in ctl_src_b4
+      and "/chats/restore" in ctl_src_b4 and "backup_all(" in ctl_src_b4)
+
+# ─────────────────── N-81 B7/B8 — semantic search + pins/bookmarks ───────────────────
+section("N-81 B7/B8 — semantic search + pins/bookmarks store ↔ bridge ↔ UI ↔ CLI")
+check("store: semantic_search (ephemeral FTS5) + pin_chat + bookmark methods",
+      "def semantic_search(" in chats_src and "def _fts_query(" in chats_src
+      and "def pin_chat(" in chats_src and "def add_bookmark(" in chats_src
+      and "def remove_bookmark(" in chats_src and "def list_bookmarks(" in chats_src)
+check("store: graceful FTS5 degrade + pinned-first sort + dangling-bookmark cleanup",
+      "sqlite3.OperationalError" in chats_src and 'bool(r.get("pinned"))' in chats_src
+      and 'b.get("chatId") != chat_id' in chats_src)
+check("bridge: chat_semantic_search + chat_pin + bookmark endpoints",
+      "def chat_semantic_search(" in bridge_src and "def chat_pin(" in bridge_src
+      and "def chat_add_bookmark(" in bridge_src and "def chat_remove_bookmark(" in bridge_src
+      and "def chat_bookmarks(" in bridge_src)
+check("bridge: GET /semantic + GET /chats/bookmarks + POST pin/bookmarks routes",
+      'path == "/semantic"' in bridge_src and 'parts[1] == "bookmarks"' in bridge_src
+      and 'parts[2] == "pin"' in bridge_src and 'self.path == "/chats/bookmarks"' in bridge_src
+      and 'self.path == "/chats/bookmarks/remove"' in bridge_src)
+check("UI: semantic toggle + bookmarks view + pin star + bookmark control",
+      "history-search-semantic" in panel_html and "history-bookmarks-toggle" in panel_html
+      and "data-pin-chat" in app and 'data-chat-op="bookmark"' in app
+      and "/semantic?" in app and '"/chats/bookmarks"' in app)
+check("CLI parity: lk chats search --semantic | pin | bookmark | bookmarks | unbookmark",
+      'sub == "search"' in ctl_src_b4 and 'sub == "pin"' in ctl_src_b4
+      and 'sub == "bookmark"' in ctl_src_b4 and 'sub == "bookmarks"' in ctl_src_b4
+      and "semantic_search(" in ctl_src_b4)
+
+# ─────────────────── N-81 B9a — promote message → durable note ───────────────────
+section("N-81 B9a — promote (recall integration) store↔bridge↔UI↔CLI")
+check("bridge: chat_promote writes an excerpt note + a kind='link' back-edge",
+      "def chat_promote(" in bridge_src and '"excerpt"' in bridge_src
+      and 'add_edge(note_id, mid, kind="link")' in bridge_src)
+check("bridge: POST /chats/{id}/promote route",
+      'parts[2] == "promote"' in bridge_src)
+check("UI: Promote → note control + handler + transport call",
+      'data-chat-op="promote"' in app and 'op === "promote"' in app
+      and "/promote" in app)
+check("CLI parity: lk chats promote <chatId> <msgId> [note…]",
+      'sub == "promote"' in ctl_src_b4 and "/promote" in ctl_src_b4)
+
+# ─────────────────── N-81 B9b — weighted relevance (delete=−P) wiring ───────────────────
+check("bridge: _recall_suppress toggles MemoryIndex mark/clear_deleted",
+      "def _recall_suppress(" in bridge_src
+      and "mem.mark_deleted" in bridge_src and "mem.clear_deleted" in bridge_src)
+check("bridge: trash/restore/purge/delete are wired to the −P penalty",
+      bridge_src.count("self._recall_suppress(") >= 4)
+
+# ─────────────────── N-81 B9c — organization (tags / folders / sort / bulk) ───────────────────
+section("N-81 B9c — organization store↔bridge↔UI↔CLI")
+check("store: tags/folders/sort/bulk methods",
+      "def set_tags(" in chats_src and "def add_tag(" in chats_src
+      and "def remove_tag(" in chats_src and "def all_tags(" in chats_src
+      and "def set_folder(" in chats_src and "def all_folders(" in chats_src
+      and "def bulk(" in chats_src)
+check("store: list_chats accepts folder/tag/sort filters",
+      "folder: str | None = None" in chats_src and "sort: str = \"recency\"" in chats_src
+      and "def _sort(rows" in chats_src and 'sort == "title"' in chats_src)
+check("bridge: chat_tags + chat_folder + chat_bulk endpoints",
+      "def chat_tags(" in bridge_src and "def chat_folder(" in bridge_src
+      and "def chat_bulk(" in bridge_src)
+check("bridge: chats_index threads folder/tag/sort + emits facets",
+      "def chats_index(self, params" in bridge_src and "all_tags()" in bridge_src
+      and "all_folders()" in bridge_src)
+check("bridge: routes — /chats/bulk, /chats/{id}/tags|folder, GET tags/folders facets",
+      'self.path == "/chats/bulk"' in bridge_src
+      and 'parts[2] == "tags"' in bridge_src and 'parts[2] == "folder"' in bridge_src
+      and 'parts[1] == "tags"' in bridge_src and 'parts[1] == "folders"' in bridge_src)
+check("UI: org controls + tag/folder edit + facet filters + multi-select + bulk bar",
+      "renderChatOrgControls(" in app and 'data-tag-chat="' in app
+      and 'data-folder-chat="' in app and 'data-tag-filter="' in app
+      and 'data-select-chat="' in app and "data-bulk-op=" in app
+      and "/chats/bulk" in app and 'id="chat-sort"' in app)
+check("CLI parity: tag/untag/tags/folder/folders/bulk subcommands",
+      'sub == "tag"' in ctl_src_b4 and 'sub == "untag"' in ctl_src_b4
+      and 'sub == "tags"' in ctl_src_b4 and 'sub == "folder"' in ctl_src_b4
+      and 'sub == "folders"' in ctl_src_b4 and 'sub == "bulk"' in ctl_src_b4)
 
 stop.set()
 try: ui.close()

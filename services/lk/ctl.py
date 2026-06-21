@@ -65,6 +65,17 @@ def _get_json(url: str, timeout: float = 1.5) -> dict | None:
         return None
 
 
+def _post_json(url: str, payload: dict, timeout: float = 600.0) -> dict | None:
+    try:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(url, data=data,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read())
+    except Exception:
+        return None
+
+
 def _http_ok(url: str, timeout: float = 1.5) -> bool:
     try:
         with urllib.request.urlopen(url, timeout=timeout) as r:
@@ -864,8 +875,18 @@ def cmd_notes(args: list[str]) -> int:
 def cmd_chats(args: list[str]) -> int:
     """Browse + manage the chat workspace (WS-U Track 1) — switchable conversations.
 
-    lk chats [list | show <id> | export <id> | new [title…] | switch <id>
-              | rename <id> <title…> | delete <id> [--hard]]
+    lk chats [list | show <id> | export <id> | new [--ttl <min>] [title…] | switch <id>
+              | rename <id> <title…> | delete <id> [--hard]
+              | ttl <id> <min|off> | sweep | trash <id> | restore <id> | purge <id|--all>
+              | summarize <id> [--into <chatId> <msgId>] [guidance…]
+              | promote <chatId> <msgId> [note…]
+              | backup [path] | import <path> [--skip|--rename|--merge]
+              | search <query…> [--semantic] [--regex] [--chat <id>]
+              | pin <id> [--off] | bookmark <chatId> <msgId> [note…]
+              | unbookmark <chatId> <msgId> | bookmarks [chatId]
+              | tag <id> <tag> | untag <id> <tag> | tags
+              | folder <id> [name|none] | folders
+              | bulk <op> <id…> [--value <v>]]
     Works against the same memory/chats/ store the desktop UI uses. Management
     ops are file-level — prefer running them while the kernel is stopped.
     """
@@ -911,9 +932,341 @@ def cmd_chats(args: list[str]) -> int:
         return 0
 
     if sub == "new":
-        meta = cs.create_chat(" ".join(args[1:]))
+        # N-81 B4: `lk chats new [--ttl <minutes>] [title…]` → optional temporary chat.
+        rest = args[1:]
+        ttl: float | None = None
+        if "--ttl" in rest:
+            i = rest.index("--ttl")
+            try:
+                ttl = float(rest[i + 1]); rest = rest[:i] + rest[i + 2:]
+            except (IndexError, ValueError):
+                print("usage: lk chats new [--ttl <minutes>] [title…]"); return 2
+        meta = cs.create_chat(" ".join(rest), ttl_minutes=ttl)
         cs.set_active(meta["id"])
-        print(f"  created {meta['id']}  {meta.get('title') or '(untitled)'}  (now active)")
+        tag = f"  (temporary · {meta.get('ttl_minutes')}m)" if meta.get("ephemeral") else ""
+        print(f"  created {meta['id']}  {meta.get('title') or '(untitled)'}  (now active){tag}")
+        return 0
+
+    if sub == "ttl":
+        # N-81 B4: set / adjust / clear the temporary auto-expire timer.
+        if len(args) < 3:
+            print("usage: lk chats ttl <id> <minutes | off>"); return 2
+        raw = args[2]
+        if raw in ("off", "0", "none", "clear"):
+            minutes: float | None = None
+        else:
+            try:
+                minutes = float(raw)
+            except ValueError:
+                print("usage: lk chats ttl <id> <minutes | off>"); return 2
+        meta = cs.set_ttl(args[1], minutes)
+        if meta is None:
+            print(f"  no chat with id {args[1]}"); return 1
+        if meta.get("ephemeral"):
+            print(f"  {args[1]} is temporary — expires {meta.get('expires_at')}")
+        else:
+            print(f"  {args[1]} is now permanent")
+        return 0
+
+    if sub == "sweep":
+        expired = cs.sweep_expired()
+        print(f"  swept {len(expired)} expired temporary chat(s) to trash"
+              + (f": {', '.join(expired)}" if expired else ""))
+        return 0
+
+    if sub == "trash":                      # N-81 B1 parity: soft-delete → trash bin
+        if len(args) < 2:
+            print("usage: lk chats trash <id>"); return 2
+        if not cs.trash_chat(args[1]):
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  trashed {args[1]}  (restore with `lk chats restore {args[1]}`)")
+        return 0
+
+    if sub == "restore":                    # N-81 B1 parity: un-archive / un-trash
+        if len(args) < 2:
+            print("usage: lk chats restore <id>"); return 2
+        if not cs.restore_chat(args[1]):
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  restored {args[1]}")
+        return 0
+
+    if sub == "purge":                      # N-81 B1 parity: permanent delete from trash
+        if len(args) < 2:
+            print("usage: lk chats purge <id|--all>"); return 2
+        if args[1] == "--all":
+            n = cs.purge_trashed()
+            print(f"  purged {n} chat(s) from trash"); return 0
+        if not cs.purge_chat(args[1]):
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  purged {args[1]} (permanent)")
+        return 0
+
+    if sub == "promote":
+        # N-81 B9a (recall integration #6): promote a chat message → durable note
+        # (kind='excerpt') + a link back-edge (which also earns the +G weighted-relevance
+        # boost). A WRITE to NoteStore (single-writer I1), so route through the bridge
+        # when the kernel is up; otherwise file-level. No model needed.
+        if len(args) < 3:
+            print("usage: lk chats promote <chatId> <msgId|seq> [note…]"); return 2
+        cid = args[1]
+        mid = args[2] if ":" in args[2] else f"{cid}:{args[2]}"
+        annotation = " ".join(args[3:]).strip()
+        payload: dict = {"messageId": mid}
+        if annotation:
+            payload["note"] = annotation
+        if _http_ok(f"http://127.0.0.1:{UI_PORT}/health", timeout=0.8):
+            res = _post_json(f"http://127.0.0.1:{UI_PORT}/chats/{cid}/promote", payload)
+            if not res or not res.get("ok"):
+                print(f"  promote failed: {(res or {}).get('error', 'no response')}"); return 1
+            print(f"  promoted {mid} → note {res.get('noteId', '(none)')}")
+            return 0
+        # file-level (kernel down): mint the note directly.
+        from lk.ctx.notes import NoteStore
+        msg = cs.get_by_id(cid, mid)
+        if msg is None:
+            print(f"  no message with id {mid}"); return 1
+        body = str(msg.get("text") or "").strip()
+        if not body:
+            print("  cannot promote an empty message"); return 1
+        text = f"{annotation}\n\n{body}" if annotation else body
+        ns = NoteStore()
+        nid = ns.write_note("excerpt", text, source=f"promote:{mid}",
+                            tags=["promoted", "chat-excerpt"])
+        if not nid:
+            print("  note write failed"); return 1
+        ns.add_edge(nid, mid, kind="link")
+        print(f"  promoted {mid} → note {nid}")
+        return 0
+
+    if sub == "summarize":
+        # N-81 B5: summarize a chat → durable note + inline summary (#12), optionally
+        # inserted at an anchor in another chat (#13). Needs the model, so it goes
+        # through the running kernel's bridge (not the file-level store).
+        if len(args) < 2:
+            print("usage: lk chats summarize <id> [--into <chatId> <msgId|seq>] [guidance…]")
+            return 2
+        rest = args[2:]
+        payload: dict = {}
+        if "--into" in rest:
+            i = rest.index("--into")
+            try:
+                tgt_chat, tgt_msg = rest[i + 1], rest[i + 2]
+                rest = rest[:i] + rest[i + 3:]
+            except IndexError:
+                print("usage: lk chats summarize <id> [--into <chatId> <msgId|seq>] [guidance…]")
+                return 2
+            payload["target"] = {"chatId": tgt_chat, "msgId": tgt_msg}
+        if rest:
+            payload["guidance"] = " ".join(rest)
+        if not _http_ok(f"http://127.0.0.1:{UI_PORT}/health", timeout=0.8):
+            print("  bridge not running — start it with `lk start` (summarize needs the model)")
+            return 1
+        res = _post_json(f"http://127.0.0.1:{UI_PORT}/chats/{args[1]}/summarize", payload)
+        if not res or not res.get("ok"):
+            print(f"  summarize failed: {(res or {}).get('error', 'no response')}")
+            return 1
+        print(f"  summarized {args[1]} → note {res.get('noteId', '(none)')}, "
+              f"inline msg {res.get('messageId', '(none)')}")
+        if res.get("insertedAt"):
+            ia = res["insertedAt"]
+            print(f"  inserted at {ia['chatId']}@{ia['anchor']} → {ia['messageId']}")
+        print(f"\n{res.get('summary', '')}")
+        return 0
+
+    if sub == "backup":
+        # N-81 #4: full, lossless snapshot of every chat → a JSON bundle (stdout if no
+        # path). Read-only, so it runs file-level even with the kernel up.
+        bundle = cs.backup_all()
+        text = json.dumps(bundle, ensure_ascii=False, indent=2)
+        if len(args) >= 2:
+            try:
+                Path(args[1]).write_text(text + "\n", encoding="utf-8")
+            except OSError as exc:
+                print(f"  could not write backup: {exc}"); return 1
+            print(f"  backed up {bundle['count']} chat(s) → {args[1]}")
+        else:
+            print(text)
+        return 0
+
+    if sub == "import":
+        # N-81 #4: import a backup bundle (restore + merge-conflict resolution). A WRITE,
+        # so if the kernel is up it goes through the bridge (single-writer I1); otherwise
+        # file-level. Default conflict policy is the safe `skip`.
+        if len(args) < 2:
+            print("usage: lk chats import <path> [--skip | --rename | --merge]"); return 2
+        try:
+            bundle = json.loads(Path(args[1]).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"  could not read bundle: {exc}"); return 1
+        on_conflict = "skip"
+        for flag, name in (("--rename", "rename"), ("--merge", "merge"), ("--skip", "skip")):
+            if flag in args:
+                on_conflict = name
+        if _http_ok(f"http://127.0.0.1:{UI_PORT}/health", timeout=0.8):
+            res = _post_json(f"http://127.0.0.1:{UI_PORT}/chats/restore",
+                             {"bundle": bundle, "onConflict": on_conflict})
+            if not res or not res.get("ok"):
+                print(f"  import failed: {(res or {}).get('error', 'no response')}"); return 1
+            report = res
+        else:
+            try:
+                report = cs.restore_bundle(bundle, on_conflict=on_conflict)
+            except ValueError as exc:
+                print(f"  import failed: {exc}"); return 1
+        print(f"  imported {len(report.get('imported', []))} · "
+              f"renamed {len(report.get('renamed', []))} · "
+              f"merged {len(report.get('merged', []))} · "
+              f"skipped {len(report.get('skipped', []))}  (conflict={on_conflict})")
+        return 0
+
+    if sub == "search":
+        # N-81 B2/B7 parity: lexical (default) or --semantic (FTS5/BM25 ranked). Read-only.
+        if len(args) < 2:
+            print("usage: lk chats search <query…> [--semantic] [--regex] [--chat <id>]"); return 2
+        semantic = "--semantic" in args
+        regex    = "--regex" in args
+        chat_id  = None
+        if "--chat" in args:
+            i = args.index("--chat")
+            if i + 1 < len(args):
+                chat_id = args[i + 1]
+        terms = [a for a in args[1:]
+                 if a not in ("--semantic", "--regex", "--chat", chat_id or "")]
+        query = " ".join(terms).strip()
+        if not query:
+            print("usage: lk chats search <query…> [--semantic] [--regex] [--chat <id>]"); return 2
+        if semantic:
+            hits = cs.semantic_search(query, chat_id=chat_id)
+        else:
+            hits = cs.search(query, regex=regex, chat_id=chat_id)
+        if not hits:
+            print("  (no matches)"); return 0
+        mode = "semantic" if semantic else ("regex" if regex else "text")
+        print(f"  {len(hits)} match(es) [{mode}]:")
+        for h in hits:
+            sc = f"  ({h['score']})" if semantic and h.get("score") else ""
+            print(f"   {h['chatId']}:{h.get('seq')}  [{h.get('role')}] {h.get('chatTitle')}{sc}")
+            print(f"      {h.get('snippet', '')}")
+        return 0
+
+    if sub == "pin":
+        # N-81 B8 parity: pin/favorite a chat (--off un-pins). File-level (like trash/rename).
+        if len(args) < 2:
+            print("usage: lk chats pin <id> [--off]"); return 2
+        pinned = "--off" not in args
+        meta = cs.pin_chat(args[1], pinned)
+        if meta is None:
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  {'pinned' if meta.get('pinned') else 'unpinned'} {args[1]}")
+        return 0
+
+    if sub == "bookmarks":
+        # N-81 B8 parity: list message bookmarks (optionally for one chat). Read-only.
+        chat_id = args[1] if len(args) >= 2 else None
+        rows = cs.list_bookmarks(chat_id=chat_id)
+        if not rows:
+            print("  (no bookmarks)"); return 0
+        print(f"  {len(rows)} bookmark(s):")
+        for b in rows:
+            note = f"  — {b['note']}" if b.get("note") else ""
+            print(f"   {b['chatId']}:{b.get('seq')}  [{b.get('role')}] {b.get('preview', '')}{note}")
+        return 0
+
+    if sub == "bookmark":
+        # N-81 B8 parity: bookmark a message (optional note = a pinned snippet). File-level.
+        if len(args) < 3:
+            print("usage: lk chats bookmark <chatId> <messageId|seq> [note…]"); return 2
+        mid = args[2] if ":" in args[2] else f"{args[1]}:{args[2]}"
+        note = " ".join(args[3:]).strip()
+        bm = cs.add_bookmark(args[1], mid, note=note)
+        if bm is None:
+            print(f"  no message {mid} in {args[1]}"); return 1
+        print(f"  bookmarked {mid}")
+        return 0
+
+    if sub == "unbookmark":
+        if len(args) < 3:
+            print("usage: lk chats unbookmark <chatId> <messageId|seq>"); return 2
+        mid = args[2] if ":" in args[2] else f"{args[1]}:{args[2]}"
+        if not cs.remove_bookmark(args[1], mid):
+            print(f"  no bookmark for {mid}"); return 1
+        print(f"  removed bookmark {mid}")
+        return 0
+
+    if sub == "tag":
+        # N-81 B9c parity: add a tag to a chat. File-level (like pin/rename).
+        if len(args) < 3:
+            print("usage: lk chats tag <id> <tag>"); return 2
+        meta = cs.add_tag(args[1], args[2])
+        if meta is None:
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  tags[{args[1]}] = {', '.join(meta.get('tags') or []) or '(none)'}")
+        return 0
+
+    if sub == "untag":
+        if len(args) < 3:
+            print("usage: lk chats untag <id> <tag>"); return 2
+        meta = cs.remove_tag(args[1], args[2])
+        if meta is None:
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  tags[{args[1]}] = {', '.join(meta.get('tags') or []) or '(none)'}")
+        return 0
+
+    if sub == "tags":
+        # N-81 B9c parity: list every tag in use + counts. Read-only.
+        rows = cs.all_tags()
+        if not rows:
+            print("  (no tags yet)"); return 0
+        print(f"  {len(rows)} tag(s):")
+        for r in rows:
+            print(f"   {r['tag']}  · {r['count']} chat(s)")
+        return 0
+
+    if sub == "folder":
+        # N-81 B9c parity: file a chat into a folder (empty/none ⇒ unfile). File-level.
+        if len(args) < 2:
+            print("usage: lk chats folder <id> [name | none]"); return 2
+        name = " ".join(args[2:]).strip()
+        if name.lower() in ("none", "unfiled", "-"):
+            name = ""
+        meta = cs.set_folder(args[1], name or None)
+        if meta is None:
+            print(f"  no chat with id {args[1]}"); return 1
+        print(f"  folder[{args[1]}] = {meta.get('folder') or '(unfiled)'}")
+        return 0
+
+    if sub == "folders":
+        # N-81 B9c parity: list every folder in use + counts. Read-only.
+        rows = cs.all_folders()
+        if not rows:
+            print("  (no folders yet)"); return 0
+        print(f"  {len(rows)} folder(s):")
+        for r in rows:
+            print(f"   {r['folder']}  · {r['count']} chat(s)")
+        return 0
+
+    if sub == "bulk":
+        # N-81 B9c parity: one org op over many chats. File-level.
+        # usage: lk chats bulk <op> <id...> [--value <v>]
+        if len(args) < 3:
+            print("usage: lk chats bulk <trash|restore|archive|unarchive|pin|unpin|tag|untag|folder> "
+                  "<id…> [--value <v>]"); return 2
+        op = args[1]
+        rest = args[2:]
+        value = None
+        if "--value" in rest:
+            i = rest.index("--value")
+            value = " ".join(rest[i + 1:]).strip() or None
+            rest = rest[:i]
+        if not rest:
+            print("  bulk needs at least one chat id"); return 2
+        try:
+            res = cs.bulk(rest, op, value=value)
+        except ValueError as exc:
+            print(f"  {exc}"); return 2
+        print(f"  bulk {op}: {len(res['ok'])} ok, {len(res['failed'])} failed")
+        if res["failed"]:
+            print(f"    failed: {', '.join(res['failed'])}")
         return 0
 
     if sub == "switch":
@@ -941,8 +1294,17 @@ def cmd_chats(args: list[str]) -> int:
         print(f"  {'deleted' if hard else 'archived'} {args[1]}")
         return 0
 
-    print("usage: lk chats [list | show <id> | export <id> | new [title…] | "
-          "switch <id> | rename <id> <title…> | delete <id> [--hard]]")
+    print("usage: lk chats [list | show <id> | export <id> | new [--ttl <min>] [title…] | "
+          "switch <id> | rename <id> <title…> | delete <id> [--hard] | "
+          "ttl <id> <min|off> | sweep | trash <id> | restore <id> | purge <id|--all> | "
+          "summarize <id> [--into <chatId> <msgId>] [guidance…] | "
+          "promote <chatId> <msgId> [note…] | "
+          "backup [path] | import <path> [--skip|--rename|--merge] | "
+          "search <query…> [--semantic] [--regex] [--chat <id>] | "
+          "pin <id> [--off] | bookmark <chatId> <msgId> [note…] | "
+          "unbookmark <chatId> <msgId> | bookmarks [chatId] | "
+          "tag <id> <tag> | untag <id> <tag> | tags | "
+          "folder <id> [name|none] | folders | bulk <op> <id…> [--value <v>]]")
     return 2
 
 
