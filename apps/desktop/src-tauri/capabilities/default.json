@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Permissions for the LAWRENCE frameless launcher: drag-to-move, custom resize, show/hide/focus, event bus, and global-shortcut.",
-  "windows": ["main", "panel-settings", "panel-advanced", "panel-tasks", "panel-reminders", "panel-history"],
+  "windows": ["main", "panel-settings", "panel-advanced", "panel-tasks", "panel-reminders", "panel-history", "panel-minimap"],
   "permissions": [
     "core:default",
     "core:event:default",

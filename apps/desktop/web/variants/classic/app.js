@@ -1921,6 +1921,16 @@ function closeHistoryPanel(refocus = false) {
   if (refocus) promptInput.focus();
 }
 
+function closeMinimapPanel(refocus = false) {
+  if (PANEL_MODE === "minimap") {
+    closeCurrentPanel();
+    return;
+  }
+  const minimapPanel = document.querySelector("#minimap-panel");
+  if (minimapPanel) minimapPanel.hidden = true;
+  if (refocus) promptInput.focus();
+}
+
 drawerToggle.addEventListener("click", () => {
   const open = optionDrawer.hidden;
   optionDrawer.hidden = !open;
@@ -2444,6 +2454,7 @@ function openSidecarPanel(panel) {
   closeTasksPanel();
   closeRemindersPanel();
   closeHistoryPanel();
+  closeMinimapPanel();
   advancedPanel.hidden = true;
   tauri.core.invoke("open_panel", { panel }).catch((error) => {
     console.warn(`panel open failed: ${error}`);
@@ -2714,7 +2725,16 @@ async function openMinimap() {
   const body = document.querySelector("#minimap-body");
   if (!panel || !body) return;
   panel.hidden = false;
-  const chatId = state.chats.active || "";
+  // In the sidecar window the local state is fresh, so resolve the active chat
+  // from the bridge (the server is the single source of truth for "active").
+  let chatId = state.chats.active || "";
+  if (!chatId) {
+    try {
+      const c = await getBridge("/chats");
+      chatId = c?.active || "";
+      state.chats.active = chatId;
+    } catch { /* bridge offline — fall through to the empty state */ }
+  }
   if (!chatId) { body.innerHTML = '<span class="tasks-empty">No active chat.</span>'; return; }
   body.innerHTML = "Loading…";
   try {
@@ -2954,9 +2974,26 @@ document.querySelector("#history-open")?.addEventListener("click", () => {
 });
 document.querySelector("#history-close")?.addEventListener("click", () => closeHistoryPanel(true));
 document.querySelector("#history-refresh")?.addEventListener("click", refreshHistory);
-document.querySelector("#minimap-open")?.addEventListener("click", openMinimap);
-document.querySelector("#minimap-close")?.addEventListener("click", () => {
-  const p = document.querySelector("#minimap-panel"); if (p) p.hidden = true;
+document.querySelector("#minimap-open")?.addEventListener("click", () => {
+  // The branch map lives in its own side-flanking window so it never covers the
+  // chat. openSidecarPanel returns false outside Tauri (static preview) — there
+  // we fall back to the in-window panel so the feature still works.
+  if (openSidecarPanel("minimap")) return;
+  openMinimap();
+});
+document.querySelector("#minimap-close")?.addEventListener("click", () => closeMinimapPanel(true));
+// In the in-window fallback the header is NOT a separate window's titlebar, so its
+// data-tauri-drag-region swallows the ✕ click under WebKitGTK (window-drag wins).
+// Drop it there; keep it only in the separate sidecar window (PANEL_MODE), which
+// has no decorations and needs the header to move.
+if (PANEL_MODE !== "minimap") {
+  document.querySelector("#minimap-panel .panel-head")?.removeAttribute("data-tauri-drag-region");
+}
+// Esc closes the in-window map even if the ✕ is ever obstructed.
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const panel = document.querySelector("#minimap-panel");
+  if (panel && !panel.hidden && !PANEL_MODE) closeMinimapPanel(true);
 });
 document.querySelector("#minimap-body")?.addEventListener("click", async (event) => {
   const node = event.target.closest("[data-map-id]");
@@ -2966,8 +3003,14 @@ document.querySelector("#minimap-body")?.addEventListener("click", async (event)
   if (!chatId || !child) return;
   try {
     await postBridge(`/chats/${encodeURIComponent(chatId)}/head`, { parent_id: parent, child_id: child });
-    await loadChatIntoFeed(chatId);   // reflect the chosen path in the feed
     await openMinimap();              // re-render with the new active path highlighted
+    // The feed lives in the main window. When the map runs as a sidecar, notify
+    // the main window to reload; in the in-window fallback, reload directly.
+    if (PANEL_MODE === "minimap") {
+      try { await tauri?.event?.emit?.("chat-path-changed", { chatId }); } catch { /* no event bus */ }
+    } else {
+      await loadChatIntoFeed(chatId);
+    }
   } catch (error) {
     streamState.textContent = `Map switch failed: ${error.message}`;
   }
@@ -3054,7 +3097,8 @@ function initPanelMode() {
     advanced: advancedPanel,
     tasks: document.querySelector("#tasks-panel"),
     reminders: document.querySelector("#reminders-panel"),
-    history: document.querySelector("#history-panel")
+    history: document.querySelector("#history-panel"),
+    minimap: document.querySelector("#minimap-panel")
   };
   Object.values(panels).forEach((panel) => {
     if (panel) panel.hidden = true;
@@ -3065,6 +3109,7 @@ function initPanelMode() {
   if (PANEL_MODE === "tasks") refreshTasks();
   if (PANEL_MODE === "history") refreshHistory();
   if (PANEL_MODE === "reminders") refreshReminders();
+  if (PANEL_MODE === "minimap") openMinimap();
   if (PANEL_MODE === "settings") document.querySelector("#mode")?.focus();
   if (PANEL_MODE === "advanced") document.querySelector("#top-p")?.focus();
 }
@@ -3093,4 +3138,11 @@ if (PANEL_MODE) {
   });
   const launcherShown = tauri?.event?.listen?.("launcher-shown", focusPrompt);
   launcherShown?.catch?.(() => {});
+  // The branch-map sidecar switches the active path in its own window; reload the
+  // feed here so the chat reflects the chosen variant.
+  const pathChanged = tauri?.event?.listen?.("chat-path-changed", (event) => {
+    const chatId = event?.payload?.chatId || state.chats.active;
+    if (chatId && chatId === state.chats.active) loadChatIntoFeed(chatId).catch(() => {});
+  });
+  pathChanged?.catch?.(() => {});
 }

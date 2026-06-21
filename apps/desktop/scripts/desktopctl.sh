@@ -73,7 +73,7 @@ all_bridge_pids() {
 needs_build() {
   [[ ! -x "$APP_BIN" ]] && return 0
   find web src-tauri/src src-tauri/capabilities \
-    src-tauri/tauri.conf.json src-tauri/Cargo.toml \
+    src-tauri/tauri.conf.json src-tauri/Cargo.toml src-tauri/build.rs \
     -type f -newer "$APP_BIN" -print -quit 2>/dev/null | grep -q .
 }
 

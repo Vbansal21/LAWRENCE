@@ -815,7 +815,8 @@ svg {
 .panel-window .advanced-panel,
 .panel-window .tasks-panel,
 .panel-window .reminders-panel,
-.panel-window .history-panel {
+.panel-window .history-panel,
+.panel-window .minimap-panel {
   position: relative;
   inset: auto;
   width: 100%;
@@ -824,6 +825,7 @@ svg {
   border: 0;
   border-radius: 22px;
   resize: none;
+  z-index: auto;
 }
 
 .panel-window .advanced-grid {
@@ -1366,13 +1368,22 @@ input[type="range"] {
 .diff-line.hunk { background: rgba(255, 255, 255, 0.06); color: var(--muted); }
 .diff-line.ctx { color: var(--muted); }
 
+/* In-window fallback ONLY (static preview / when a separate window can't open):
+   dock to the RIGHT side so the map flanks the chat instead of covering it.
+   The real surface is the side sidecar window (open_panel "minimap"). */
 .minimap-panel {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: auto;
+  width: min(360px, 78%);
   z-index: 40;
   display: flex;
   flex-direction: column;
-  background: rgba(12, 17, 15, 0.97);
+  background: rgba(12, 17, 15, 0.98);
+  border-left: 1px solid rgba(164, 188, 169, 0.22);
+  box-shadow: -18px 0 40px rgba(0, 0, 0, 0.35);
   backdrop-filter: blur(var(--surface-blur));
 }
 .minimap-body {

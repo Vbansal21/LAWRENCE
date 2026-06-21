@@ -3184,6 +3184,13 @@ keep/alter confirmation (see §Q.7). Depends on semantic-chat-search + P2/P6.
 retrieval} (ties **N-06** assembly + **P2** reference records). The DAG's multi-parent in-edges are the
 reserved seam. Distinct from §3a *informed regeneration* (which is single-source).
 
+**N-80 (UI-FIX-PASS)** `[ ]` Phase-1 — **live-UI correctness, declutter & appearance** — the consolidated fix
+backlog from the 2026-06-21 testing session (drag-region click-eating, sidecar-panels-still-in-main-DOM,
+branch-map graph redesign + separate window, regenerate-UX popup, variant-nav/empty-response/stuck-streaming
+bugs, async regen, sensor tooltips, chat-ops discoverability + delete/link, launcher CRUD, **appearance/window
+settings set-once-in-launcher**). **Full spec + file-level execution order in §Q.12.** Operationalizes N-67 on
+the already-"done" N-75; advances N-10; builds on D-60.
+
 ### §Q.9 — PHASE-1 CONSOLIDATED SPEC (authoritative; is / isn't per item) — user 2026-06-20
 > Supersedes the scattered splits in §Q.2/§Q.5/§Q.6/§Q.7 for *what Phase-1 contains*. Each item:
 > **IS** = what it delivers · **ISN'T** = the explicit boundary (prevents scope creep). Phase-2 lives in §Q.10.
@@ -3378,3 +3385,96 @@ can't perform; see the live-verify checklist below.
   approximate-NN + the full chunk-level index. **ISN'T:** not the Phase-1 brute-force + N-47-lite locator.
 - **N-64 composition UI** (n8n workflow surface) · **N-26 host-native UI** — **IS:** post-MVP surfaces on
   the N-09 seam. **ISN'T:** not the Phase-1/2 core chat.
+
+### §Q.12 — N-80 (UI-FIX-PASS) — live-UI correctness, declutter & appearance (Phase-1) `[ ]`
+> **Source:** user testing session 2026-06-21 (screenshots + 6 messages) after the D-60 branch-map work.
+> The §Q Phase-1 chat features were BUILT (N-75 D-48/49/50) but the **live webview exposed real bugs +
+> over-claims + declutter gaps** — this is the **N-67-integrity / N-10-quality gap on already-"done" nodes**
+> plus a few genuinely new pieces (graph branch-map, regenerate popup, sensor tooltips, launcher CRUD,
+> appearance/window settings). **This node is the consolidated fix backlog with a file-level execution order.**
+> Gating invariants unchanged: I1 single writer · I5 ADD-not-rename endpoints · I6 never touch .code-workspace ·
+> **GUI==CLI parity** for every new config · **N-67** (every control real or honestly disabled) · don't commit
+> unless asked. Each fix carries an offline gate (stress_ui / test_chat_ops_bridge / test_launcher / node --check).
+
+**ROOT CAUSES (systemic — fix first; they explain most "broken buttons"):**
+- **0A — `data-tauri-drag-region` swallows button clicks** (top bar create/new + every panel header ✕ +
+  Clear/new/Save/Archive + minimap ✕). WebKitGTK/WSLg quirk: the drag handler eats clicks on buttons *inside*
+  drag regions. **Fix (drag stays):** ONE global `mousedown`-capture listener that `stopPropagation()` when the
+  target is interactive (`button,a,input,select,textarea,[role=button],[contenteditable]`). Supersedes the
+  per-minimap drag-strip hack from D-60. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (add the
+  global handler), [index.html](../apps/desktop/web/index.html) (audit drag-region placement), [styles.css](../apps/desktop/web/styles.css) (`.drag-zone`/`.drag-handle`).
+- **0B — Tauri stale-frontend embed = "I rebuild but nothing changes." DONE (in tree, D-60):** [build.rs](../apps/desktop/src-tauri/build.rs)
+  fingerprints `../web` → `env!("LK_WEB_FINGERPRINT")` in [main.rs](../apps/desktop/src-tauri/src/main.rs) forces re-embed. Needs the user's next rebuild.
+- **0C — Sidecar panels still bloat the MAIN window DOM.** The six `<section>`s (settings/advanced/tasks/
+  reminders/history/minimap) sit hidden in `index.html`; they now open as sidecar windows but the main window
+  still carries all the markup + event wiring (user-spotted via inspect-element). **Fix:** new
+  `apps/desktop/web/panel.html` host containing ONLY the panel sections; repoint `open_panel` to
+  `panel.html?panel=X`; **delete the six sections from `index.html`**. *Files:* NEW `web/panel.html`,
+  [index.html](../apps/desktop/web/index.html), [main.rs](../apps/desktop/src-tauri/src/main.rs) (`open_panel` URL + `panel_spec`),
+  [app.js](../apps/desktop/web/variants/classic/app.js) (`initPanelMode`/`PANEL_MODE`), [styles.css](../apps/desktop/web/styles.css), [stress_ui.py](../services/lk/tests/stress_ui.py).
+
+**N-75 LIVE CORRECTNESS (built feature, real bugs):**
+- **1 — Branch map:** must be a **separate non-blocking window** AND a **graph node→edge** view (NOT the current
+  indented text tree): node = a message section, **directed** edges = order, **hover-only** = short summary +
+  longer **scrollable** detail; default per-node label = summary. *Files:* `web/panel.html` (minimap host),
+  [app.js](../apps/desktop/web/variants/classic/app.js) (`renderMinimap`→graph layout, `openMinimap`), [styles.css](../apps/desktop/web/styles.css) (nodes/edges/tooltip),
+  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`chat_tree` node fields: summary/role/section), [ctx/chats.py](../services/lk/ctx/chats.py) (`tree()`),
+  [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py), [test_chats_dag.py](../services/lk/tests/test_chats_dag.py).
+- **2 — Regenerate UX (the "worst UX"):** replace the big always-droppable op list with a **single Regenerate
+  button + optional "custom" dropdown** → opens a **small separate popup window** (options + custom-text box)
+  OR an **in-chat ephemeral prompt** reusing the text bar with **no residue** (return to prev state). Backend
+  op-descriptor `{op,guidance?,preset?,n?,section?}` unchanged. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`REGEN_OPS`,
+  `regenerateMessage`, `promptInline`), [index.html](../apps/desktop/web/index.html), [styles.css](../apps/desktop/web/styles.css); optional `web/panel.html` (regen-custom window) + [main.rs](../apps/desktop/src-tauri/src/main.rs) `panel_spec`.
+- **3 — Variant nav ‹n/m› broken:** only renders when NOT on 1/n; vanishes switching back to main; doesn't
+  update on regen (only after clicking the map); shows "2/2 with no way back". **Fix:** always render when
+  siblings>1 (incl. the primary), refresh the switcher + sibling counts immediately after regen. *Files:*
+  [app.js](../apps/desktop/web/variants/classic/app.js) (`renderVariantNav`, `switchVariant`, `regenerateMessage`, `loadChatIntoFeed`, tree refresh).
+- **4 — Regen ops are UI-BLOCKING (freeze):** route regenerate through the **async job path** (like
+  `/turn/async` + poll), not a blocking call. *Files:* [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`regenerate`→async job),
+  [app.js](../apps/desktop/web/variants/classic/app.js) (job poll/await), [test_chat_ops_bridge.py](../services/lk/tests/test_chat_ops_bridge.py).
+- **5 — "(empty response)" on a regenerated variant:** bug in regen/variant persistence/render. *Files:*
+  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`regenerate`/`_persist_turn`), [ctx/chats.py](../services/lk/ctx/chats.py) (`add_variant`/`path_messages`), [app.js](../apps/desktop/web/variants/classic/app.js).
+- **6 — UI stuck on "streaming" after generation finished:** reset the stream-state pill / job-done on SSE
+  completion. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (stream-state + SSE done handler), [lib/bridge.js](../apps/desktop/web/lib/bridge.js) (payload.type), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (job-complete SSE).
+
+**DISCOVERABILITY & NEW UI:**
+- **7 — Sensor thumbnail hovers (Vision/Audio/Transcription):** useful tooltips — latest retrieved-context
+  **summary** per sensor; transcription = **scrollable transcript**. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (hover handlers),
+  [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/metrics` or `/sensors` latest-context + transcript), [obs/*](../services/lk/obs/) (expose latest), [index.html](../apps/desktop/web/index.html)/[styles.css](../apps/desktop/web/styles.css).
+- **8 — Chat-ops discoverability + delete/link:** surface clear/delete/restore/history/archive/new/link (some
+  exist but buried in the drawer/History panel; delete + link-at-point unsurfaced). *Files:* [index.html](../apps/desktop/web/index.html),
+  [app.js](../apps/desktop/web/variants/classic/app.js), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`DELETE /chats/{id}`, `/links`), [ctx/chats.py](../services/lk/ctx/chats.py) (delete), [stress_ui.py](../services/lk/tests/stress_ui.py).
+
+**LAUNCHER (separate gateway GUI):**
+- **9 — Memory/logs/journal CRUD:** delete/revise/update/clean/**restore-from-backup (merge)**/reset/re-init/
+  re-link (currently only backup+clear). *Files:* [launcher/qt_tabs.py](../services/lk/launcher/qt_tabs.py) (MemoryTab), [memops.py](../services/lk/memops.py)
+  (revise/restore-merge/re-link primitives), [ctl.py](../services/lk/ctl.py) (CLI parity), [test_launcher.py](../services/lk/tests/test_launcher.py) + a memops test.
+- **10 — Chat VCS diff is useless:** make [launcher/chat_vcs.py](../services/lk/launcher/chat_vcs.py) show real diff content/variant info. *Files:* `chat_vcs.py`, [qt_tabs.py](../services/lk/launcher/qt_tabs.py) (KnowledgeTab), [test_launcher.py](../services/lk/tests/test_launcher.py).
+- **11 — Diagnostics pane refinement** + **12 — complete the Knowledge/Memory/Logs/Journals/Links/Chats/
+  reminders/tasks/todo/scheduled/Notes panes.** *Files:* [launcher/qt_tabs.py](../services/lk/launcher/qt_tabs.py), [launcher/metrics.py](../services/lk/launcher/metrics.py), bridge read endpoints as needed.
+
+**13 — APPEARANCE & WINDOW SETTINGS (launcher-set, persistent — "set once, persist until changed"):**
+scale · font size · **font family · font weight · DPI/screen-zoom · window size · window position**. Persist in
+`lk.json` (NOT localStorage) for free persistence + GUI==CLI. Scale/message-font/surface-alpha already exist as
+CSS vars via `initUiPrefs` but localStorage-only → migrate to config. *Files:* [config.py](../services/lk/config.py) (`_ENV_MAP`:
+`ui_scale,ui_font_size,ui_font_family,ui_font_weight,ui_dpi,window_w,window_h,window_x,window_y`),
+[launcher/qt_tabs.py](../services/lk/launcher/qt_tabs.py) (ConfigureTab Appearance pane), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/health` or `/ui-prefs` exposes them),
+[app.js](../apps/desktop/web/variants/classic/app.js) (`initUiPrefs` reads config + applies CSS vars + webview `setZoom`; drop localStorage path),
+[styles.css](../apps/desktop/web/styles.css) (new `--ui-font-family`/`--ui-font-weight` vars), [main.rs](../apps/desktop/src-tauri/src/main.rs) (read config at launch → `set_size`/`set_position`/webview zoom), [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) (static dims become overridable defaults).
+
+**EXECUTION ORDER (dependency-aware; each step gated before the next):**
+1. **Systemic:** 0A drag-click fix → 0C panel-host extraction (0B already in tree). *(small, high-impact, unblocks honest testing of everything else)*
+2. **N-75 correctness:** 6 stuck-streaming → 3 variant-nav → 5 empty-response → 4 async regen. *(make the existing feature trustworthy before redesigning its surface)*
+3. **Regenerate UX redesign (2).**
+4. **Branch-map redesign (1):** graph node/edge + separate window + hover tooltips.
+5. **Discoverability + new UI:** 8 chat-ops surface (+delete/link) → 7 sensor tooltips.
+6. **Appearance & window settings (13).**
+7. **Launcher:** 9 memory/logs/journal CRUD → 10 chat VCS diff → 11 diagnostics → 12 knowledge panes.
+
+**FIRST FILES TO READ (step-1 start):** [app.js](../apps/desktop/web/variants/classic/app.js) (drag wiring + `initPanelMode` + stream-state),
+[index.html](../apps/desktop/web/index.html) (drag-region attrs + the six panel sections), [main.rs](../apps/desktop/src-tauri/src/main.rs) (`open_panel`/`panel_spec`),
+[stress_ui.py](../services/lk/tests/stress_ui.py) (extend the gate).
+
+**Edges:** `[N-80] --{fixes-live}--> [N-75]` · `--{operationalizes}--> [N-67 integrity]` · `--{advances}-->
+[N-10 canonical UI]` · `--{builds-on}--> [D-60]` (sidecar/dock/build-embed) · `--{extends}--> [N-08]` (chat-ops
+UI half) · `--{adds-config}--> [config GUI==CLI]`.

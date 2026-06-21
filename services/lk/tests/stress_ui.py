@@ -288,6 +288,28 @@ check("classic variant renders per-message ops + variant nav + diff",
 check("classic variant wires regenerate/edit/branch/variant/minimap",
       all(s in app for s in ("regenerateMessage", "editMessage", "branchFromMessage",
                              "switchVariant", "openMinimap", "submitNote")))
+# Branch map is a side-flanking sidecar WINDOW (not a full-window overlay that
+# hogs the chat). Map button opens the sidecar; main reflects path switches via
+# the cross-window event; Rust + capabilities know the panel-minimap window.
+styles_css = Path("apps/desktop/web/styles.css").read_text(encoding="utf-8")
+caps_src = Path("apps/desktop/src-tauri/capabilities/default.json").read_text(encoding="utf-8")
+check("Map button opens the branch map as a sidecar window (not in-window overlay)",
+      'openSidecarPanel("minimap")' in app and 'PANEL_MODE === "minimap"' in app)
+check("branch-map sidecar is registered in Rust panel_spec + close_panels",
+      '"minimap" => Some(("panel-minimap"' in rust_src
+      and '"history", "minimap"' in rust_src)
+check("panel-minimap window is granted capabilities",
+      "panel-minimap" in caps_src)
+check("branch-map panel drops its overlay z-index/inset when run as a sidecar",
+      ".panel-window .minimap-panel" in styles_css and "z-index: auto" in styles_css)
+check("in-window fallback flanks the chat (right dock, NOT a full inset:0 overlay)",
+      "left: auto" in styles_css and "min(360px, 78%)" in styles_css
+      and "inset: 0;" not in styles_css.split(".minimap-panel {")[1].split("}")[0])
+check("branch-map close is robust (drop drag-region in overlay mode + Esc-to-close)",
+      'removeAttribute("data-tauri-drag-region")' in app
+      and 'event.key !== "Escape"' in app)
+check("sidecar path-switch syncs the main feed via the event bus",
+      '"chat-path-changed"' in app and "loadChatIntoFeed(chatId)" in app)
 check("classic variant captures durable transcript ids from the turn",
       "result.assistantMsgId" in app and "reply.msgId" in app)
 check("classic variant calls chat-op endpoints via the transport module (not raw fetch)",

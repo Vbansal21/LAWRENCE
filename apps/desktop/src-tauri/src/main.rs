@@ -11,6 +11,12 @@ use tauri::{
 };
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, ShortcutState};
 
+// Set by build.rs from a content hash of ../web. Reading it here makes any web
+// asset change alter this compilation unit, forcing main.rs to recompile so
+// `generate_context!` re-embeds the CURRENT frontend (no more stale-UI rebuilds).
+// Anonymous const: evaluated at compile time, no dead-code warning.
+const _: &str = env!("LK_WEB_FINGERPRINT");
+
 static LAUNCHER_VISIBLE: AtomicBool = AtomicBool::new(false);
 static LAST_TOGGLE_MS: AtomicU64 = AtomicU64::new(0);
 
@@ -361,7 +367,7 @@ fn dismiss_from_app(app: &tauri::AppHandle) {
 }
 
 fn close_panels(app: &tauri::AppHandle) {
-    for panel in ["settings", "advanced", "tasks", "reminders", "history"] {
+    for panel in ["settings", "advanced", "tasks", "reminders", "history", "minimap"] {
         if let Some(window) = app.get_webview_window(&format!("panel-{panel}")) {
             let _ = window.close();
         }
@@ -375,6 +381,7 @@ fn panel_spec(panel: &str) -> Option<(&'static str, &'static str, f64, f64)> {
         "tasks" => Some(("panel-tasks", "LAWRENCE Journal", 380.0, 500.0)),
         "reminders" => Some(("panel-reminders", "LAWRENCE Reminders", 520.0, 380.0)),
         "history" => Some(("panel-history", "LAWRENCE History", 600.0, 500.0)),
+        "minimap" => Some(("panel-minimap", "LAWRENCE Branch Map", 360.0, 520.0)),
         _ => None,
     }
 }

@@ -1534,6 +1534,62 @@ removed) · `--{precedes}--> [N-72 shared-space]`.
 
 ---
 
+## D-60 — Branch map: full-window overlay → side-flanking sidecar window (2026-06-21) — N-75 / N-10
+**Problem (user, with screenshot: "The UI is being hogged by some overlay - branch map").** The N-75 minimap
+("BRANCH MAP") rendered as an in-window overlay — `.minimap-panel { position:absolute; inset:0; z-index:40 }` —
+so opening it covered the **entire** chat (the main UI bled through the semi-transparent backdrop). User wants
+it pulled OUT into a separate window: side-flanking, default-closed, opened on button click, outside the main
+window.
+**Change (reuses the existing sidecar mechanism — same path as Settings/Journal/History panels).**
+- **Rust** [main.rs](../apps/desktop/src-tauri/src/main.rs): added `"minimap" => ("panel-minimap",
+  "LAWRENCE Branch Map", 360×520)` to `panel_spec` and `"minimap"` to `close_panels` (so it docks beside the
+  main window via `sidecar_position` and closes with the rest on dismiss).
+- **Capabilities** [default.json](../apps/desktop/src-tauri/capabilities/default.json): added `panel-minimap`
+  to the window-permission list (per the Tauri-capabilities rule — a new window label gets no perms otherwise).
+- **CSS** [styles.css](../apps/desktop/web/styles.css): `.panel-window .minimap-panel` joins the panel group
+  → `position:relative; inset:auto; z-index:auto; height:100vh` (overlay form kept ONLY for the non-Tauri
+  static-preview fallback, consistent with the sibling panels).
+- **JS** [app.js](../apps/desktop/web/variants/classic/app.js): Map button now `openSidecarPanel("minimap")`
+  (falls back to the in-window panel only when Tauri is absent); `openMinimap` resolves the active chat from
+  `/chats` (fresh sidecar state); `initPanelMode` renders the map for `PANEL_MODE === "minimap"`; node-clicks
+  in the sidecar switch the head server-side then **emit `chat-path-changed`** so the main window reloads the
+  feed (main listens via the event bus); added `closeMinimapPanel` mirroring the siblings.
+**Tests.** [stress_ui.py](../services/lk/tests/stress_ui.py): +5 checks — Map opens the sidecar (not overlay),
+Rust panel_spec/close_panels know `panel-minimap`, capabilities grant it, the panel drops its overlay
+z-index/inset in panel mode, and the path-switch syncs the feed via the event bus. **All UI contract checks
+PASS.** `node --check` on the variant passes.
+**FOLLOW-UP (2026-06-21, user: "No difference visible … resetted, cleaned, rebuild" + "the cross at top right
+does not work").** Diagnosed with evidence (binary forensics), not guesses:
+1. **ROOT CAUSE of "rebuild shows no change" = Tauri stale-frontend embed.** `tauri_build::build()` only emits
+   `cargo:rerun-if-changed` for `tauri.conf.json` + `capabilities` — **never for `web/`**. `generate_context!`
+   embeds `../web` via `include_bytes!` of content-hashed files during `main.rs` compile; a web-only edit
+   doesn't change `main.rs`'s inputs ⇒ no recompile ⇒ **stale UI ships**. (Proof: decompressed the staged
+   brotli assets — the binary's embedded `app.js` matched my NEW file 4/4 chunks ONLY because that build also
+   recompiled `main.rs`/capabilities; a web-only rebuild would NOT have.) **Fixed in [build.rs](../apps/desktop/
+   src-tauri/build.rs):** walk `../web`, emit `rerun-if-changed` per file, fold a content hash into
+   `cargo:rustc-env=LK_WEB_FINGERPRINT`; `main.rs` reads `const _: &str = env!("LK_WEB_FINGERPRINT")` so any web
+   change forces a recompile + fresh embed. Added `build.rs` to `desktopctl.sh needs_build`. (build.rs syntax
+   verified via standalone `rustc --edition 2021`.)
+2. **In-window fallback no longer hogs.** Under WSLg the separate window may not appear (multi-window webview
+   limits); the fallback `.minimap-panel` was still a full `inset:0` overlay. Re-styled to a **right-side dock**
+   (`right:0; left:auto; width:min(360px,78%)`) so it flanks the chat. Separate sidecar window stays primary
+   (correct for the native-Windows target).
+3. **The ✕ now works.** A close button inside a `data-tauri-drag-region` header loses its click to window-drag
+   under WebKitGTK. Strip the drag-region from the header in overlay mode (kept in the separate-window mode,
+   which needs it) + **Esc-to-close** as backup.
+stress_ui.py +2 checks (right-dock not inset:0; close robustness). All gates green.
+**Status.** `[~]` — **LIVE-VERIFY pending**: rebuild (now guaranteed fresh) + relaunch. Open question for the
+user: do Settings/History open as SEPARATE windows or in-window overlays? (tells us if multi-window works under
+their WSLg; the dock fallback covers both either way).
+**Edges.** `[D-60] --{fixes-overlay-of}--> [N-75 branch map/minimap]` · `--{advances}--> [N-10 canonical UI]`
+(declutter — chat no longer hogged) · `--{gated-by}--> [N-67 integrity]` (control preserved, just relocated) ·
+`--{reuses}--> [D-? sidecar panels]` (open_panel/sidecar_position) · `--{unblocks}--> [ALL future web edits]`
+(stale-embed class of bug eliminated) · `--{continues-as}--> [N-80 UI-FIX-PASS, PLAN §Q.12]` (2026-06-21
+testing session backlog: drag-click fix, panel-host extraction, branch-map graph redesign, regenerate-UX,
+variant-nav/streaming bugs, sensor tooltips, chat-ops discoverability, launcher CRUD, appearance/window settings).
+
+---
+
 ## D-59 — The actual bloat source: warm powershell host kills the per-poll Add-Type storm (2026-06-20) — N-78
 **User: "still too many bloat process zombies."** D-52 fixed the notification + window-layout powershell
 paths but **missed the highest-frequency one.** Re-audit found it:
