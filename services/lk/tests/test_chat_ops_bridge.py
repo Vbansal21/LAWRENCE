@@ -37,9 +37,11 @@ def raises(fn, status=None):
         return False
 
 class _UI:
+    def __init__(self): self.pushed = []
     def push_context_event(self, *a, **k): pass
     def push_status(self, *a, **k): pass
     def push_delta(self, *a, **k): pass
+    def _push(self, payload): self.pushed.append(payload)   # capture SSE cards (A3)
 class _Mem:
     def upsert(self, *a, **k): pass
 class _MemRec(_Mem):
@@ -63,10 +65,13 @@ def fresh():
     fake._persist_turn = types.MethodType(DB._persist_turn, fake)
     fake._build_regen_turn = types.MethodType(DB._build_regen_turn, fake)
     fake._enrich_regen_result = types.MethodType(DB._enrich_regen_result, fake)
+    fake._resolve_chat = types.MethodType(DB._resolve_chat, fake)          # A3: finding persistence
+    fake._present_finding = types.MethodType(DB._present_finding, fake)     # A3: proactive finding
     fake._link_node = types.MethodType(DB._link_node, fake)        # B3: link endpoints
     fake._SUMMARY_PROMPT = DB._SUMMARY_PROMPT                       # B5: summarize→context
     fake._build_summary_turn = types.MethodType(DB._build_summary_turn, fake)
     fake._recall_suppress = types.MethodType(DB._recall_suppress, fake)  # B9b: delete-penalty wiring
+    fake.chat_feedback = types.MethodType(DB.chat_feedback, fake)         # C3: per-message feedback
     return tmp, fake
 
 def texts(fake, cid):
@@ -144,6 +149,10 @@ check("informed reconstructs the originating query", captured["req"]["turn"]["te
 check("informed is NOT an in-place edit", captured["req"]["_regen"]["as_edit"] is False)
 check("informed appends a sibling of the response", fk2.chats.parent_of(cid2, out["assistantMsgId"]) == uq)
 check("informed result echoes op", out["op"] == "informed")
+# N-82 A2: the reply travels under `answer` (NOT `text`). The UI regression was reading
+# res.text → always undefined → normalizeAssistantReply substituted "(empty response)".
+check("regenerate result exposes the reply under 'answer' (UI must read res.answer, N-82 A2)",
+      out.get("answer", "").startswith("REGENERATED:") and "text" not in out)
 
 # preset (shorter) → directive from preset table
 DB.regenerate(fk2, cid2, {"message_id": ar, "op": "preset", "preset": "shorter"})
@@ -167,6 +176,48 @@ check("regenerate of a USER message → 400", raises(lambda: DB.regenerate(fk2, 
 
 shutil.rmtree(tmp, ignore_errors=True)
 shutil.rmtree(tmp2, ignore_errors=True)
+
+# ─────────── proactive finding → durable + regenerate-able (N-82 A3) ───────────
+section("proactive finding (N-82 A3) — persisted as a real message + regenerate works")
+ub._notify = lambda *a, **k: None        # no OS-notification side-effects in tests
+tmpF, fkF = fresh()
+cidF = fkF.chats.create_chat("findings")["id"]
+fkF.chats.append_message(cidF, "user", "what's on my plate?")
+fkF.chats.append_message(cidF, "assistant", "Here is a summary.")
+fkF.active_chat_id = cidF; fkF.chats.set_active(cidF)
+before = len(fkF.chats.path_messages(cidF))
+fkF._present_finding({"headline": "Deadline tomorrow",
+                      "insight": "The grant draft is due tomorrow at 5pm.",
+                      "citations": [{"num": 1, "title": "calendar", "url": "cal://x"}]})
+check("finding is persisted as a chat message (no longer ephemeral)",
+      len(fkF.chats.path_messages(cidF)) == before + 1)
+fmid = fkF.ui.pushed[-1].get("msgId")
+check("SSE finding card carries the persisted msgId + chatId (→ working controls)",
+      bool(fmid) and fkF.ui.pushed[-1].get("chatId") == cidF)
+frec = fkF.chats.get_by_id(cidF, fmid)
+check("persisted finding is kind='finding' from the proactive source",
+      frec["kind"] == "finding" and frec["meta"]["source"] == "proactive")
+check("finding body carries headline + insight + citation",
+      "Deadline tomorrow" in frec["text"] and "due tomorrow" in frec["text"] and "cal://x" in frec["text"])
+
+# regenerate the finding — it has NO originating user query, so it must base on its OWN content
+capF = {}
+def fakeF_turn(request):
+    capF["req"] = request
+    regen = request.get("_regen") or {}
+    answer = "REGEN-FINDING: refreshed"
+    u, a = DB._persist_turn(fkF, request["chatId"], "", answer, "regenerate", regen)
+    return {"answer": answer, "assistantMsgId": a, "chatId": request["chatId"], "controls": {}, "events": []}
+fkF.turn = fakeF_turn
+outF = DB.regenerate(fkF, cidF, {"message_id": fmid, "op": "informed"})
+check("regenerate a finding does not error + echoes op", outF.get("op") == "informed")
+check("finding regen bases on the finding's OWN content (not a stray parent query)",
+      "due tomorrow" in capF["req"]["turn"]["text"])
+check("finding regen still carries the regenerate directive",
+      "Regenerate your previous response" in capF["req"]["turn"]["text"])
+check("finding regen appends a browsable sibling under the same parent",
+      fkF.chats.parent_of(cidF, outF["assistantMsgId"]) == fkF.chats.parent_of(cidF, fmid))
+shutil.rmtree(tmpF, ignore_errors=True)
 
 # ───────────────────────── trash bin (N-81 B1) ─────────────────────────
 section("trash bin — chat_trash / chat_purge / chat_empty_trash + index split")
@@ -460,6 +511,47 @@ me = fkP.chats.append_message(cp, "assistant", "   ")
 check("promote an empty message → 422",
       raises(lambda: DB.chat_promote(fkP, cp, {"messageId": me}), 422))
 shutil.rmtree(tmpP, ignore_errors=True)
+
+# ───────────────────────── chat_feedback (N-82 C3: per-message up/down + note) ─────────────────────────
+section("chat_feedback — per-message vote/text persist, flip, clear, aggregate")
+tmpF2, fkF2 = fresh()
+cf = fkF2.chats.create_chat("feedback")["id"]
+fkF2.chats.append_message(cf, "user", "explain the ranker")
+mf = fkF2.chats.append_message(cf, "assistant", "it fuses three retrieval arms")
+fkF2.active_chat_id = cf
+# upvote
+up = fkF2.chat_feedback(cf, {"messageId": mf, "vote": "up"})
+check("chat_feedback ok + records the vote", up["ok"] and up["feedback"]["vote"] == "up")
+check("feedback persists + is retrievable", (fkF2.chats.get_feedback(cf, mf) or {}).get("vote") == "up")
+check("feedback carries the message preview/role/seq",
+      up["feedback"].get("role") == "assistant" and "fuses three" in up["feedback"].get("preview", ""))
+# flip to downvote (idempotent on the message — one record, updated in place)
+dn = fkF2.chat_feedback(cf, {"messageId": mf, "vote": "down"})
+check("re-voting flips in place (no duplicate record)",
+      dn["feedback"]["vote"] == "down" and len(fkF2.chats.list_feedback(chat_id=cf)) == 1)
+# attach free-text without changing the vote (vote omitted ⇒ unchanged)
+note = fkF2.chat_feedback(cf, {"messageId": mf, "text": "too terse, wanted examples"})
+check("text attaches without disturbing the vote",
+      note["feedback"]["vote"] == "down" and note["feedback"]["text"].startswith("too terse"))
+# list_feedback filters by vote (the §P/N-76 aggregation surface)
+check("list_feedback filters by vote", len(fkF2.chats.list_feedback(vote="down")) == 1
+      and len(fkF2.chats.list_feedback(vote="up")) == 0)
+# clearing the vote AND text removes the record entirely (no residue)
+cleared = fkF2.chat_feedback(cf, {"messageId": mf, "vote": "clear", "text": ""})
+check("clearing vote+text removes the record (no residue)",
+      cleared["feedback"] == {} and fkF2.chats.get_feedback(cf, mf) is None
+      and len(fkF2.chats.list_feedback()) == 0)
+# guards
+check("feedback without a messageId → 400", raises(lambda: fkF2.chat_feedback(cf, {"vote": "up"}), 400))
+check("feedback with neither vote nor text → 400",
+      raises(lambda: fkF2.chat_feedback(cf, {"messageId": mf}), 400))
+check("feedback on an unknown message → 404",
+      raises(lambda: fkF2.chat_feedback(cf, {"messageId": "x:9", "vote": "up"}), 404))
+# hard-delete drops the chat's feedback so none dangle
+fkF2.chat_feedback(cf, {"messageId": mf, "vote": "up"})
+fkF2.chats.delete_chat(cf, hard=True)
+check("hard-deleting a chat drops its feedback", len(fkF2.chats.list_feedback()) == 0)
+shutil.rmtree(tmpF2, ignore_errors=True)
 
 # ───────────────────────── B9b: weighted relevance — delete penalty wiring ─────────────────────────
 section("delete penalty (−P) — trash/restore/purge toggle MemoryIndex suppression")

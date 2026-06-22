@@ -496,6 +496,14 @@ textarea::placeholder {
   background: rgba(35, 64, 42, 0.86);
 }
 
+/* N-82 A4: a tool-btn disabled by a dependency (e.g. deep-search when web is off)
+   reads as honestly unavailable instead of silently swallowing clicks. */
+.tool-btn:disabled,
+.tool-btn[aria-disabled="true"] {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
 svg {
   width: 16px;
   height: 16px;
@@ -966,9 +974,13 @@ input[type="range"] {
   resize: both;
 }
 
-.reminders-panel,
-.history-panel {
+.reminders-panel {
   width: min(460px, calc(100% - 24px));
+}
+/* N-82 A5: history holds the list + a preview, so it needs more width than reminders;
+   pair this with the lifted window max-size (tauri.conf) so expand has real room. */
+.history-panel {
+  width: min(720px, calc(100% - 24px));
 }
 
 .tasks-panel[hidden],
@@ -1143,7 +1155,10 @@ input[type="range"] {
 .history-body {
   min-height: 0;
   display: grid;
-  grid-template-columns: 142px minmax(0, 1fr);
+  /* N-82 A5: the chat rows carry a select checkbox + title + action chips, so the old
+     142px list column overflowed and threw off alignment on expand. Give the list real
+     room; the preview takes the remainder. */
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
   gap: 8px;
   padding: 10px;
   overflow: hidden;
@@ -1180,6 +1195,10 @@ input[type="range"] {
   text-align: left;
   cursor: pointer;
 }
+/* N-82 A1: history-main is a div[role=button] (it nests chips) — restore the focus
+   ring and disabled affordance a real <button> provided. */
+.history-main:focus-visible { outline: 2px solid rgba(224, 184, 96, 0.7); outline-offset: 2px; border-radius: 8px; }
+.history-main[aria-disabled="true"] { cursor: default; opacity: 0.85; }
 
 .history-item.archived {
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1551,13 +1570,16 @@ input[type="range"] {
   position: relative;
   display: flex;
   justify-content: center;
-  padding-top: 16px;
+  padding-top: 12px;
   list-style: none;
 }
-.map-graph > ul { padding-top: 0; }
+/* D5: the root row left-aligns so a (centered) tree doesn't drift right in a wide
+   sidecar and read as "over-indented"; sub-levels stay centered under their parent.
+   Tighter per-level padding also keeps a long linear chat from running away vertically. */
+.map-graph > ul { padding-top: 0; justify-content: flex-start; }
 .map-graph li {
   position: relative;
-  padding: 16px 8px 0;
+  padding: 12px 6px 0;
   list-style: none;
 }
 /* connector lines from each child up to the parent */

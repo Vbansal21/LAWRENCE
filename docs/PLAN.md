@@ -2347,7 +2347,10 @@ framework, or secondary protocol until the minimal helper proves reliable.
 ### §M.4 — Stage 3 REVISE + FINALIZE
 
 **Current executable frontier:** N-55 (hotkey). ~~N-63~~ DONE 2026-06-20 → D-46. Deployment
-spine now: **N-59/N-60/N-61 → N-62** (N-63 unblocked N-60's voice lane; N-65 levers done → D-45).
+spine now: **~~N-59~~/~~N-60~~/N-61 → N-62** — N-59 + N-60 OFFLINE lanes DONE-IN-CODE 2026-06-22
+(stress_core.py + stress_sensor_endurance.py); N-62 harness DONE-IN-CODE; the only remaining
+deployment blockers are the 3 HARDWARE live lanes (N-60 live mic/30-min, N-61 Windows ARM64 host,
+N-63 voice) (N-63 unblocked N-60's voice lane; N-65 levers done → D-45).
 N-52/N-56/N-57/N-58 (→ D-40/D-41/D-42 and the chat-render half of D-39) remain
 complete; **N-51 + N-53 + N-54 are RE-OPENED** by the §M.5 regression audit — D-39's
 voice/rebuild claims do not match the running code. N-45/N-48/N-49 remain broader
@@ -2435,7 +2438,27 @@ swappable for SenseVoice×sherpa-onnx). Order within §M: **N-63 → N-55**.
 [N-62] centrality:H ambiguity:L — terminal deployment acceptance
 ```
 
-### N-59 (CORE-STRESS) — Sustained runtime and model-path stress `[ ]`
+### N-59 (CORE-STRESS) — Sustained runtime and model-path stress `[~]`
+
+> **DONE-IN-CODE 2026-06-22 (OFFLINE orchestrator — sandbox-complete; live confirmation `[~]`):**
+> `services/lk/tests/stress_core.py` drives the **real** kernel machinery under repeated/overlapping
+> work with a **deterministic stub** in place of the model transport (no cloud key / GGUF needed), so
+> it is fully sandbox-buildable. It asserts the N-59 contract: **60 mixed turns** (retrieval on/off,
+> streaming) through the real `run_turn` all complete + persist; **cancellation during active work**
+> writes ZERO torn durable records (real `ContextStore` L1) and later turns still succeed; **repeated
+> retrieval** (40×) is deterministic + non-growing on the real `RetrievalPipeline`; **10 autonomous
+> cycles** via the real `CognitiveTick` act exactly-once-per-significant-beat and self-heal a raising
+> act_fn; **3 bridge restarts** (real `DesktopBridge.enqueue_turn`/`_run_turn_job` + real `ChatStore`)
+> keep every durable record (contiguous seqs, all parse), **zero stuck jobs**, **bounded queue**
+> (high-water ≤ enqueued), one cancel/cycle; **3 compatible/incompatible KV restarts** via the real
+> `server._slot_filename` — a compatible runtime reuses the slot, each incompatible one (ctx/kv/FA)
+> gets a DIFFERENT slot that is **never silently loaded**, and `_prune_slots` discards stale
+> checkpoints; **no silent provider fallback** — a local-primary failure re-raises and the backend
+> stays LOCAL; clean shutdown (no orphan threads, gate free). Reports **p50/p95/max** turn latency +
+> queue high-water → `.runtime/core-stress-report.json` (git-ignored). Wired into `scripts/check.sh`
+> (`core stress N-59`); green. **Now a REAL offline lane in `scripts/deploy_accept.py`** (was
+> `pending`) → N-62's cognition lane is closed. **Live confirmation `[~]`:** the identical
+> orchestrator against a real local model + configured cloud key (actual latencies / network variance).
 
 **Pathway.** Parallel lanes exercise cloud and local turns, retrieval, context
 freezing, cancellation, autonomy, policy, agency proposals, and KV restart. They
@@ -2465,7 +2488,19 @@ silent provider fallback. Report p50/p95/max; do not add a benchmark framework.
 - `crystallizes-during`: latency thresholds for local CPU versus cloud.
 - `intentionally-open`: provider network variance; correctness remains mandatory.
 
-### N-60 (SENSOR-STRESS) — Live perception and voice endurance stress `[ ]`
+### N-60 (SENSOR-STRESS) — Live perception and voice endurance stress `[~]`
+
+> **DONE-IN-CODE 2026-06-22 (OFFLINE lane — sandbox-complete; live lane `[~]` live-pending):**
+> `services/lk/tests/stress_sensor_endurance.py` is the **deterministic labeled-audio replay
+> control** — it drives the **real** `AudioObserver._capture_loop` (no new sensor abstraction; the
+> same seam stress_sensors.py §F uses) with a scripted per-frame RMS stream + transcript-by-label
+> stub, and asserts the offline-checkable N-60 properties against the **real** `audio_gate`:
+> one utterance → one query in order (no clip-merge/split), EOF tail not lost, the dedup gate drops
+> a duplicate utterance (no 2nd proactive turn), an endurance run of 120 distinct utterances with no
+> drift + bounded temp wavs, the ≥10 s send/dismiss floor (static guard), and bounded vision novelty
+> history. Wired into `scripts/check.sh` (`sensor endurance N-60`); green. **Run `--live` for the
+> hardware procedure.** Still `[~]` live-pending (hardware): live microphone + display, the 30-minute
+> wall-clock endurance, the WER threshold on real speech, and the host silence floor.
 
 **Pathway.** Vision and audio run concurrently through repeated foreground changes,
 speech/silence boundaries, short commands, long utterances, partial updates, dismiss,
@@ -2523,7 +2558,24 @@ directory removal. Record peak memory and orphan processes.
 - `crystallizes-during`: Windows localhost-forwarding behavior.
 - `intentionally-open`: N-55 hotkey helper implementation; report it separately.
 
-### N-62 (DEPLOY-ACCEPT) — Current-tree MVP deployment acceptance `[ ]`
+### N-62 (DEPLOY-ACCEPT) — Current-tree MVP deployment acceptance `[~]`
+
+> **DONE-IN-CODE 2026-06-22 (harness — sandbox-complete; FINAL green `[~]` live-pending):**
+> `scripts/deploy_accept.py` is the evidence-bundle/manifest harness — it **collects evidence and
+> declares a verdict; it does not repair** (per the node). It assembles a manifest (commit, branch,
+> dirty, config_hash, dependency versions, model profile [LOCAL-FIRST default when unconfigured],
+> host/uname), runs every OFFLINE lane it can (`scripts/check.sh` gate + N-60 offline), and records
+> the live lanes (N-60 live, N-61 Windows-ARM64 host, N-63 voice) as explicitly **BLOCKED — never
+> silently passed (gate #1 integrity)**. Verdict is honest: `ACCEPT` (all incl. live green) /
+> `ACCEPT-PENDING` (offline-green, live blocked) / `REJECT` (an offline lane failed → frontier). The
+> five acceptance invariants (no corruption / stuck process / false UI health / silent sensor death /
+> bypassed confirmation) are mapped onto lane evidence (satisfied / pending / unmet). Bundle →
+> `.runtime/deploy/<ts>/` (git-ignored). Pure decision/manifest logic import-tested by
+> `services/lk/tests/test_deploy_accept.py` (in `scripts/check.sh` as `deploy-accept N-62`; green);
+> `--dry-run` collects a bundle without running lanes. **N-59 cognition lane is now a REAL offline lane
+> (built 2026-06-22, `stress_core.py`) — no longer pending.** **FINAL green `[~]` live-pending:** now
+> blocked ONLY on the 3 hardware lanes (N-60 live + N-61 Windows host + N-63 voice) passing against
+> one commit; the offline + cognition lanes are green.
 
 **Pathway.** Diamond convergence: N-59 core stress, N-60 sensor endurance, and N-61
 desktop/host stress must all pass against the same commit and configuration manifest.
@@ -3307,6 +3359,20 @@ Ties directly to chat-flow Phase-1 (a turn must feel responsive). **HIGH priorit
     that powershell/aspnet_compiler/msiexec counts stay flat over an hour of vision-on; (b) the low-frequency
     callers (hotkey relaunch in `desktopctl.sh`, `ctl.py` status probes) — bounded, optional; (c) optionally
     route notify's balloon through the host (render-risk, deferred). Feeds **#4 N-61** (desktop/host endurance).
+    **★ REOPENED/EXPANDED (user 2026-06-21 — bloat STILL present after D-59):** the storm is broader than the
+    vision poll. **Live bloat census to drive to ~0:** `aspnet_compiler.exe` (still!), **COM Surrogate
+    (dllhost.exe)**, **crashpad_handler** (Tauri/Chromium webview), **NodeJS javascript runtime** (Tauri sidecar/
+    build), **mssense / "mss cs connectivity service"**, **Windows PowerShell** (residual hosts), and **WSL service
+    bloat** (vmmem/relay/interop). Each needs source-attribution → bound/pool/reap (same pattern as winhost: one
+    long-lived helper, not per-call spawns; kill on teardown). **N-78b — PROCESS-TREE LIFECYCLE TRACKING (new,
+    user-requested, ties N-28 Quit-all):** every process LAWRENCE launches (compiler/rebuild/powershell/node/
+    ffmpeg/llama-server/sidecars/…) is **registered with its PID + recursively-discovered child PIDs** in a tracked
+    set; on **launcher → Quit / Quit-all** the whole tree is terminated (graceful→force), then a **survivor sweep**
+    finds any stray LAWRENCE-spawned descendants and **asks the user whether to force-terminate** them (don't
+    silently kill unknowns). Implementation seam: a `proctrack` registry (record on every spawn across
+    winhost/obs/server/desktopctl/build paths) + `ctl.quit_all()` walks it + a cross-platform child-enumeration
+    (psutil if present, else `wmic`/`/proc` walk; I4 degrade). Gate: a `test_proctrack` (fake spawns → tree
+    captured → quit reaps → survivors reported). **Feeds #4 N-61 + N-28.**
   - **N-79 (DEBUG-LOGGING)** `[~]` — shared `debuglog.py` mechanism shipped (D-52; counters + structured
     `[debug]`, `LK_DEBUG`). **Remaining:** roll `debug(...)` calls into bridge turn, proactive (the firing
     audit), observers, schedule; surface counters on `/metrics`; add a launcher debug toggle. Supports
@@ -3318,7 +3384,9 @@ Ties directly to chat-flow Phase-1 (a turn must feel responsive). **HIGH priorit
   uses `engine.gather` which **parallelizes** the retrieval arms. So proactive = async + internally-parallel;
   the open work is *when it fires* (significance gate), not *how* it runs.
 - **NEW (2026-06-20, reliability/compliance):**
-  - **CI/CD shipped → D-57** (`.github/workflows/ci.yml`: offline gate on 3.11/3.12 + Graphviz diagram lint).
+  - **CI/CD = DUMMY/placeholder (D-57; user 2026-06-21)** — only an offline-gate runner (3.11/3.12 + Graphviz
+    diagram lint). **NOT real CI/CD**; proper build/release/sign/deploy/Docker/installer/Android/emulated-tests
+    are **far / post-MVP**. Tracked as a stub, not a finished node.
   - **Backup retention → D-57** (`prune_backups`, `LK_BACKUP_KEEP`=10) — `.runtime/` can no longer grow
     unbounded. Crash-recovery surface confirmed sound: atomic tmp+`os.replace` writes (ctx/store), flock
     self-releases on kill (lock.py), startup trims a crashed session's raw buffer.
@@ -3327,11 +3395,29 @@ Ties directly to chat-flow Phase-1 (a turn must feel responsive). **HIGH priorit
 - **Carry-overs:** N-63 live-mic verify (pending hardware) · the `test_retrieval_engine` full-suite
   ordering flake (housekeeping).
 
-**Proposed MVP completion order (non-UI), to confirm:** ~~N-32 pipeline latency (+N-22 watchdog)~~ **pass-1
-done (D-54/D-55)** → ~~N-66 atomic/nodal~~ **pass-1 done (D-53)** → **next: N-32 pass-2 (live profile →
-parallelism/prefetch) + N-66 pass-2 (internal extraction)** → N-67 integrity audit (pass-2) → N-59/60/61 →
-N-62 acceptance; **N-78/N-79 host-hygiene + debug-logging fold into N-61/N-67**; N-07 proactive refinement
-rides N-21+N-79; N-68 + N-17/55 triaged in.
+**★ LOCKED MVP PRIORITY (user 2026-06-21 — overrides earlier proposals):**
+1. **TIE — (a) N-82 §A regressions** (A1 load · A2 mid-regen empty · A3 proactive-regen · A4 deep-search ·
+   A5 history-layout+resize; gate #1 integrity) **AND (b) DEPLOYMENT acceptance** (N-63 voice live-mic →
+   N-59 core stress / N-60 sensor+voice endurance / N-61 desktop+host endurance → **N-62 acceptance sink**;
+   N-78 host-hygiene hour-test folds into N-61). Both run together at the top.
+2. **N-82 §C3/C1/C2** — message-control + IA redesign (three-group controls, toolbar overflow, labelled glyphs)
+   + B1 sensor thumbs.
+3. **LAUNCHER REWORK — FUNCTIONAL PANES (N-80 steps 9–12 + N-82 B2/B3/B4; NO LONGER deferred — user
+   2026-06-21 "you skipped the launcher re-work, yet again").** The launcher *shell* (4-tier IA, consoles,
+   metrics) was built (D-21), but the **panes are empty/utility-less**. Build real CRUD+views for: **Memory**
+   (delete/revise/clean/restore-from-backup-merge/reset/re-init/re-link — not just Stats/Backup/Clear) ·
+   **Logs · Journal · Links · Chats · Notes · Tasks · Reminders · Scheduled-tasks · Checklists · Todos** ·
+   **Diagnostics** refinement · and **chat-VCS diff** (real diff/variant content) — **but per N-82 B4 the
+   PRIMARY chat-diff surface moves to the MAIN UI behind a toggle**; the launcher keeps a read-only viewer.
+   GUI==CLI parity for every pane (ctl.py). *Files:* [launcher/qt_tabs.py](../services/lk/launcher/qt_tabs.py), [memops.py](../services/lk/memops.py), [launcher/chat_vcs.py](../services/lk/launcher/chat_vcs.py),
+   [launcher/metrics.py](../services/lk/launcher/metrics.py), bridge read endpoints, [ctl.py](../services/lk/ctl.py), [test_launcher.py](../services/lk/tests/test_launcher.py). **Also lands N-78b proctrack** (Quit-all
+   reaps the process tree) since that's a launcher action.
+4. **Finish-quality batch** — N-66 pass-2 (internal extraction) + N-67 qualitative pass (re-grade
+   D-35/39/40/41) + N-78/N-78b/N-79 hygiene/debug-logging fold-in + the host-bloat census drive-to-zero.
+- **AFTER MVP — N-32 pass-2** (turn-latency parallelism/prefetch off the live profile) — **moved out of the MVP
+  cut by the user.** Pass-1 (D-54/D-55) stays; the deeper rework waits.
+- **CI/CD is DUMMY** (D-57 placeholder); proper CI/CD + Docker/installer/Android/emulated-tests = post-MVP.
+**(superseded proposal kept for trace:** ~~N-32 pass-2 + N-66 pass-2 → N-67 → N-59/60/61 → N-62~~).
 **Status note (2026-06-20, this session):** §K.0.1 gate #2 (ATOMIC, D-53) + the N-32/N-22 latency-substrate
 of gate #3 (D-54/D-55) + an N-67 pass-2 concurrency fix (D-56) + CI/CD & backup retention (D-57) + UI
 declutter pass-1 (D-58) all landed gate-guarded & offline-verified (`make check` **47 suites green**). The
@@ -3340,6 +3426,9 @@ stress, #1 N-67 qualitative pass, UI visual) — needs the Tauri/Rust/WSLg rebui
 can't perform; see the live-verify checklist below.
 
 **LIVE-VERIFY CHECKLIST (sandbox can't run these — needs rebuild + on-host execution):**
+- [x] **Rebuild #2 (2026-06-21) DONE — surfaced N-82 (§Q.14): regressions A1 load / A2 mid-regen empty / A3
+      proactive-regen / A4 deep-search / A5 history-layout+resize; confirmed-open B1 sensor-thumbs, B2/B3 launcher
+      panes; new UX redesign C1–C5 (message-control + IA). N-82 §A now MVP-blocking under #1 INTEGRITY.**
 - [ ] N-32: capture `turn.stagesMs` over real turns on the deployment host; confirm where the minutes go;
       profile-drive the pass-2 parallelism/prefetch. Confirm cache hit-rate on regenerate/proactive.
 - [ ] N-65: reproduce ≥the accepted ~10 tok/s warm/hot-KV decode @ 32K natively (N-73 for ≥15).
@@ -3500,6 +3589,12 @@ CSS vars via `initUiPrefs` but localStorage-only → migrate to config. *Files:*
 [app.js](../apps/desktop/web/variants/classic/app.js) (`initUiPrefs` reads config + applies CSS vars + webview `setZoom`; drop localStorage path),
 [styles.css](../apps/desktop/web/styles.css) (new `--ui-font-family`/`--ui-font-weight` vars), [main.rs](../apps/desktop/src-tauri/src/main.rs) (read config at launch → `set_size`/`set_position`/webview zoom), [tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) (static dims become overridable defaults).
 
+**⚠ LIVE-VERIFY DOWNGRADE (2026-06-21 rebuild #2 — see §Q.14/N-82):** the rebuild proved several items below
+marked "DONE (in tree)" are NOT fixed live → **regressions logged in N-82 §A**: step-2 #5 (empty-response) recurs
+for MID-conversation nodes (**N-82 A2**) + breaks after a proactive turn (**A3**); chat **load** is dead (**A1**);
+deep-search inert (**A4**); History-expand wrecks layout + no real resize (**A5**). Treat those steps as
+`[~] live-pending`, not done. Offline gates passed while the UI was broken — gates are necessary, not sufficient.
+
 **EXECUTION ORDER (dependency-aware; each step gated before the next):**
 1. **Systemic: DONE (in tree, 2026-06-21, D-61).** 0A drag-click fix ✓ → 0C panel-host extraction (4 UI panels) ✓ (0B already in tree). *(small, high-impact, unblocks honest testing of everything else)*
 2. **N-75 correctness: DONE (in tree, 2026-06-21, D-62).** 4 async regen ✓ (regenerate→`regenerate_async` job + UI poll/cancel) → 5 empty-response ✓ (in-place stream + empty-guard, never blanks the message) → 6 stuck-streaming ✓ (health-tick watchdog resets pill + settles orphaned draft) → 3 variant-nav ✓ (was a downstream symptom of sync-regen; async render-on-regen + correct switch-reload fixes it). *(make the existing feature trustworthy before redesigning its surface)* — **next: step 3.**
@@ -3620,3 +3715,202 @@ DAG), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (ADD endpoints), [app
 **Edges:** `[N-81] --{builds-on}--> [N-75 DAG]` (D-48..D-64) · `--{reuses}--> [N-02 retrieval / SemanticDB / MemoryIndex]`
 (search + project KB) · `--{extends}--> [WS-U NoteStore edges]` (linking) · `--{gated-by}--> [I1 single-writer, I3 role-seam]`
 (Projects KB isolation) · `--{feeds}--> [§P SOUL gate]` (chat = durable episodic memory, not a chat UI).
+
+### §Q.14 — N-82 (LIVE-VERIFY BATCH-2 REMEDIATION) — 2026-06-21 rebuild #2 feedback `[~]`
+> **BATCH-1 PROGRESS (2026-06-21, code-complete + offline-gated; LIVE-PENDING):** §A regressions **A1** (chat-load
+> nested-button → div[role=button]), **A4** (deep-search honest-disabled integrity gap; path was already wired), and
+> **A5** (window max-caps lifted + maximizable; history list column widened) are FIXED IN CODE with offline regression
+> guards added to `stress_ui.py`; full `scripts/check.sh` green (47 suites). **NONE are confirmed live** — they are
+> DOM/CSS/Tauri-config fixes the offline gate cannot exercise → all `[~]` until a WSLg rebuild. **Batch-2 = A2 + A3**
+> (the regenerate pair). Then §C3/C1/C2.
+> **BATCH-2 PROGRESS (2026-06-21, code-complete + offline-gated; LIVE-PENDING):** §A regressions **A2** + **A3** (the
+> regenerate pair) FIXED IN CODE. **A2 was deterministic, not "mid vs tail":** when regenerate went async (N-80 #4,
+> today's commit df3e79f) `regenerateMessage` kept `normalizeAssistantReply(res)`, but the async JOB result exposes the
+> reply as `res.answer` (the normal turn path maps `result.answer → text`; the regen path did not) → `res.text` was
+> always undefined → normalize substituted the literal `"(empty response)"` → and because that placeholder is non-empty
+> the `if(!text.trim())` empty-guard could NEVER fire. The user hit it on a mid node; it was actually universal. Fix:
+> read `res.answer`, detect emptiness from the RAW answer BEFORE the placeholder, keep the prior variant on a true
+> empty (honest failure). **A3 root cause:** `_present_finding` only pushed the SSE card + notification — it never
+> persisted the finding, so a proactive finding was an ephemeral bubble with no `msgId` → `renderMessageControls`
+> returns `""` → Regenerate/Link/Branch all dead, and it vanished on reload. Fix: persist the finding as a durable
+> `kind="finding"` chat message, carry its id on the card (`onFinding` puts it on the bubble), and base a finding regen
+> on its OWN content (no originating query) in `_build_regen_turn`. **Real endpoint tests added** (test_chat_ops_bridge:
+> persist + regenerate a finding; A2 answer-field contract) + stress_ui A2/A3 static guards; `scripts/check.sh` green.
+> A2's JS behaviour + A3's live controls still need a WSLg rebuild to confirm. Next: §C3/C1/C2 + B1.
+>
+> **BATCH-3 PROGRESS (2026-06-22, in-flight — Tier-2 §C3/C1/C2 + B1):** §C3 **feedback backend DONE-IN-CODE +
+> offline-gated** (sandbox-complete, NOT live-pending — it's a pure backend slice): `ChatStore` gains a global
+> `feedback.json` store (`set_feedback`/`get_feedback`/`list_feedback` + `_read/_write`, atomic temp+replace, kept OUT of
+> the append-only event log like bookmarks so a vote can flip/clear; auto-removes a record when neither vote nor text
+> remains; dropped on hard-delete so none dangle); bridge `POST /chats/{id}/feedback` → `chat_feedback` (up/down/clear +
+> optional free-text, 400 on missing id/empty payload, 404 on unknown message). The vote control is **real** (durably
+> persisted + retrievable; `list_feedback(vote=…)` is the aggregation surface §P SOUL + N-76 trajectory will read later).
+> Real endpoint test (vote/flip/text/clear-removes/guards/hard-delete-cleanup, all PASS) + 4 stress_ui static guards;
+> full `scripts/check.sh` green. **Remaining C3 = the 3-group render** (Regenerate+arrow / Options dropdown / vote pair)
+> → `[~]` live-pending. Then C1 toolbar, C2 row labels, B1 sensor thumbnails.
+> **Source:** user 2026-06-21 — a **second real WSLg `cargo build --release` rebuild** + screenshots after the
+> N-80 (D-61..D-64) + N-81 (D-66..D-74) work. This is the live-verify pass §R called for — and it is **load-bearing
+> evidence**: several N-80 items I marked **"DONE (in tree), live-verify pending"** did **NOT** survive the rebuild
+> (regressions), and the N-81 catalog additions piled controls onto an IA that now reads as bloated/unlabelled.
+> **This reframes priority:** regressions in already-"done" surfaces (load a chat, regenerate, deep-search) are
+> **N-67 INTEGRITY failures** (controls that look real but don't work) and **outrank building new N-81 catalog
+> items.** No code changed this round — this is the captured backlog + re-prioritisation. Invariants unchanged
+> (I1/I3/I5/I6 · GUI==CLI · N-67 every control real-or-disabled · don't commit). Each fix carries an offline gate;
+> **but the lesson of this batch is that offline gates passed while the live UI was broken** → N-82 fixes must pair
+> with a documented live-verify step, and "DONE (in tree)" is downgraded to `[~] live-pending` until a rebuild confirms.
+>
+> **BATCH-4 LIVE REPORT (2026-06-22, user session):** a fresh live look reports **five still-broken UI items** (see
+> §D below). Net: the BATCH-1/2 `[~]` fixes for **A1 (load a chat)** did **not** resolve it live — chat load is still
+> dead, the "view chat" panel is still broken, and selecting a chat sets it active but the feed only shows it after a
+> manual GUI reload (no reactive re-render). The **N-75 variant `‹n/m›` switcher mis-renders the 1/n case**, and the
+> **chat-map (minimap)** scroll-jumps to top on any click and is over-indented. These are **N-67 integrity failures**
+> (controls present but not working) and **outrank new catalog items** — they fold into the Tier-2 §C / N-75 render
+> batch (all `[~]` live-pending; code-fixable here, but each needs a WSLg rebuild to confirm).
+
+**A — REGRESSIONS (shipped/"done" then broke live — HIGHEST priority; these are the N-67 integrity gap made concrete):**
+- **A1 — Cannot LOAD a chat into the active window. (catalog #1 "load `[have]`" is FALSE live; N-80 step-5 #8.)**
+  History lists chats (active/Scratch/Journal/Chat rows) but selecting one does not load it into the main chat
+  feed — "Select an entry" persists. The single most important chat-management action is dead. *Suspect:* the
+  History row click handler / `loadChat`/`loadChatIntoFeed` path vs the panel-host (0C) split, or `data-chat-id`
+  match shadowed by the new B9c row sub-controls (checkbox/chips/icon buttons added in front of the row button).
+  *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (History click delegation, `loadChat`), [panel.html](../apps/desktop/web/panel.html)/[index.html](../apps/desktop/web/index.html) (History host), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/chats/{id}` get + `/switch`).
+  - **`[~]` BATCH-1 FIX (code; LIVE-PENDING) 2026-06-21:** ROOT CAUSE was *not* the suspected delegation order
+    (that is correct — sub-controls `return` first) but **invalid nested interactive content**: `.history-main`
+    was a `<button>` containing `<button>` folder/tag chips. Browsers auto-close the outer button at the first
+    nested button, restructuring the DOM → breaks the `data-chat-id` click target (A1) *and* hoists extra children
+    into the row grid (feeds A5). Fix: `.history-main` → `<div role="button" tabindex>` (legal chip container),
+    `aria-disabled` for archived, keydown (Enter/Space) for keyboard parity, focus-visible CSS. Data/bridge layer
+    verified correct (`get_chat`→`messages_list`+`tree`). Offline guard added (stress_ui A1). **Needs WSLg rebuild
+    to confirm a chat actually loads into the feed.**
+- **A2 — Regenerate returns "(empty response)" for a MID-conversation response (the response *between* responses).**
+  Contradicts D-62 #5 ("never blanks the message"). The in-place-stream/empty-guard holds for the tail message but
+  **breaks for a non-tail node** — likely `state.regenTargetUiId` / sibling-group rebuild not resolving a mid-path
+  target, so the delta stream orphans again. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`onDelta`/`regenTargetUiId`/`loadChatIntoFeed`), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`regenerate_async`/`_run_turn_job`).
+  - **`[~]` BATCH-2 FIX (code; LIVE-PENDING) 2026-06-21:** ROOT CAUSE was *not* `regenTargetUiId`/streaming (that
+    resolves the mid target fine) but a **result-field mismatch introduced today** (df3e79f, when regen went async):
+    `regenerateMessage` read `normalizeAssistantReply(res).text`, but the async job result carries the reply under
+    **`res.answer`** (the normal turn path maps `result.answer → text`; the regen path did not). `res.text` was always
+    undefined → `normalizeAssistantReply` substituted the literal `"(empty response)"` → and since that placeholder is
+    non-empty, the `if(!text.trim())` empty-guard could NEVER fire and the message adopted it. **Not mid-vs-tail — it
+    was universal**; the user just hit it on a mid node. Fix: read `res.answer`, detect emptiness from the RAW answer
+    *before* the placeholder, keep the prior variant on a true empty (honest failure). Endpoint contract test (regen
+    result exposes `answer`, not `text`) + stress_ui A2 guard. **Needs WSLg rebuild to confirm a real regen renders.**
+- **A3 — Regenerate fails when the turn was a PROACTIVE invoke.** Regenerating a response produced by the proactive
+  path (D-44) breaks — the proactive message likely lacks the `parent`/job lineage `regenerate_async` assumes.
+  *Files:* [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (proactive→message provenance, `_build_regen_turn`), [ctx/chats.py](../services/lk/ctx/chats.py) (proactive message `kind`/`parent`).
+  - **`[~]` BATCH-2 FIX (code; LIVE-PENDING) 2026-06-21:** ROOT CAUSE — `_present_finding` only pushed the SSE card +
+    desktop notification; it **never persisted the finding to the ChatStore**, so a proactive finding had **no `msgId`**
+    → `renderMessageControls` returns `""` (Regenerate/Link/Branch all absent), and the finding **vanished on reload**.
+    It was never regenerate-able, not "lineage broke". Fix: (1) `_present_finding` persists the finding as a durable
+    `kind="finding"` assistant message + carries its `msgId`/`chatId` on the SSE card; (2) `onFinding` puts that id on
+    the bubble so per-message controls render; (3) `_build_regen_turn` bases a finding (or any parentless) regen on the
+    response's OWN content (a finding has no originating user query). Real endpoint test (persist + regenerate a
+    finding → browsable sibling) + stress_ui A3 guard. **Needs WSLg rebuild to confirm the live card gains controls.**
+- **A4 — Deep-search button does nothing.** The deep/forced-retrieval toggle (the "[retrieval] UI-forced
+  single-pass" surface) is inert — no deeper pass fires. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (deep toggle wiring), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (deep flag → engine), [retrieval/engine.py](../services/lk/retrieval/engine.py).
+  - **`[~]` BATCH-1 FIX (code; LIVE-PENDING) 2026-06-21:** AUDIT FINDING — the path is **already wired end-to-end**
+    (toggle → `configSnapshot.deepSearch` → bridge `deep_search` → `_retrieval_for_turn` expands top_k/fresh_per_q/
+    db_min_hits → `_forced_web_results`). The live "does nothing" is an **integrity/legibility gap (gate #1)**: deep-
+    search depends on the web/retrieval master, and when that's off `syncWebDepthButton` *silently force-reset* the
+    toggle — a press vanished with no feedback. Fix: the button is now **honestly `disabled`** (native, blocks the
+    click) with an explanatory title when web is off, and an "armed for next turn" title when on; `.tool-btn:disabled`
+    CSS. NOTE: locally (LOCAL-FIRST, no network) deep-search may still return *no relevant sources* — that is expected,
+    not a bug; perceptible per-turn feedback rides C2. Offline guard added (stress_ui A4). **Live-verify the disabled
+    state + that an armed deep turn widens retrieval.**
+- **A5 — History pane expand breaks page layout + no real window resize.** Expanding History throws off the whole
+  page: chat renderer shifts off, search bar partially occluded/offset. Separately, **window resize works only via a
+  "magical" edge strip** — no proper resize affordance. *Files:* [styles.css](../apps/desktop/web/styles.css) (History panel layout/grid, resize handles), [index.html](../apps/desktop/web/index.html)/[panel.html](../apps/desktop/web/panel.html), [main.rs](../apps/desktop/src-tauri/src/main.rs)/[tauri.conf.json](../apps/desktop/src-tauri/tauri.conf.json) (window decorations/resizable).
+  - **`[~]` BATCH-1 FIX (code; LIVE-PENDING) 2026-06-21:** ROOT CAUSE — the overlay window was capped tiny
+    (`maxWidth 1200`/`maxHeight 560`, `maximizable:false`), so History (`absolute; top:14px→bottom:122px`) got only
+    ~200px tall and the SE grip could barely grow it; *and* `.history-body` split `142px | 1fr`, far too narrow for
+    the enriched chat rows (checkbox+title+chips) → overflow/misalignment. Fix: tauri.conf `maxWidth 2560`/
+    `maxHeight 1600`/`maximizable:true` (default size unchanged → overlay identity kept); `.history-body` list column
+    → `minmax(240px,320px)`; `.history-panel` width → `min(720px,…)`. The A1 nested-button grid fix also removes the
+    hoisted-children breakage. Offline guard added (stress_ui A5). **DEFERRED to a later batch (C-series IA):** a real
+    maximize *button* (decorations are off → no native one) and edge-resize beyond the SE grip. **Live-verify expand
+    no longer shifts the renderer + the window grows to a usable size.**
+
+**B — CONFIRMED-STILL-OPEN (rebuild confirms N-80 step-5..12 genuinely unbuilt; not regressions):**
+- **B1 — Sensor thumbnails all labelled "Audio transcript"; no distinct web-call / retrieval / docs / uploaded-
+  ingested thumbnails.** = **N-80 step-7 #7**, still open after D-65's partial fix. Each pipeline needs a distinct,
+  correctly-labelled indicator + a useful hover (latest-context summary; transcript = scrollable popover).
+- **B2 — Launcher still missing most panes:** memory/logs/journal/links/chats/notes/tasks/reminders/scheduled-
+  tasks/checklists/todos/**VCS-chat-diff**. = **N-80 steps 9–12**, unbuilt.
+- **B3 — Launcher Memory pane has buttons but no real utility** (Stats/Backup/Clear-cache/Clear-rolling show, but
+  no content/CRUD). = **N-80 step-9**.
+- **B4 — DESIGN CHANGE: chat-VCS diff belongs in the MAIN UI behind a toggle** (user: "should have been in the main
+  UI at toggle in the first place"), not (only) in the launcher. Revises N-80 step-10 + N-75 §4: keep a launcher
+  read-only viewer but the primary surface is an in-chat toggleable diff. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (in-chat diff toggle off `tree()`/stored diffs), [styles.css](../apps/desktop/web/styles.css).
+
+**C — NEW UX REDESIGN (IA declutter + the message-control redesign — extends N-80 step-8b/#2; the detailed spec):**
+- **C1 — History top toolbar is bloated/hogged** (Clear/new · Save · Archive · Trash · Bookmarks · Backup all ·
+  Restore · Refresh · ✕ — all flat). Redesign the IA: group/overflow (primary actions visible, the rest behind a
+  ⋯/overflow), proper section design — not a flat button row.
+- **C2 — Unlabelled "weird" icon buttons** in chat rows (the 🏷 tag / 🗀 folder / ⏱ ttl / ★ pin / Summarize / Delete
+  glyphs from B4/B8/B9c) are cryptic → consistent labels/tooltips + grouping; the row IA needs a coherent design,
+  not accreted glyphs.
+- **C3 — MESSAGE-CONTROL REDESIGN (user's explicit target layout).** Replace the current accreted op row with **three
+  grouped controls**:
+  - **`Regenerate`** — button (label shown on hover/tooltip, with a symbol) **+ a side arrow → dropdown**: *presets*
+    (longer/shorter/formal/academic/casual/humanize/extend-N/compress-N…), **refine grounding** ("push to ground in
+    ~50+ citations" — the iterative grounding-hardening op, additive each press), **custom (informed)** (guidance input).
+  - **`Options`** — button → dropdown: **edit · link · bookmark (TOGGLE — bookmark if not, else clear) · promote to
+    note · links · branch from here · copy formatted · copy reduced**.
+  - **upvote / downvote pair** — with a **small side dropdown for detailed feedback**, captured for the model to
+    **improve the response, self-align, and understand the query trajectory** (feeds §P SOUL + N-76 trajectory-
+    awareness; store as a feedback record edge on the message). *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (`renderMessageControls`, the three menus + feedback POST), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`POST /chats/{id}/feedback`, copy-reduced formatter), [ctx/chats.py](../services/lk/ctx/chats.py) (feedback meta/edge), [styles.css](../apps/desktop/web/styles.css).
+  - **DONE-IN-CODE 2026-06-22 (backend, sandbox-complete — NOT live-pending):** the **feedback backend** is built +
+    offline-gated — `ChatStore.set_feedback/get_feedback/list_feedback` (global `feedback.json`, atomic, flip/clear,
+    auto-remove on empty, hard-delete cleanup) + bridge `POST /chats/{id}/feedback` (`chat_feedback`); real endpoint
+    test + 4 stress_ui guards; `scripts/check.sh` green. The vote is durably persisted + aggregatable (`list_feedback`).
+    **Still `[~]` live-pending:** the 3-group RENDER (Regenerate+arrow / Options dropdown / vote pair) + copy-reduced.
+- **C4 — Composer-level preset dropdown:** many regenerate presets should ALSO be selectable **when entering a normal
+  query** (a preset/mode dropdown on the composer), not only post-response. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (composer mode dropdown → turn op-descriptor), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py).
+- **C5 — Option-drawer + regen-menu declutter** (= N-80 step-8b, reinforced): the ≡ drawer and the in-window regen
+  options menu are "hogged, un-ordered, cluttered, unoptimised" → ordered, compact, non-blocking, dismiss-on-pick.
+
+**D — LIVE-CONFIRMED STILL-BROKEN (user session 2026-06-22 — second live-verify event; all `[~]` live-pending, render-side):**
+- **D1 — Chat load STILL dead.** "The chat load option still isn't there." → **A1 unresolved live**: the BATCH-1 nested-
+  button/`role=button` fix did not make a chat load into the active feed. *Re-open A1.* Likely still a render/host wiring
+  gap (panel-host 0C split vs `loadChatIntoFeed`), not the data layer (which tested correct). *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (History click→`loadChat`/`loadChatIntoFeed`, panel-host), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/chats/{id}` get).
+- **D2 — "View chat" section/panel STILL broken.** The History pane's view-chat section/panel does not render the
+  selected chat. Adjacent to D1/A1 + A5 (History layout). *Files:* [app.js](../apps/desktop/web/variants/classic/app.js), [styles.css](../apps/desktop/web/styles.css), [panel.html](../apps/desktop/web/panel.html)/[index.html](../apps/desktop/web/index.html).
+- **D3 — Select-chat needs a manual GUI reload to show.** Selecting a chat **sets it active** (the `/switch` succeeds) but
+  the main feed only displays it **after a manual reload** — no reactive re-render on switch. = the reactivity half of A1.
+  *Suspect:* `/switch` updates `active` but the client doesn't re-fetch/re-render the path; needs a switch→`loadChatIntoFeed`
+  re-render (or an SSE/active-changed nudge). *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (switch handler → re-render), [ui_bridge.py](../apps/desktop/scripts/ui_bridge.py) (`/switch`).
+- **D4 — Regenerate variant `‹n/m›` switcher broken for the 1/n case.** The browsable-sibling selector (N-75 kind-1)
+  mis-renders when there is a single variant (1/1) or the first-of-n — likely a guard that shows/positions the switcher
+  wrong at n=1 or off-by-one on the head index. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (variant switcher render off `tree()`/head).
+- **D5 — Chat-map (minimap) weird: scroll-jumps to top on any click + over-indented.** The reduced tree/minimap (N-75)
+  resets scroll to top on every click (likely a full re-render or anchor reset instead of an in-place selection update)
+  and uses excessive/needless indentation. *Files:* [app.js](../apps/desktop/web/variants/classic/app.js) (minimap render/click→select without scroll reset), [styles.css](../apps/desktop/web/styles.css) (indent).
+
+> **↳ §D BATCH DONE-IN-CODE (2026-06-22, all `[~]` live-pending — needs a WSLg `cargo build --release` to confirm):**
+> ROOT CAUSE found for D1/D2/D3 — the History/search/minimap panes run in **separate webviews** (panel.html, summoned by
+> `open_panel`) with their **own `app.js` state**; a panel switching the active chat could not re-render the **main** window's
+> feed. **D1/D3** fixed: `loadChatIntoFeed` now **emits `chat-path-changed`** when `PANEL_MODE` is set, and the main-window
+> listener **adopts ANY switched chat** (the old `chatId === state.chats.active` equality guard dropped every cross-chat
+> switch → dead feed; main window has empty `PANEL_MODE` so it never re-emits → no loop). **D2** fixed: `loadChatIntoFeed`
+> wraps `render()` in try (a sidecar lacking main-feed DOM no longer throws), and `loadChat` builds the in-panel preview from
+> the loaded messages **outside** the load try so a render error no longer poisons it with "Could not load chat". **D4**
+> fixed: `renderVariantNav` **clamps** the index into [0,n-1] (no more "0/n"/"(n+1)/n") + disables the arrows at the ends, and
+> a successful regenerate **reconciles variants from the authoritative server `tree()`** (`loadChatIntoFeed`) so an absent
+> `assistantMsgId` can't strand it at "1/1" with no switcher (the real 1/n bug). **D5** fixed: `openMinimap` **preserves
+> `scrollTop`/`scrollLeft`** across a click-refresh (+ only flashes "Loading…" on first open), and the map root row
+> **left-aligns** (`.map-graph > ul { justify-content: flex-start }`) + tighter per-level padding so it no longer reads as
+> over-indented. Offline-gated: 8 new `stress_ui.py` §Z static guards + `node --check` + full `scripts/check.sh` PASS (52
+> suites). The structural linear-chain flatten (if a long linear chat still nests too deep after rebuild) is the documented
+> live-verify follow-up. **Promote D1–D5 to D-numbers only after the rebuild confirms live.**
+
+**PRIORITY (N-82 internal): A+D (regressions / N-67 — A1+D1/D2/D3 chat-load+view+reactivity, D4 variant switcher, D5 minimap)
+→ C3+C1+C2 (the message-control + IA redesign the user spec'd)
+→ B1 (sensor thumbs) → B4 (in-chat diff toggle) → C4/C5 → B2/B3 (launcher panes, = N-80 steps 9–12).**
+**Sequencing vs N-81:** N-82 §A is a **prerequisite to claiming any chat-management feature works** — it precedes
+the remaining N-81 catalog (#3 provenance/#8 message-link-load-restore — note #8 *is* A1's neighbourhood, fold them)
+and Projects (#11, still LAST). **Build only on a live-verify cadence** (rebuild confirms each fix; offline gate is
+necessary-not-sufficient — this batch proved that).
+
+**Edges:** `[N-82] --{remediates-live}--> [N-80, N-81, N-75]` · `--{is-the-evidence-for}--> [N-67 integrity]`
+(regressions = integrity failures) · `--{folds}--> [N-80 steps 5–13]` · `--{feeds}--> [N-76 trajectory]` (C3
+feedback) · `--{precedes}--> [N-81 #3/#8 + Projects #11]`.

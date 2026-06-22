@@ -288,6 +288,63 @@ check("classic variant renders per-message ops + variant nav + diff",
 check("classic variant wires regenerate/edit/branch/variant/minimap",
       all(s in app for s in ("regenerateMessage", "editMessage", "branchFromMessage",
                              "switchVariant", "openMinimap", "submitNote")))
+# N-82 batch-1 live-regression guards (A1/A4/A5): these were green offline while broken
+# live, so pin the specific shapes the live rebuild #2 disproved.
+styles_css = Path("apps/desktop/web/styles.css").read_text(encoding="utf-8")
+# A1 — a <button> may not contain <button> chips (the row main nests folder/tag chips).
+# The main must be a focusable div[role=button], NOT a button, with keyboard activation.
+check("A1: history row main is a div[role=button] carrying data-chat-id (not a nested button)",
+      'class="history-main" role="button"' in app
+      and '<button type="button" class="history-main"' not in app)
+check("A1: div-as-button restores keyboard (Enter/Space) activation of a chat row",
+      '[data-chat-id][role="button"]' in app and 'loadChat(chat.dataset.chatId)' in app)
+# A4 — deep-search depends on the web/retrieval master; when off it must be HONESTLY
+# disabled (gate #1), not silently swallow clicks.
+check("A4: deep-search toggle is honestly disabled when web is off (no silent no-op)",
+      "deepSearchToggle.disabled = true" in app and "deepSearchToggle.disabled = false" in app)
+check("A4: a dependency-disabled tool-btn reads as unavailable",
+      ".tool-btn:disabled" in styles_css or '.tool-btn[aria-disabled="true"]' in styles_css)
+# A5 — the overlay could not grow (tiny max caps, no maximize) so history had no room,
+# and the 142px list column overflowed once rows gained checkbox+chips.
+tauri_conf = Path("apps/desktop/src-tauri/tauri.conf.json").read_text(encoding="utf-8")
+check("A5: window can actually grow (lifted max caps + maximizable) for history/expand",
+      '"maximizable": true' in tauri_conf
+      and '"maxHeight": 560' not in tauri_conf and '"maxWidth": 1200' not in tauri_conf)
+check("A5: history list column has room for the enriched chat rows (no 142px overflow)",
+      "minmax(240px, 320px) minmax(0, 1fr)" in styles_css)
+# N-82 batch-2 live-regression guards (A2/A3): the regenerate pair.
+# A2 — the async job result exposes the model reply as `res.answer`, NOT `res.text`.
+# Reading res.text → normalizeAssistantReply substitutes "(empty response)" and the
+# empty-guard (which checked the post-substitution text) can never fire. Pin the
+# corrected shape: read res.answer + detect emptiness from the RAW answer first.
+check("A2: regenerate reads res.answer (not res.text) so a real reply is not blanked",
+      "normalizeAssistantReply({ text: res.answer })" in app
+      and "normalizeAssistantReply(res).text" not in app)
+check("A2: empty-guard fires on the RAW answer before the '(empty response)' placeholder",
+      "const rawAnswer = typeof res.answer" in app and "if (!rawAnswer)" in app)
+# A3 — a proactive finding is now a durable, regenerate-able message: the kernel
+# persists it (kind="finding") and sends its id on the SSE card; the UI must carry
+# that id onto the bubble so per-message controls render (no more dead ephemeral card).
+check("A3: proactive finding card carries the persisted msgId/chatId onto the bubble",
+      "msgId: payload.msgId" in app and "chatId: payload.chatId" in app)
+check("A3: kernel persists a finding as a real kind='finding' chat message",
+      'kind="finding"' in bridge_src and "_present_finding" in bridge_src)
+check("A3: regenerating a finding bases on its own content (no originating query)",
+      'str(orig.get("kind") or "") == "finding"' in bridge_src)
+# C3 — per-message feedback backend: durable up/down + free-text on a message, kept
+# out of the append-only event log (mutable, like bookmarks), aggregatable for §P SOUL
+# / N-76. The vote control is real (persisted + retrievable), not cosmetic.
+check("C3: ChatStore has the feedback store (set/get/list + atomic file)",
+      all(f"def {m}(" in chats_src for m in ("set_feedback", "get_feedback", "list_feedback",
+                                             "_read_feedback", "_write_feedback"))
+      and 'self._feedback' in chats_src)
+check("C3: feedback is removed when neither vote nor text remains (no residue)",
+      'not rec.get("vote") and not str(rec.get("text")' in chats_src)
+check("C3: hard-deleting a chat drops its feedback so none dangle",
+      'f.get("chatId") != chat_id' in chats_src and "_write_feedback(fkept)" in chats_src)
+check("C3: bridge exposes POST /chats/{id}/feedback → chat_feedback (404 on unknown id)",
+      "def chat_feedback(" in bridge_src and 'parts[2] == "feedback"' in bridge_src
+      and "self.bridge.chat_feedback(" in bridge_src)
 # Branch map is a side-flanking sidecar WINDOW (not a full-window overlay that
 # hogs the chat). Map button opens the sidecar; main reflects path switches via
 # the cross-window event; Rust + capabilities know the panel-minimap window.
@@ -617,6 +674,40 @@ check("CLI parity: tag/untag/tags/folder/folders/bulk subcommands",
       'sub == "tag"' in ctl_src_b4 and 'sub == "untag"' in ctl_src_b4
       and 'sub == "tags"' in ctl_src_b4 and 'sub == "folder"' in ctl_src_b4
       and 'sub == "folders"' in ctl_src_b4 and 'sub == "bulk"' in ctl_src_b4)
+
+section("Z. N-82 §D live-confirmed render regressions — static guards (D1–D5)")
+# These are render-side fixes the offline gate can only pin structurally; a WSLg
+# rebuild confirms them live. Guarding the exact seams stops a silent re-regression.
+styles = Path("apps/desktop/web/styles.css").read_text(encoding="utf-8")
+# D1/D3: History/search/minimap panels are separate webviews; a panel switching the
+# active chat must signal the main window, which must adopt ANY chat (not only the one
+# it already shows). chat-path-changed now appears 3×: emit-in-loadChatIntoFeed, the
+# minimap emit, and the main-window listen.
+check("D1/D3: a panel switch signals the main feed (emit in panel mode)",
+      app.count("chat-path-changed") >= 3 and "if (PANEL_MODE) {" in app)
+check("D3: the main listener adopts ANY switched chat (no equality guard)",
+      "if (chatId) loadChatIntoFeed(chatId).catch" in app
+      and "chatId === state.chats.active) loadChatIntoFeed" not in app)
+# D2: loadChat must build the in-panel preview from the loaded messages regardless of
+# whether the (main-feed) render threw — a load error no longer poisons the preview.
+check("D2: loadChatIntoFeed swallows a sidecar render error",
+      "try { render(); } catch" in app)
+check("D2: loadChat builds the preview outside the load try (no 'Could not load' poison)",
+      "build the preview anyway (D2)" in app
+      and 'state.history.text = `Could not load chat' not in app)
+# D4: the ‹n/m› switcher index is clamped, and a regenerate reconciles its variants
+# from the authoritative server tree (so an absent assistantMsgId can't strand it at 1/1).
+check("D4: variant nav clamps the index into [0, n-1]",
+      "Math.min(Math.max(message.variantIndex ?? 0, 0), n - 1)" in app)
+check("D4: regenerate reconciles variants from the server tree",
+      "reconcile from the server tree" in app
+      and "try { await loadChatIntoFeed(chatId); } catch" in app)
+# D5: the branch-map preserves scroll across a click-refresh and the root row
+# left-aligns so it doesn't read as over-indented in a wide sidecar.
+check("D5: minimap preserves scroll across refresh",
+      "const prevTop = body.scrollTop" in app and "body.scrollTop = prevTop" in app)
+check("D5: minimap root row left-aligns (over-indent fix)",
+      ".map-graph > ul { padding-top: 0; justify-content: flex-start; }" in styles)
 
 stop.set()
 try: ui.close()

@@ -248,11 +248,15 @@ const REGEN_OPS = [
 function renderVariantNav(message) {
   const n = message.variants?.length || 0;
   if (n <= 1) return "";
-  const i = (message.variantIndex ?? 0) + 1;
+  // D4: clamp the index into [0, n-1] so the readout is always a valid "k/n" (1 ≤ k ≤ n)
+  // — a stale/over-pushed variantIndex used to print "0/n" or "(n+1)/n". Disable the
+  // arrows at the ends so the controls read honestly (N-67 integrity).
+  const idx = Math.min(Math.max(message.variantIndex ?? 0, 0), n - 1);
+  const i = idx + 1;
   return `<span class="variant-nav" title="browse regenerated variants">
-      <button type="button" class="variant-btn" data-chat-op="variant-prev" aria-label="previous variant">‹</button>
+      <button type="button" class="variant-btn" data-chat-op="variant-prev" aria-label="previous variant"${idx === 0 ? " disabled" : ""}>‹</button>
       <span class="variant-count">${i}/${n}</span>
-      <button type="button" class="variant-btn" data-chat-op="variant-next" aria-label="next variant">›</button>
+      <button type="button" class="variant-btn" data-chat-op="variant-next" aria-label="next variant"${idx === n - 1 ? " disabled" : ""}>›</button>
     </span>`;
 }
 
@@ -1366,6 +1370,11 @@ function onFinding(payload) {
     text: `**🔎 ${headline || "LAWRENCE noticed something"}**\n\n${insight}${cites ? `\n\n${cites}` : ""}`,
     time: currentTime(),
     meta: ["proactive finding"],
+    // N-82 A3: the kernel now persists the finding as a real chat message and sends
+    // its id on the card — so the bubble gets working per-message controls (Regenerate,
+    // Link, Branch) instead of being a dead ephemeral card that vanished on reload.
+    msgId: payload.msgId || "",
+    chatId: payload.chatId || "",
   });
   state.metrics.transcript = `finding: ${headline.slice(0, 60)}`;
   render();
@@ -1935,14 +1944,20 @@ async function regenerateMessage(message, spec) {
   }
   if (!res) { streamState.textContent = "Idle"; render(); return; }
   if (res.cancelled) { streamState.textContent = "Regenerate cancelled"; render(); return; }
-  const text = normalizeAssistantReply(res).text;
-  if (!text.trim()) {
+  // N-82 A2: the async job result exposes the model output as `res.answer` (NOT
+  // `res.text` — that maps to undefined). Detect a genuinely-empty reply from the
+  // RAW answer BEFORE normalizeAssistantReply substitutes its "(empty response)"
+  // placeholder; otherwise the guard below can never fire and the message silently
+  // adopts the literal "(empty response)" string (the reported regression).
+  const rawAnswer = typeof res.answer === "string" ? res.answer.trim() : "";
+  if (!rawAnswer) {
     // Honest failure: keep the previous answer as the active variant; never blank it.
     message.meta = ["regenerate returned an empty response"];
     streamState.textContent = "Idle";
     render();
     return;
   }
+  const text = normalizeAssistantReply({ text: res.answer }).text;
   message.variants = message.variants || [{ id: message.msgId, text: prevText }];
   message.text = text;
   if (res.assistantMsgId) {
@@ -1954,6 +1969,11 @@ async function regenerateMessage(message, spec) {
   message.meta = ["regenerated", spec.label.replace(/…$/, "")];
   streamState.textContent = "Idle";
   render();
+  // D4: reconcile from the server tree so the ‹n/m› switcher is ALWAYS correct — even
+  // when the job result omits assistantMsgId (the optimistic push above is then skipped,
+  // leaving the new sibling unregistered → stuck "1/1", no switcher). The tree is the
+  // source of truth for siblings + head; rebuild from it (keep the optimistic view on error).
+  try { await loadChatIntoFeed(chatId); } catch { /* keep the optimistic view */ }
 }
 
 // N-80 #2: the "Custom ▾" affordance opens this EPHEMERAL op picker just above the
@@ -2477,14 +2497,23 @@ async function setVoiceListen(enabled) {
 }
 
 function syncWebDepthButton() {
+  // N-82 A4: deep-search depends on the web/retrieval master. When that is off the
+  // control must be HONESTLY DISABLED (gate #1) — not silently swallow clicks. A real
+  // <button disabled> blocks the click natively, so a press no longer vanishes.
   if (!pressed("#retrieval-toggle")) {
     applyPressed("#deep-search-toggle", false);
-    deepSearchToggle.title = "Web search is off in Config";
+    deepSearchToggle.disabled = true;
+    deepSearchToggle.setAttribute("aria-disabled", "true");
+    deepSearchToggle.title = "Enable Retrieval / web in Options to use deep research";
     return;
   }
+  deepSearchToggle.disabled = false;
+  deepSearchToggle.removeAttribute("aria-disabled");
   const active = deepSearchToggle.getAttribute("aria-pressed") === "true";
   deepSearchToggle.classList.toggle("active", active);
-  deepSearchToggle.title = active ? "Deep web research active; click for shallow search" : "Shallow web search active; click for deep research";
+  deepSearchToggle.title = active
+    ? "Deep web research armed for the next turn; click for shallow search"
+    : "Shallow web search; click to arm deep research for the next turn";
 }
 
 function classifyFile(file) {
@@ -3024,10 +3053,14 @@ async function openMinimap() {
     } catch { /* bridge offline — fall through to the empty state */ }
   }
   if (!chatId) { body.innerHTML = '<span class="tasks-empty">No active chat.</span>'; return; }
-  body.innerHTML = "Loading…";
+  // D5: preserve scroll across a refresh (a node click re-renders the whole map; without
+  // this the view jumps to the top on every click). Only flash "Loading…" on first open.
+  const prevTop = body.scrollTop, prevLeft = body.scrollLeft;
+  if (!body.firstElementChild) body.innerHTML = "Loading…";
   try {
     const tree = await getBridge(`/chats/${encodeURIComponent(chatId)}/tree`);
     body.innerHTML = renderMinimap(tree);
+    body.scrollTop = prevTop; body.scrollLeft = prevLeft;
   } catch (error) {
     body.innerHTML = `<span class="tasks-empty">Could not load map: ${escapeHtml(error.message)}</span>`;
   }
@@ -3203,11 +3236,14 @@ function renderHistory() {
         return `
         <div class="history-item chat-row ${state.chats.active === item.id ? "active" : ""} ${item.archived ? "archived" : ""} ${item.ephemeral ? "temporary" : ""} ${item.pinned ? "pinned" : ""} ${checked ? "selected" : ""}">
           <input type="checkbox" class="chat-select" data-select-chat="${escapeAttr(item.id)}" ${checked ? "checked" : ""} title="Select for a bulk action" aria-label="select chat">
-          <button type="button" class="history-main" data-chat-id="${escapeAttr(item.id)}" ${item.archived ? "disabled" : ""}>
+          <!-- N-82 A1: a <button> may not contain <button> chips (invalid nested
+               interactive content auto-closes the outer button → breaks both the
+               data-chat-id click target and the row grid). Use a focusable div. -->
+          <div class="history-main" role="button" tabindex="${item.archived ? "-1" : "0"}" data-chat-id="${escapeAttr(item.id)}" ${item.archived ? 'aria-disabled="true"' : ""}>
             <b>${item.pinned ? "★ " : ""}${escapeHtml(item.title || "Chat")}${state.chats.active === item.id ? " · active" : ""}${item.archived ? " · archived" : ""}${ttl ? ` · ⏱ ${escapeHtml(ttl)}` : ""}</b>
             <small>${escapeHtml(item.updated || item.created || "")} · ${item.messages || 0} messages</small>
             ${folder || tags ? `<span class="chat-org-chips">${folder}${tags}</span>` : ""}
-          </button>
+          </div>
           <span class="history-actions">
             <button type="button" class="chip ghost ${item.pinned ? "active" : ""}" data-pin-chat="${escapeAttr(item.id)}" data-pinned="${item.pinned ? "1" : "0"}" title="${item.pinned ? "Unpin / unfavorite" : "Pin / favorite (keeps it at the top)"}">${item.pinned ? "★" : "☆"}</button>
             <button type="button" class="chip ghost" data-tag-chat="${escapeAttr(item.id)}" title="Edit tags (comma-separated)">🏷</button>
@@ -3276,7 +3312,16 @@ async function loadChatIntoFeed(chatId) {
     }
     return msg;
   });
-  render();
+  // A sidecar panel (history/search/minimap) lacks the main-feed DOM, so render()
+  // there can throw; the messages are already in state, so swallow it (D2).
+  try { render(); } catch { /* no main feed in this window */ }
+  // D1/D3: a panel and the main window are SEPARATE webviews with separate state, so
+  // a panel switching the active chat must signal the main window to reload its feed
+  // (the main-only listener calls loadChatIntoFeed; in the main window PANEL_MODE is
+  // empty so this never re-emits → no loop).
+  if (PANEL_MODE) {
+    try { tauri?.event?.emit?.("chat-path-changed", { chatId }); } catch { /* no event bus */ }
+  }
 }
 
 async function parentOf(chatId, messageId) {
@@ -3288,17 +3333,18 @@ async function parentOf(chatId, messageId) {
 async function loadChat(chatId) {
   try {
     await loadChatIntoFeed(chatId);
-    state.history.selected = { id: `session:${chatId}` };
-    state.history.format = "mdx";
-    state.history.text = state.messages.length
-      ? state.messages.map((message) => {
-          const who = message.role === "user" ? "You" : "LAWRENCE";
-          return `## ${who}\n\n${message.text || ""}`;
-        }).join("\n\n")
-      : "_No messages in this chat._";
-  } catch (error) {
-    state.history.text = `Could not load chat: ${error.message}`;
-  }
+  } catch { /* messages still loaded into state; build the preview anyway (D2) */ }
+  // D2: populate the in-panel preview from the loaded transcript regardless of whether
+  // the (main-feed) render inside loadChatIntoFeed succeeded — a load error no longer
+  // poisons the preview with "Could not load chat".
+  state.history.selected = { id: `session:${chatId}` };
+  state.history.format = "mdx";
+  state.history.text = state.messages.length
+    ? state.messages.map((message) => {
+        const who = message.role === "user" ? "You" : "LAWRENCE";
+        return `## ${who}\n\n${message.text || ""}`;
+      }).join("\n\n")
+    : "_No messages in this chat._";
   renderHistory();
 }
 
@@ -3738,11 +3784,19 @@ document.querySelector("#history-list")?.addEventListener("click", async (event)
   const bulkClear = event.target.closest("[data-bulk-clear]");
   if (bulkClear) { state.chats.selected = []; renderHistory(); return; }
   const chat = event.target.closest("[data-chat-id]");
-  if (chat) loadChat(chat.dataset.chatId);
-  else {
-    const row = event.target.closest("[data-index]");
-    if (row) loadHistoryItem(Number(row.dataset.index));
-  }
+  if (chat) { if (chat.getAttribute("aria-disabled") !== "true") loadChat(chat.dataset.chatId); return; }
+  const row = event.target.closest("[data-index]");
+  if (row) loadHistoryItem(Number(row.dataset.index));
+});
+
+// N-82 A1: the chat row's main is now a div[role=button]; restore keyboard activation
+// (Enter / Space) that a real <button> gave for free.
+document.querySelector("#history-list")?.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter" && event.key !== " ") return;
+  const chat = event.target.closest?.('[data-chat-id][role="button"]');
+  if (!chat || chat.getAttribute("aria-disabled") === "true") return;
+  event.preventDefault();
+  loadChat(chat.dataset.chatId);
 });
 
 // N-81 B9c: the sort/folder/tag <select>s live inside #history-list (re-rendered each
@@ -4057,7 +4111,10 @@ if (PANEL_MODE) {
   // feed here so the chat reflects the chosen variant.
   const pathChanged = tauri?.event?.listen?.("chat-path-changed", (event) => {
     const chatId = event?.payload?.chatId || state.chats.active;
-    if (chatId && chatId === state.chats.active) loadChatIntoFeed(chatId).catch(() => {});
+    // D3: a panel may switch to a DIFFERENT chat than the main feed is showing; adopt
+    // it (loadChatIntoFeed sets state.chats.active). The old equality guard dropped
+    // every cross-chat switch → the feed looked dead until a manual reload.
+    if (chatId) loadChatIntoFeed(chatId).catch(() => {});
   });
   pathChanged?.catch?.(() => {});
 }

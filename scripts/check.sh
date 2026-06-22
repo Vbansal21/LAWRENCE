@@ -61,7 +61,10 @@ step "memory stress"        python3 services/lk/tests/stress_memory.py
 step "logs stress"          python3 services/lk/tests/stress_logs.py
 step "journal stress"       python3 services/lk/tests/stress_journal.py
 step "sensor stress"        python3 services/lk/tests/stress_sensors.py
+step "sensor endurance N-60" python3 services/lk/tests/stress_sensor_endurance.py
+step "core stress N-59"     python3 services/lk/tests/stress_core.py
 step "ui-contract stress"   python3 services/lk/tests/stress_ui.py
+step "deploy-accept N-62"   python3 services/lk/tests/test_deploy_accept.py
 
 if [ "$FAIL" -eq 0 ]; then
     echo "CHECK: PASS"

@@ -1,5 +1,86 @@
 # LAWRENCE — DONE (constraint surface)
 
+> **LIVE-VERIFY EVENT 2026-06-21 (rebuild #2):** a real WSLg `cargo build --release` + screenshot pass over the
+> D-61..D-74 work surfaced **regressions** in items previously marked "DONE (in tree)" — chat **load** dead,
+> regenerate **empty** mid-conversation + broken after a proactive turn, deep-search inert, History-expand wrecks
+> layout — plus confirmed-open launcher/sensor gaps and a user-spec'd message-control/IA redesign. Captured as
+> **N-82 (PLAN §Q.14)**, NOT a completed node. **Process correction:** offline gates passed while the live UI was
+> broken → "DONE (in tree)" is provisional `[~] live-pending` until a rebuild confirms; N-82 §A is now MVP-blocking
+> under gate #1 (INTEGRITY/N-67). No code shipped this round.
+>
+> **↳ N-82 BATCH-1 (2026-06-21, code-complete + offline-gated; LIVE-PENDING — NOT a D-number yet):** §A **A1**
+> (chat-load: `.history-main` `<button>`-with-nested-`<button>` chips → `<div role="button">` + keyboard activation;
+> data/bridge layer verified correct), **A4** (deep-search was already wired end-to-end — fixed the gate-#1 gap where
+> it silently no-op'd when web was off → now honestly `disabled`), **A5** (overlay max-caps `1200×560`→`2560×1600` +
+> `maximizable:true`; `.history-body` list col `142px`→`minmax(240px,320px)`; `.history-panel` width→`min(720px,…)`).
+> Regression guards added to `stress_ui.py`; `scripts/check.sh` green (47 suites). **Promote to D-numbers ONLY after a
+> WSLg rebuild confirms each live.** Batch-2 = A2 + A3 (regenerate).
+>
+> **↳ N-82 BATCH-2 (2026-06-21, code-complete + offline-gated; LIVE-PENDING — NOT a D-number yet):** §A **A2** + **A3**
+> (the regenerate pair). **A2** — regenerate returned the literal `"(empty response)"`: introduced today (df3e79f) when
+> regen went async, `regenerateMessage` read `res.text` but the job result carries the reply under `res.answer`, so
+> normalize always substituted the placeholder and the empty-guard (checking post-substitution text) could never fire.
+> *Universal, not mid-vs-tail.* Fix: read `res.answer`, guard on the RAW answer, keep prior variant on a true empty.
+> **A3** — `_present_finding` never persisted the finding → no `msgId` → no per-message controls + vanished on reload.
+> Fix: persist as a durable `kind="finding"` message + carry id on the SSE card (`onFinding` → bubble) + regen a
+> finding from its own content (`_build_regen_turn`). **Real endpoint tests** (test_chat_ops_bridge: persist+regenerate
+> a finding, A2 answer-field contract) + stress_ui A2/A3 guards; `scripts/check.sh` green. Live: A2 render + A3 controls
+> still need a WSLg rebuild. Next = §C3/C1/C2 + B1.
+
+> **↳ N-82 BATCH-3 (2026-06-22, in-flight — Tier-2 §C3/C1/C2 + B1):** §C3 **feedback backend DONE-IN-CODE +
+> offline-gated** — and unlike the §A render fixes this slice is **sandbox-complete, NOT live-pending** (pure backend).
+> `ChatStore` gains a global `feedback.json` (`set_feedback`/`get_feedback`/`list_feedback`, atomic temp+replace, kept
+> out of the append-only event log like bookmarks so a vote can flip/clear; auto-removes when neither vote nor text
+> remains; dropped on hard-delete so none dangle); bridge `POST /chats/{id}/feedback` → `chat_feedback` (up/down/clear +
+> free-text; 400 missing-id/empty, 404 unknown-msg). Vote is **real** — durably persisted + `list_feedback(vote=…)` is
+> the aggregation surface §P SOUL + N-76 trajectory will read. Real endpoint test (vote/flip/text/clear-removes/guards/
+> hard-delete) + 4 stress_ui guards; `scripts/check.sh` green. **Remaining C3 = the 3-group RENDER** (Regenerate+arrow /
+> Options dropdown / vote pair) + copy-reduced → `[~]` live-pending. Then C1 toolbar, C2 row labels, B1 sensor thumbs.
+>
+> **↳ N-82 BATCH-4 LIVE REPORT (2026-06-22, user session):** 5 still-broken UI items → PLAN §Q.14 new **§D**
+> (all `[~]` live-pending, render-side, N-67 integrity): **D1** chat-load STILL dead (A1 BATCH-1 fix didn't resolve
+> live → A1 re-open); **D2** "view chat" panel still broken; **D3** select-chat sets active but the feed needs a manual
+> reload (no reactive re-render on `/switch`); **D4** regen variant `‹n/m›` switcher broken for the 1/n case; **D5**
+> chat-map/minimap scroll-jumps to top on click + over-indented. Priority: **A+D → C3/C1/C2 → B1 → B4 → C4/C5 → B2/B3**.
+>
+> **↳ DEPLOYMENT LANE N-60/N-62 (2026-06-22, DONE-IN-CODE offline; final green `[~]` live-pending):** user fork choice
+> built. **N-60** (PLAN §N.1 → `[~]`): `services/lk/tests/stress_sensor_endurance.py` — deterministic labeled-audio
+> replay control driving the **real** `AudioObserver._capture_loop` + **real** `audio_gate`; asserts utterance
+> identity/order/no-clip, EOF-tail-preserved, dedup-drops-duplicate (no 2nd proactive), 120-utterance endurance with no
+> drift + bounded temp, ≥10 s timeout floor, bounded vision novelty. `--live` prints the hardware procedure.
+> **N-62** (PLAN §N.1 → `[~]`): `scripts/deploy_accept.py` — evidence-bundle/manifest harness (collect-only, no repair);
+> honest verdict ACCEPT / **ACCEPT-PENDING** / REJECT with live lanes recorded BLOCKED (never false-green); bundle →
+> `.runtime/deploy/<ts>/`; pure logic import-tested by `services/lk/tests/test_deploy_accept.py`. Both wired into
+> `scripts/check.sh` (`sensor endurance N-60`, `deploy-accept N-62`); full gate green. **`[~]` live-pending (hardware):**
+> N-60 live mic/30-min/WER, N-61 Windows-ARM64 host + Tauri rebuild, N-63 live voice, and N-62's FINAL acceptance green.
+
+> **↳ DEPLOYMENT LANE N-59 (2026-06-22, DONE-IN-CODE offline; live confirmation `[~]`):** `services/lk/tests/stress_core.py`
+> — the core-stress orchestrator (PLAN §N.1 → `[~]`). Drives the **real** kernel machinery with a **deterministic stub**
+> transport (sandbox-buildable, no key/GGUF): 60 mixed turns (retrieval on/off, streaming) through real `run_turn` all
+> complete + persist; cancellation-during-active-work writes ZERO torn durable records (real `ContextStore` L1) + later
+> turns succeed; 40× repeated retrieval deterministic + non-growing; 10 autonomous `CognitiveTick` cycles act once-per-
+> significant-beat + self-heal; 3 bridge restarts (real `DesktopBridge`+`ChatStore`) keep every record (contiguous seqs),
+> **zero stuck jobs**, **bounded queue**; 3 compatible/incompatible KV restarts via real `server._slot_filename` — compatible
+> reuses the slot, incompatible never silently loads (different digest) + prune discards stale; **no silent provider
+> fallback** (local-primary failure re-raises, backend stays LOCAL); clean shutdown. Reports p50/p95/max →
+> `.runtime/core-stress-report.json`. Wired into `scripts/check.sh` (`core stress N-59`); green. **N-59 is now a REAL
+> offline lane in `scripts/deploy_accept.py`** (was `pending`) → **N-62's cognition lane is CLOSED**; the only remaining
+> deployment blockers are the 3 hardware live lanes. **Live confirmation `[~]`:** same orchestrator vs a real backend.
+
+> **↳ N-82 §D BATCH (2026-06-22, DONE-IN-CODE; all `[~]` live-pending — render-side, needs a WSLg rebuild):** the 5
+> live-confirmed-broken items (PLAN §Q.14 §D, N-67 integrity). **ROOT CAUSE for D1/D2/D3:** the History/search/minimap
+> panes are **separate webviews** (panel.html via `open_panel`) with their **own `app.js` state**, so a panel switching the
+> active chat couldn't re-render the **main** window's feed. **D1/D3** — `loadChatIntoFeed` emits **`chat-path-changed`**
+> in `PANEL_MODE`; the main-window listener now **adopts ANY switched chat** (dropped the `=== state.chats.active` guard
+> that killed every cross-chat switch; main window has empty `PANEL_MODE` → never re-emits → no loop). **D2** —
+> `loadChatIntoFeed` wraps `render()` in try (a sidecar without main-feed DOM no longer throws) and `loadChat` builds the
+> preview **outside** the load try (a render error no longer poisons it with "Could not load chat"). **D4** —
+> `renderVariantNav` **clamps** the index to [0,n-1] + disables end arrows, and a successful regenerate **reconciles
+> variants from the authoritative server `tree()`** so an absent `assistantMsgId` can't strand it at "1/1" (the real 1/n
+> bug). **D5** — `openMinimap` **preserves scroll** across a click-refresh (+ "Loading…" only on first open); the map root
+> row **left-aligns** + tighter per-level padding (over-indent). Offline-gated: 8 `stress_ui.py` §Z static guards +
+> `node --check` + full `scripts/check.sh` PASS (52 suites). **Promote D1–D5 to D-numbers only after the rebuild confirms.**
+
 > **SOUL** — canonical source: **`docs/papers/LAWRENCE_v0_1_ieee.{tex,pdf}`** (the
 > project paper / idea / concept). Distilled: LAWRENCE is a local-first **watcher-
 > assistant**, not a stateless chatbot — it perceives continuously (screen + audio),
@@ -1502,6 +1583,9 @@ desktop stress]`.
 ---
 
 ## D-57 — CI/CD pipeline + backup retention (2026-06-20) — compliance / reliability
+> **⚠ CI/CD LEVEL = DUMMY (user 2026-06-21).** This is a **placeholder** offline-gate runner only — proper CI/CD
+> (build/release matrix, artifact signing, Tauri/Rust build, deployment, Docker/installer, Android tolerance,
+> emulated/simulated tests) is **far / post-MVP**. Do NOT treat D-57 as "CI/CD done"; it just runs the local gate.
 **CI/CD.** New [.github/workflows/ci.yml](../.github/workflows/ci.yml): an **offline-gate** job
 (`make lint` + `make test-fast` + `make check`) on a Python **3.11/3.12 matrix** (no model/server/network —
 the kernel keeps heavy deps lazy, I4), concurrency-cancel on re-push, plus a **diagram-lint** job that

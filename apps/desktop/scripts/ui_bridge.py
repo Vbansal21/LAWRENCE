@@ -591,8 +591,40 @@ class DesktopBridge:
         threading.Thread(target=_run, daemon=True, name="ui-proactive").start()
 
     def _present_finding(self, finding: dict[str, Any]) -> None:
-        """Surface an unprompted finding: SSE card + desktop notification."""
-        self.events.append(f"[finding] {finding.get('headline', '')}")
+        """Surface an unprompted finding: persist it as a durable chat message, then
+        SSE card + desktop notification.
+
+        N-82 A3: a finding used to be an ephemeral feed bubble with NO message id, so
+        it carried no working per-message controls (Regenerate/Link/Branch were all
+        dead) and it vanished on reload. Persist it as a real ``kind="finding"``
+        assistant message and carry its id back on the SSE card, so the live finding
+        is durable AND regenerate-able (the regen of a finding bases on its own
+        content — see ``_build_regen_turn``)."""
+        headline = str(finding.get("headline", "")).strip()
+        insight  = str(finding.get("insight", "")).strip()
+        self.events.append(f"[finding] {headline}")
+        try:
+            chat_id = self._resolve_chat({})
+            # Mirror the live card's MDX exactly so a reload renders identical content.
+            cite_lines = "\n".join(
+                "- [{}] [{}]({})".format(
+                    c.get("num"),
+                    str(c.get("title") or c.get("url") or "").replace("[", "").replace("]", ""),
+                    c.get("url"))
+                for c in (finding.get("citations") or []))
+            body = "**🔎 {}**\n\n{}".format(headline or "LAWRENCE noticed something", insight)
+            if cite_lines:
+                body += "\n\n" + cite_lines
+            mid = self.chats.append_message(
+                chat_id, "assistant", body, kind="finding", meta={"source": "proactive"})
+            if mid:
+                finding = {**finding, "msgId": mid, "chatId": chat_id}
+                try:                       # recallable, like any persisted chat turn
+                    self.memory.upsert(mid, "chat", body, title="chat[finding]")
+                except Exception:
+                    pass
+        except Exception as exc:           # never let persistence failure swallow the card
+            self.events.append(f"[finding] persist failed: {exc}")
         self.ui._push({"type": "finding", **finding})
         _notify(finding.get("headline", "LAWRENCE noticed something"),
                 finding.get("insight", ""))
@@ -942,6 +974,27 @@ class DesktopBridge:
             raise BridgeError(400, "remove-bookmark needs {chatId, messageId}")
         removed = self.chats.remove_bookmark(chat_id, message_id)
         return {"ok": True, "removed": removed, "chatId": chat_id, "messageId": message_id}
+
+    def chat_feedback(self, chat_id: str, request: dict[str, Any]) -> dict[str, Any]:
+        """N-82 C3: record per-message feedback — {messageId, vote?, text?}.
+        ``vote`` ∈ up|down|clear (clear/empty un-votes); ``text`` is optional free-text.
+        Durably persisted (the §P SOUL distiller + N-76 trajectory aggregate it later) so
+        the vote control is real, not cosmetic. 404 on an unknown message id."""
+        req = request or {}
+        message_id = str(req.get("messageId") or req.get("msgId") or "").strip()
+        if not message_id:
+            raise BridgeError(400, "feedback needs {messageId, vote?, text?}")
+        vote = req.get("vote")
+        vote = str(vote) if vote is not None else None
+        text = req.get("text")
+        text = str(text) if text is not None else None
+        if vote is None and text is None:
+            raise BridgeError(400, "feedback needs a vote and/or text")
+        rec = self.chats.set_feedback(chat_id, message_id, vote=vote, text=text)
+        if rec is None:
+            raise BridgeError(404, f"unknown message: {chat_id}/{message_id}")
+        self.ui.push_context_event("chat", f"feedback {rec.get('vote') or 'cleared'} on {message_id}")
+        return {"ok": True, "chatId": chat_id, "messageId": message_id, "feedback": rec}
 
     def chat_create(self, request: dict[str, Any]) -> dict[str, Any]:
         # N-81 B4: an optional ttl (minutes) makes this a temporary chat.
@@ -1558,6 +1611,12 @@ class DesktopBridge:
         parent_id = self.chats.parent_of(chat_id, message_id)
         parent = self.chats.get_by_id(chat_id, parent_id) if parent_id else None
         base_query = str((parent or {}).get("text") or "")
+        # N-82 A3: a proactive finding (kind="finding") has no originating user query —
+        # its "parent" is just the conversation leaf it chained onto, which is unrelated.
+        # Regenerate from the response's OWN content so the re-derivation is coherent
+        # (this also covers any parentless / root assistant node).
+        if str(orig.get("kind") or "") == "finding" or not base_query.strip():
+            base_query = str(orig.get("text") or "")
         directive, as_edit = self._regen_directive(
             op,
             guidance=str(request.get("guidance") or ""),
@@ -2776,6 +2835,8 @@ class Handler(BaseHTTPRequestHandler):
                     self._send(200, self.bridge.chat_pin(cid, body))
                 elif len(parts) == 3 and parts[2] == "promote":    # N-81 B9a: message → durable note
                     self._send(200, self.bridge.chat_promote(cid, body))
+                elif len(parts) == 3 and parts[2] == "feedback":   # N-82 C3: per-message up/down + note
+                    self._send(200, self.bridge.chat_feedback(cid, body))
                 elif len(parts) == 3 and parts[2] == "tags":       # N-81 B9c: chat tags
                     self._send(200, self.bridge.chat_tags(cid, body))
                 elif len(parts) == 3 and parts[2] == "folder":     # N-81 B9c: chat folder

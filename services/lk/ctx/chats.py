@@ -97,6 +97,7 @@ class ChatStore:
         self._index  = self._root / "index.json"
         self._active = self._root / "active"
         self._bookmarks = self._root / "bookmarks.json"   # N-81 B8: message-level pins
+        self._feedback  = self._root / "feedback.json"    # N-82 C3: per-message up/down + notes
         self._lock   = threading.Lock()
         self._root.mkdir(parents=True, exist_ok=True)
 
@@ -607,6 +608,79 @@ class ChatStore:
             rows = [b for b in rows if b.get("chatId") == chat_id]
         return sorted(rows, key=lambda b: str(b.get("created", "")), reverse=True)
 
+    # ── per-message feedback (N-82 C3) ───────────────────────────────────────────
+    # Up/down vote + optional free-text on any message. Kept OUT of the append-only
+    # event log (which never mutates a record) — stored like bookmarks in a single
+    # mutable, atomically-rewritten file so a vote can flip/clear. Global (across
+    # chats) so the §P SOUL distiller + N-76 trajectory can aggregate the signal.
+
+    def _read_feedback(self) -> list[dict[str, Any]]:
+        try:
+            data = json.loads(self._feedback.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except (OSError, json.JSONDecodeError):
+            return []
+
+    def _write_feedback(self, rows: list[dict[str, Any]]) -> None:
+        tmp = self._feedback.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        os.replace(tmp, self._feedback)
+
+    def set_feedback(self, chat_id: str, message_id: str, *,
+                     vote: str | None = None, text: str | None = None) -> dict[str, Any] | None:
+        """N-82 C3: record/update feedback on one message.
+
+        ``vote`` ∈ {"up","down","clear","" } (None ⇒ leave the existing vote unchanged,
+        e.g. when only attaching a note); ``text`` is optional free-text (None ⇒ leave
+        unchanged). Idempotent on (chatId, messageId). When the record ends up with no
+        vote AND no text it is removed entirely (so an un-vote leaves no residue).
+
+        Returns the resulting record (``{}`` when it was removed), or None if the
+        message id does not exist (never feed back on a dangling id)."""
+        msg = self.get_by_id(chat_id, message_id)
+        if msg is None:
+            return None
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lock:
+            rows = self._read_feedback()
+            rec = next((f for f in rows
+                        if f.get("chatId") == chat_id and f.get("messageId") == message_id), None)
+            if rec is None:
+                rec = {"chatId": chat_id, "messageId": message_id,
+                       "seq": msg.get("seq"), "role": msg.get("role"),
+                       "preview": _node_summary(msg.get("text") or ""),
+                       "vote": "", "text": "", "created": now, "updated": now}
+                rows.append(rec)
+            if vote is not None:
+                v = str(vote).strip().lower()
+                rec["vote"] = "" if v in ("clear", "none", "") else v
+            if text is not None:
+                rec["text"] = str(text)
+            rec["updated"] = now
+            if not rec.get("vote") and not str(rec.get("text") or "").strip():
+                rows = [f for f in rows
+                        if not (f.get("chatId") == chat_id and f.get("messageId") == message_id)]
+                self._write_feedback(rows)
+                return {}
+            self._write_feedback(rows)
+        return dict(rec)
+
+    def get_feedback(self, chat_id: str, message_id: str) -> dict[str, Any] | None:
+        """N-82 C3: feedback on one message, or None if none recorded."""
+        return next((dict(f) for f in self._read_feedback()
+                     if f.get("chatId") == chat_id and f.get("messageId") == message_id), None)
+
+    def list_feedback(self, *, chat_id: str | None = None,
+                      vote: str | None = None) -> list[dict[str, Any]]:
+        """N-82 C3: all feedback (newest first), optionally scoped to one chat and/or one
+        vote. The aggregation surface for §P SOUL distillation + N-76 trajectory."""
+        rows = self._read_feedback()
+        if chat_id:
+            rows = [f for f in rows if f.get("chatId") == chat_id]
+        if vote:
+            rows = [f for f in rows if f.get("vote") == vote]
+        return sorted(rows, key=lambda f: str(f.get("updated", "")), reverse=True)
+
     def delete_chat(self, chat_id: str, *, hard: bool = False) -> bool:
         """Archive (default) or hard-delete a chat. Hard delete removes its dir."""
         with self._lock:
@@ -622,6 +696,11 @@ class ChatStore:
                 kept = [b for b in bms if b.get("chatId") != chat_id]
                 if len(kept) != len(bms):
                     self._write_bookmarks(kept)
+                # N-82 C3: likewise drop its feedback so none dangle.
+                fbs = self._read_feedback()
+                fkept = [f for f in fbs if f.get("chatId") != chat_id]
+                if len(fkept) != len(fbs):
+                    self._write_feedback(fkept)
             else:
                 row["archived"] = True
                 row["updated"]  = datetime.now(timezone.utc).isoformat()
